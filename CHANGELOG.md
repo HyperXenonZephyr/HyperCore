@@ -51,6 +51,12 @@ All notable changes to HyperCore are documented in this file. The format is base
 - Recorded that the current RTX 4060 run has no sustained GPU p50 crossover from 4,096 through 4,194,304 candidates; the configured offload threshold remains unchanged pending further transfer optimization.
 - Changed Vulkan storage buffers to persistent mapped host-coherent allocations, removing per-dispatch map/unmap operations while preserving fence synchronization and deterministic CPU fallback.
 - Added transfer-mode diagnostics and refreshed `BENCHMARKS.md` with the persistent-mapping run and directional before/after GPU p50 comparisons. No threshold change is made because the measured crossover is still absent.
+- Added immutable prepared position snapshots to the compute contract and weak per-`PositionBatch` caching in `SpatialQueryEngine`, allowing uninterrupted repeated radius queries to reuse resident Vulkan XYZ data without three new host uploads.
+- Added Vulkan data-generation invalidation so switching snapshots, resizing buffers, or using a direct compute call forces the next resident query to upload the correct positions before dispatch.
+- Extended Vulkan startup verification with an original-shifted-original snapshot sequence that exercises resident reuse and re-upload after shared-buffer invalidation.
+- Added adaptive CPU fallback for snapshots created before Vulkan is ready, snapshot upload/reuse diagnostics in `/hypercore capabilities`, and query-snapshot cleanup before compute-backend shutdown.
+- Extended `benchmarkCompute` to measure full-transfer and resident-snapshot GPU calls independently. Four RTX 4060 runs confirmed lower resident GPU cost at large batches but did not establish a repeatable conservative crossover, so the default threshold remains unchanged.
+- Added unit coverage for one-time snapshot preparation, repeated GPU routing, snapshot diagnostics, and independent resident-crossover reporting.
 
 ### Fixed
 

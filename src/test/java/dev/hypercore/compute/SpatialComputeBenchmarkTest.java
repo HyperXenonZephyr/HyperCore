@@ -33,7 +33,26 @@ class SpatialComputeBenchmarkTest {
         );
 
         assertEquals(4_096, report.recommendedMinimumBatchSize());
+        assertEquals(4_096, report.recommendedResidentMinimumBatchSize());
         assertTrue(report.markdown("test-time").contains("GPU transfer mode: `test-transfer`"));
+        assertTrue(report.markdown("test-time").contains("Resident GPU p50"));
+    }
+
+    @Test
+    void reportsResidentCrossoverSeparatelyFromFullCalls() {
+        SpatialComputeBenchmark.Report report = new SpatialComputeBenchmark.Report(
+            "test-gpu",
+            "test-transfer",
+            1,
+            3,
+            List.of(
+                new SpatialComputeBenchmark.BatchResult(1_024, 10, 20, 20, 30, 8, 12, 128),
+                new SpatialComputeBenchmark.BatchResult(4_096, 20, 30, 30, 40, 10, 15, 512)
+            )
+        );
+
+        assertEquals(-1, report.recommendedMinimumBatchSize());
+        assertEquals(1_024, report.recommendedResidentMinimumBatchSize());
     }
 
     @Test

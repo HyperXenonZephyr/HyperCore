@@ -43,6 +43,7 @@ public final class SpatialComputeBenchmark {
             PositionData positions = PositionData.create(batchSize);
             int[] cpuMask = new int[SpatialComputeBackend.maskWordCount(batchSize)];
             int[] gpuMask = new int[cpuMask.length];
+            int[] residentMask = new int[cpuMask.length];
 
             for (int iteration = 0; iteration < warmupIterations; iteration++) {
                 execute(cpu, positions, cpuMask);
@@ -61,12 +62,28 @@ public final class SpatialComputeBenchmark {
                     cpuSamples[sample] = measure(cpu, positions, cpuMask);
                 }
             }
+
+            long[] residentSamples = new long[sampleIterations];
+            try (SpatialComputeBackend.PositionSnapshot residentSnapshot = gpu.prepareSnapshot(
+                positions.x(), positions.y(), positions.z()
+            )) {
+                for (int iteration = 0; iteration < warmupIterations; iteration++) {
+                    execute(residentSnapshot, residentMask);
+                }
+                execute(residentSnapshot, residentMask);
+                verifyResidentMask(positions, cpuMask, residentMask);
+                for (int sample = 0; sample < sampleIterations; sample++) {
+                    residentSamples[sample] = measure(residentSnapshot, residentMask);
+                }
+            }
             results.add(new BatchResult(
                 batchSize,
                 percentile(cpuSamples, 0.50),
                 percentile(cpuSamples, 0.95),
                 percentile(gpuSamples, 0.50),
                 percentile(gpuSamples, 0.95),
+                percentile(residentSamples, 0.50),
+                percentile(residentSamples, 0.95),
                 (long) cpuMask.length * Integer.BYTES
             ));
         }
@@ -104,9 +121,30 @@ public final class SpatialComputeBenchmark {
         }
     }
 
+    private static void verifyResidentMask(PositionData positions, int[] cpuMask, int[] residentMask) {
+        if (!Arrays.equals(cpuMask, residentMask)) {
+            for (int word = 0; word < cpuMask.length; word++) {
+                if (cpuMask[word] != residentMask[word]) {
+                    throw new IllegalStateException(
+                        "Resident benchmark correctness mismatch at batch " + positions.size()
+                            + ", word " + word
+                    );
+                }
+            }
+        }
+    }
+
     private static long measure(SpatialComputeBackend backend, PositionData positions, int[] output) {
         long started = System.nanoTime();
         execute(backend, positions, output);
+        long elapsed = System.nanoTime() - started;
+        blackhole ^= output[output.length - 1];
+        return elapsed;
+    }
+
+    private static long measure(SpatialComputeBackend.PositionSnapshot snapshot, int[] output) {
+        long started = System.nanoTime();
+        execute(snapshot, output);
         long elapsed = System.nanoTime() - started;
         blackhole ^= output[output.length - 1];
         return elapsed;
@@ -123,6 +161,10 @@ public final class SpatialComputeBenchmark {
             positions.z(),
             output
         );
+    }
+
+    private static void execute(SpatialComputeBackend.PositionSnapshot snapshot, int[] output) {
+        snapshot.radiusMask(1.25f, -2.5f, 4.0f, 4_096.0f, output);
     }
 
     private record PositionData(float[] x, float[] y, float[] z) {
@@ -150,10 +192,36 @@ public final class SpatialComputeBenchmark {
         long cpuP95Nanos,
         long gpuP50Nanos,
         long gpuP95Nanos,
+        long residentGpuP50Nanos,
+        long residentGpuP95Nanos,
         long gpuReadbackBytes
     ) {
+        public BatchResult(
+            int batchSize,
+            long cpuP50Nanos,
+            long cpuP95Nanos,
+            long gpuP50Nanos,
+            long gpuP95Nanos,
+            long gpuReadbackBytes
+        ) {
+            this(
+                batchSize,
+                cpuP50Nanos,
+                cpuP95Nanos,
+                gpuP50Nanos,
+                gpuP95Nanos,
+                gpuP50Nanos,
+                gpuP95Nanos,
+                gpuReadbackBytes
+            );
+        }
+
         public double p50Speedup() {
             return (double) cpuP50Nanos / gpuP50Nanos;
+        }
+
+        public double residentP50Speedup() {
+            return (double) cpuP50Nanos / residentGpuP50Nanos;
         }
     }
 
@@ -187,6 +255,23 @@ public final class SpatialComputeBenchmark {
             return -1;
         }
 
+        public int recommendedResidentMinimumBatchSize() {
+            for (int index = 0; index < batches.size(); index++) {
+                boolean sustained = true;
+                for (int candidate = index; candidate < batches.size(); candidate++) {
+                    BatchResult batch = batches.get(candidate);
+                    if (batch.residentGpuP50Nanos() >= batch.cpuP50Nanos() * REQUIRED_GPU_ADVANTAGE) {
+                        sustained = false;
+                        break;
+                    }
+                }
+                if (sustained) {
+                    return batches.get(index).batchSize();
+                }
+            }
+            return -1;
+        }
+
         public String markdown(String generatedAt) {
             StringBuilder output = new StringBuilder();
             output.append("# HyperCore Compute Benchmark\n\n")
@@ -200,31 +285,42 @@ public final class SpatialComputeBenchmark {
                 .append("- Warmups per backend and batch: ").append(warmupIterations).append("\n")
                 .append("- Timed samples per backend and batch: ").append(sampleIterations).append("\n\n")
                 .append("The position arrays and output masks are allocated before timing. CPU timings include scalar mask ")
-                .append("construction. GPU timings include three host uploads, compute dispatch, fence wait, and packed-mask ")
-                .append("readback through persistent mapped host-coherent buffers. Snapshot creation and result-index expansion are excluded.\n\n")
-                .append("| Candidates | CPU p50 (ms) | CPU p95 (ms) | GPU p50 (ms) | GPU p95 (ms) | p50 speedup | GPU readback |\n")
-                .append("| ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n");
+                .append("construction. Full GPU timings include three host uploads, compute dispatch, fence wait, and packed-mask ")
+                .append("readback. Resident GPU timings reuse one prepared position snapshot and include dispatch, fence wait, and ")
+                .append("packed-mask readback. Snapshot preparation and result-index expansion are excluded.\n\n")
+                .append("| Candidates | CPU p50 | CPU p95 | Full GPU p50 | Full GPU p95 | Resident GPU p50 | Resident GPU p95 | Full speedup | Resident speedup | Readback |\n")
+                .append("| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n");
             for (BatchResult batch : batches) {
                 output.append(String.format(
                     Locale.ROOT,
-                    "| %,d | %.3f | %.3f | %.3f | %.3f | %.2fx | %,d B |%n",
+                    "| %,d | %.3f ms | %.3f ms | %.3f ms | %.3f ms | %.3f ms | %.3f ms | %.2fx | %.2fx | %,d B |%n",
                     batch.batchSize(),
                     nanosToMillis(batch.cpuP50Nanos()),
                     nanosToMillis(batch.cpuP95Nanos()),
                     nanosToMillis(batch.gpuP50Nanos()),
                     nanosToMillis(batch.gpuP95Nanos()),
+                    nanosToMillis(batch.residentGpuP50Nanos()),
+                    nanosToMillis(batch.residentGpuP95Nanos()),
                     batch.p50Speedup(),
+                    batch.residentP50Speedup(),
                     batch.gpuReadbackBytes()
                 ));
             }
             int recommendation = recommendedMinimumBatchSize();
-            output.append("\nConservative p50 crossover: ");
+            output.append("\nConservative full-call p50 crossover: ");
             if (recommendation < 0) {
                 output.append("none in the tested range.\n");
             } else {
                 output.append('`').append(recommendation).append("` candidates.\n");
             }
-            output.append("A crossover requires GPU p50 to be at least 5% lower at that batch and every larger tested batch.\n\n")
+            int residentRecommendation = recommendedResidentMinimumBatchSize();
+            output.append("Conservative resident-snapshot p50 crossover: ");
+            if (residentRecommendation < 0) {
+                output.append("none in the tested range.\n");
+            } else {
+                output.append('`').append(residentRecommendation).append("` candidates.\n");
+            }
+            output.append("A crossover requires the relevant GPU p50 to be at least 5% lower at that batch and every larger tested batch.\n\n")
                 .append("This microbenchmark is calibration evidence, not an MSPT or world-simulation result.\n");
             return output.toString();
         }

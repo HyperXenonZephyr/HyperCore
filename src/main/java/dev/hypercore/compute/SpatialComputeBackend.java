@@ -7,6 +7,36 @@ public interface SpatialComputeBackend {
 
     ComputeDeviceType deviceType();
 
+    /**
+     * Creates an immutable position snapshot that can be queried repeatedly.
+     * Backends may retain an uploaded representation for the snapshot lifetime.
+     */
+    default PositionSnapshot prepareSnapshot(
+        float[] positionsX,
+        float[] positionsY,
+        float[] positionsZ
+    ) {
+        Objects.requireNonNull(positionsX, "positionsX");
+        Objects.requireNonNull(positionsY, "positionsY");
+        Objects.requireNonNull(positionsZ, "positionsZ");
+        if (positionsY.length != positionsX.length || positionsZ.length != positionsX.length) {
+            throw new IllegalArgumentException("Position arrays must have equal lengths");
+        }
+        float[] snapshotX = positionsX.clone();
+        float[] snapshotY = positionsY.clone();
+        float[] snapshotZ = positionsZ.clone();
+        return (originX, originY, originZ, squaredRadius, outputWords) -> radiusMask(
+            originX,
+            originY,
+            originZ,
+            squaredRadius,
+            snapshotX,
+            snapshotY,
+            snapshotZ,
+            outputWords
+        );
+    }
+
     void squaredDistances(
         float originX,
         float originY,
@@ -61,4 +91,19 @@ public interface SpatialComputeBackend {
         }
         return Math.ceilDiv(candidateCount, Integer.SIZE);
     }
+
+    interface PositionSnapshot extends AutoCloseable {
+        void radiusMask(
+            float originX,
+            float originY,
+            float originZ,
+            float squaredRadius,
+            int[] outputWords
+        );
+
+        @Override
+        default void close() {
+        }
+    }
+
 }

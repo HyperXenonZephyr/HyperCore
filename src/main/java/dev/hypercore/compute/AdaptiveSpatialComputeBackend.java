@@ -22,6 +22,8 @@ public final class AdaptiveSpatialComputeBackend implements SpatialComputeBacken
     private final AtomicLong cpuRadiusMaskBatches = new AtomicLong();
     private final AtomicLong gpuRadiusMaskBatches = new AtomicLong();
     private final AtomicLong gpuRadiusMaskReadbackBytes = new AtomicLong();
+    private final AtomicLong gpuSnapshotUploads = new AtomicLong();
+    private final AtomicLong gpuSnapshotReuses = new AtomicLong();
     private final AtomicLong spatialQueries = new AtomicLong();
     private final AtomicLong spatialCandidates = new AtomicLong();
     private final AtomicLong spatialMatches = new AtomicLong();
@@ -31,6 +33,7 @@ public final class AdaptiveSpatialComputeBackend implements SpatialComputeBacken
     private volatile long initializationFinishedNanos;
     private volatile InitializationState initializationState;
     private volatile ManagedSpatialComputeBackend gpu;
+    private AdaptivePositionSnapshot activeGpuSnapshot;
     private volatile String unavailableReason;
     private volatile Thread initializer;
     private volatile boolean closed;
@@ -91,6 +94,34 @@ public final class AdaptiveSpatialComputeBackend implements SpatialComputeBacken
     }
 
     @Override
+    public SpatialComputeBackend.PositionSnapshot prepareSnapshot(
+        float[] positionsX,
+        float[] positionsY,
+        float[] positionsZ
+    ) {
+        validatePositions(positionsX, positionsY, positionsZ);
+        return prepareOwnedSnapshot(
+            positionsX.clone(),
+            positionsY.clone(),
+            positionsZ.clone()
+        );
+    }
+
+    SpatialComputeBackend.PositionSnapshot prepareOwnedSnapshot(
+        float[] positionsX,
+        float[] positionsY,
+        float[] positionsZ
+    ) {
+        validatePositions(positionsX, positionsY, positionsZ);
+        return new AdaptivePositionSnapshot(
+            this,
+            positionsX,
+            positionsY,
+            positionsZ
+        );
+    }
+
+    @Override
     public void squaredDistances(
         float originX,
         float originY,
@@ -111,6 +142,7 @@ public final class AdaptiveSpatialComputeBackend implements SpatialComputeBacken
                         throw new IllegalStateException("Vulkan compute backend is closing");
                     }
                     currentGpu.squaredDistances(originX, originY, originZ, positionsX, positionsY, positionsZ, output);
+                    activeGpuSnapshot = null;
                 }
                 gpuBatches.incrementAndGet();
                 return;
@@ -152,6 +184,7 @@ public final class AdaptiveSpatialComputeBackend implements SpatialComputeBacken
                         originX, originY, originZ, squaredRadius,
                         positionsX, positionsY, positionsZ, outputWords
                     );
+                    activeGpuSnapshot = null;
                 }
                 gpuBatches.incrementAndGet();
                 gpuRadiusMaskBatches.incrementAndGet();
@@ -169,6 +202,75 @@ public final class AdaptiveSpatialComputeBackend implements SpatialComputeBacken
         cpu.radiusMask(
             originX, originY, originZ, squaredRadius,
             positionsX, positionsY, positionsZ, outputWords
+        );
+        cpuBatches.incrementAndGet();
+        cpuRadiusMaskBatches.incrementAndGet();
+    }
+
+    private void radiusMaskFromSnapshot(
+        AdaptivePositionSnapshot snapshot,
+        float originX,
+        float originY,
+        float originZ,
+        float squaredRadius,
+        int[] outputWords
+    ) {
+        if (snapshot.closed) {
+            throw new IllegalStateException("Position snapshot is closed");
+        }
+        int size = validateMask(snapshot.positionsX, snapshot.positionsY, snapshot.positionsZ, outputWords);
+        if (Float.isNaN(squaredRadius) || squaredRadius < 0.0f) {
+            throw new IllegalArgumentException("squaredRadius must be non-negative");
+        }
+        ManagedSpatialComputeBackend currentGpu = gpu;
+        GpuOffloadPolicy.Decision decision = policy.evaluate(size, currentGpu != null, currentGpu != null);
+        if (decision.offload()) {
+            boolean uploaded = false;
+            try {
+                synchronized (this) {
+                    if (closed || snapshot.closed || gpu != currentGpu) {
+                        throw new IllegalStateException("Vulkan compute backend is closing");
+                    }
+                    if (snapshot.gpuBackend != currentGpu) {
+                        if (snapshot.gpuSnapshot != null) {
+                            snapshot.gpuSnapshot.close();
+                        }
+                        snapshot.gpuSnapshot = currentGpu instanceof VulkanSpatialComputeBackend vulkan
+                            ? vulkan.prepareOwnedSnapshot(
+                                snapshot.positionsX, snapshot.positionsY, snapshot.positionsZ
+                            )
+                            : currentGpu.prepareSnapshot(
+                                snapshot.positionsX, snapshot.positionsY, snapshot.positionsZ
+                            );
+                        snapshot.gpuBackend = currentGpu;
+                    }
+                    uploaded = activeGpuSnapshot != snapshot;
+                    snapshot.gpuSnapshot.radiusMask(
+                        originX, originY, originZ, squaredRadius, outputWords
+                    );
+                    activeGpuSnapshot = snapshot;
+                }
+                gpuBatches.incrementAndGet();
+                gpuRadiusMaskBatches.incrementAndGet();
+                gpuRadiusMaskReadbackBytes.addAndGet(
+                    (long) SpatialComputeBackend.maskWordCount(size) * Integer.BYTES
+                );
+                if (uploaded) {
+                    gpuSnapshotUploads.incrementAndGet();
+                } else {
+                    gpuSnapshotReuses.incrementAndGet();
+                }
+                return;
+            } catch (VulkanSpatialComputeBackend.BatchNotSupportedException unsupported) {
+                // This batch can still run correctly on the scalar fallback.
+            } catch (RuntimeException | LinkageError error) {
+                disableGpu(currentGpu, error);
+            }
+        }
+
+        cpu.radiusMask(
+            originX, originY, originZ, squaredRadius,
+            snapshot.positionsX, snapshot.positionsY, snapshot.positionsZ, outputWords
         );
         cpuBatches.incrementAndGet();
         cpuRadiusMaskBatches.incrementAndGet();
@@ -197,6 +299,8 @@ public final class AdaptiveSpatialComputeBackend implements SpatialComputeBacken
             cpuRadiusMaskBatches.get(),
             gpuRadiusMaskBatches.get(),
             gpuRadiusMaskReadbackBytes.get(),
+            gpuSnapshotUploads.get(),
+            gpuSnapshotReuses.get(),
             spatialQueries.get(),
             spatialCandidates.get(),
             spatialMatches.get(),
@@ -225,6 +329,7 @@ public final class AdaptiveSpatialComputeBackend implements SpatialComputeBacken
             initializer = null;
             currentGpu = gpu;
             gpu = null;
+            activeGpuSnapshot = null;
         }
         if (pendingInitializer != null && pendingInitializer != Thread.currentThread()) {
             pendingInitializer.interrupt();
@@ -283,6 +388,7 @@ public final class AdaptiveSpatialComputeBackend implements SpatialComputeBacken
             return;
         }
         gpu = null;
+        activeGpuSnapshot = null;
         initializationState = InitializationState.UNAVAILABLE;
         gpuFailures.incrementAndGet();
         unavailableReason = error.getClass().getSimpleName() + ": " + normalize(error.getMessage());
@@ -330,12 +436,37 @@ public final class AdaptiveSpatialComputeBackend implements SpatialComputeBacken
             1.25f, -2.5f, 4.0f, 4_096.0f, x, y, z, expectedMask
         );
         gpu.radiusMask(1.25f, -2.5f, 4.0f, 4_096.0f, x, y, z, actualMask);
-        for (int word = 0; word < wordCount; word++) {
-            if (expectedMask[word] != actualMask[word]) {
+        verifyMask("radius-mask", expectedMask, actualMask);
+
+        float[] shiftedX = x.clone();
+        for (int index = 0; index < shiftedX.length; index++) {
+            shiftedX[index] += 10_000.0f;
+        }
+        int[] shiftedMask = new int[wordCount];
+        int[] actualShiftedMask = new int[wordCount];
+        new ScalarSpatialComputeBackend().radiusMask(
+            1.25f, -2.5f, 4.0f, 4_096.0f, shiftedX, y, z, shiftedMask
+        );
+        try (
+            SpatialComputeBackend.PositionSnapshot original = gpu.prepareSnapshot(x, y, z);
+            SpatialComputeBackend.PositionSnapshot shifted = gpu.prepareSnapshot(shiftedX, y, z)
+        ) {
+            original.radiusMask(1.25f, -2.5f, 4.0f, 4_096.0f, actualMask);
+            verifyMask("resident-original", expectedMask, actualMask);
+            shifted.radiusMask(1.25f, -2.5f, 4.0f, 4_096.0f, actualShiftedMask);
+            verifyMask("resident-shifted", shiftedMask, actualShiftedMask);
+            original.radiusMask(1.25f, -2.5f, 4.0f, 4_096.0f, actualMask);
+            verifyMask("resident-restored", expectedMask, actualMask);
+        }
+    }
+
+    private static void verifyMask(String operation, int[] expected, int[] actual) {
+        for (int word = 0; word < expected.length; word++) {
+            if (expected[word] != actual[word]) {
                 throw new IllegalStateException(
-                    "Vulkan radius-mask self-test mismatch at word " + word
-                        + ": expected=" + Integer.toUnsignedString(expectedMask[word])
-                        + ", actual=" + Integer.toUnsignedString(actualMask[word])
+                    "Vulkan " + operation + " self-test mismatch at word " + word
+                        + ": expected=" + Integer.toUnsignedString(expected[word])
+                        + ", actual=" + Integer.toUnsignedString(actual[word])
                 );
             }
         }
@@ -343,6 +474,15 @@ public final class AdaptiveSpatialComputeBackend implements SpatialComputeBacken
 
     private static String normalize(String message) {
         return message == null || message.isBlank() ? "unknown" : message.trim();
+    }
+
+    private static void validatePositions(float[] x, float[] y, float[] z) {
+        Objects.requireNonNull(x, "positionsX");
+        Objects.requireNonNull(y, "positionsY");
+        Objects.requireNonNull(z, "positionsZ");
+        if (y.length != x.length || z.length != x.length) {
+            throw new IllegalArgumentException("Position arrays must have equal lengths");
+        }
     }
 
     private static int validate(float[] x, float[] y, float[] z, float[] output) {
@@ -367,6 +507,59 @@ public final class AdaptiveSpatialComputeBackend implements SpatialComputeBacken
             throw new IllegalArgumentException("Position arrays must have equal lengths and fit in output mask");
         }
         return size;
+    }
+
+    private static final class AdaptivePositionSnapshot implements SpatialComputeBackend.PositionSnapshot {
+        private final AdaptiveSpatialComputeBackend owner;
+        private final float[] positionsX;
+        private final float[] positionsY;
+        private final float[] positionsZ;
+        private ManagedSpatialComputeBackend gpuBackend;
+        private SpatialComputeBackend.PositionSnapshot gpuSnapshot;
+        private volatile boolean closed;
+
+        private AdaptivePositionSnapshot(
+            AdaptiveSpatialComputeBackend owner,
+            float[] positionsX,
+            float[] positionsY,
+            float[] positionsZ
+        ) {
+            this.owner = owner;
+            this.positionsX = positionsX;
+            this.positionsY = positionsY;
+            this.positionsZ = positionsZ;
+        }
+
+        @Override
+        public void radiusMask(
+            float originX,
+            float originY,
+            float originZ,
+            float squaredRadius,
+            int[] outputWords
+        ) {
+            owner.radiusMaskFromSnapshot(
+                this, originX, originY, originZ, squaredRadius, outputWords
+            );
+        }
+
+        @Override
+        public void close() {
+            synchronized (owner) {
+                if (closed) {
+                    return;
+                }
+                closed = true;
+                if (owner.activeGpuSnapshot == this) {
+                    owner.activeGpuSnapshot = null;
+                }
+                if (gpuSnapshot != null) {
+                    gpuSnapshot.close();
+                    gpuSnapshot = null;
+                    gpuBackend = null;
+                }
+            }
+        }
     }
 
     public enum InitializationState {
@@ -394,6 +587,8 @@ public final class AdaptiveSpatialComputeBackend implements SpatialComputeBacken
         long cpuRadiusMaskBatches,
         long gpuRadiusMaskBatches,
         long gpuRadiusMaskReadbackBytes,
+        long gpuSnapshotUploads,
+        long gpuSnapshotReuses,
         long spatialQueries,
         long spatialCandidates,
         long spatialMatches,

@@ -116,6 +116,7 @@ public final class HyperCoreRuntime implements AutoCloseable {
         state = null;
         if (current != null) {
             plugins.disableAll();
+            current.spatialQueries().close();
             current.computeBackend().close();
             current.executor().close();
         }

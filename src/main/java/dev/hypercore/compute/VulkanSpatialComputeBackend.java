@@ -142,6 +142,7 @@ public final class VulkanSpatialComputeBackend implements ManagedSpatialComputeB
     private final long fence;
 
     private BufferSet buffers;
+    private long positionDataGeneration;
     private boolean closed;
 
     private VulkanSpatialComputeBackend() {
@@ -235,6 +236,42 @@ public final class VulkanSpatialComputeBackend implements ManagedSpatialComputeB
     }
 
     @Override
+    public synchronized SpatialComputeBackend.PositionSnapshot prepareSnapshot(
+        float[] positionsX,
+        float[] positionsY,
+        float[] positionsZ
+    ) {
+        ensureOpen();
+        validatePositions(positionsX, positionsY, positionsZ);
+        return prepareOwnedSnapshot(
+            positionsX.clone(),
+            positionsY.clone(),
+            positionsZ.clone()
+        );
+    }
+
+    synchronized SpatialComputeBackend.PositionSnapshot prepareOwnedSnapshot(
+        float[] positionsX,
+        float[] positionsY,
+        float[] positionsZ
+    ) {
+        ensureOpen();
+        int size = validatePositions(positionsX, positionsY, positionsZ);
+        validateRadiusBatchSize(size);
+        if (size != 0) {
+            ensureCapacity(size);
+            uploadPositions(positionsX, positionsY, positionsZ, size);
+        }
+        return new ResidentPositionSnapshot(
+            this,
+            positionsX,
+            positionsY,
+            positionsZ,
+            positionDataGeneration
+        );
+    }
+
+    @Override
     public synchronized void squaredDistances(
         float originX,
         float originY,
@@ -257,9 +294,7 @@ public final class VulkanSpatialComputeBackend implements ManagedSpatialComputeB
         }
 
         ensureCapacity(size);
-        upload(buffers.positionsX(), positionsX, size);
-        upload(buffers.positionsY(), positionsY, size);
-        upload(buffers.positionsZ(), positionsZ, size);
+        uploadPositions(positionsX, positionsY, positionsZ, size);
         record(originX, originY, originZ, size, workgroups);
         submitAndWait();
         download(buffers.output(), output, size);
@@ -285,17 +320,12 @@ public final class VulkanSpatialComputeBackend implements ManagedSpatialComputeB
             return;
         }
 
+        validateRadiusBatchSize(size);
         int wordCount = SpatialComputeBackend.maskWordCount(size);
         int workgroups = Math.ceilDiv(wordCount, LOCAL_SIZE);
-        long inputByteSize = (long) size * Float.BYTES;
-        if (workgroups > maximumWorkgroupsX || inputByteSize > maximumStorageBufferBytes) {
-            throw new BatchNotSupportedException("Batch exceeds the selected Vulkan device limits");
-        }
 
         ensureCapacity(size);
-        upload(buffers.positionsX(), positionsX, size);
-        upload(buffers.positionsY(), positionsY, size);
-        upload(buffers.positionsZ(), positionsZ, size);
+        uploadPositions(positionsX, positionsY, positionsZ, size);
         recordRadiusMask(originX, originY, originZ, squaredRadius, size, workgroups);
         submitAndWait();
         downloadMask(buffers.output(), outputWords, wordCount);
@@ -343,6 +373,7 @@ public final class VulkanSpatialComputeBackend implements ManagedSpatialComputeB
             throw error;
         }
         buffers = replacement;
+        positionDataGeneration++;
         if (previous != null) {
             previous.close(device);
         }
@@ -464,6 +495,57 @@ public final class VulkanSpatialComputeBackend implements ManagedSpatialComputeB
             .order(ByteOrder.nativeOrder())
             .asIntBuffer();
         values.get(output, 0, wordCount);
+    }
+
+    private synchronized void radiusMaskFromSnapshot(
+        ResidentPositionSnapshot snapshot,
+        float originX,
+        float originY,
+        float originZ,
+        float squaredRadius,
+        int[] outputWords
+    ) {
+        ensureOpen();
+        if (snapshot.closed()) {
+            throw new IllegalStateException("Position snapshot is closed");
+        }
+        int size = validateMask(snapshot.positionsX(), snapshot.positionsY(), snapshot.positionsZ(), outputWords);
+        if (Float.isNaN(squaredRadius) || squaredRadius < 0.0f) {
+            throw new IllegalArgumentException("squaredRadius must be non-negative");
+        }
+        if (size == 0) {
+            return;
+        }
+
+        validateRadiusBatchSize(size);
+        int wordCount = SpatialComputeBackend.maskWordCount(size);
+        int workgroups = Math.ceilDiv(wordCount, LOCAL_SIZE);
+        ensureCapacity(size);
+        if (snapshot.positionDataGeneration() != positionDataGeneration) {
+            uploadPositions(
+                snapshot.positionsX(), snapshot.positionsY(), snapshot.positionsZ(), size
+            );
+            snapshot.positionDataGeneration(positionDataGeneration);
+        }
+        recordRadiusMask(originX, originY, originZ, squaredRadius, size, workgroups);
+        submitAndWait();
+        downloadMask(buffers.output(), outputWords, wordCount);
+    }
+
+    private void uploadPositions(float[] positionsX, float[] positionsY, float[] positionsZ, int size) {
+        upload(buffers.positionsX(), positionsX, size);
+        upload(buffers.positionsY(), positionsY, size);
+        upload(buffers.positionsZ(), positionsZ, size);
+        positionDataGeneration++;
+    }
+
+    private void validateRadiusBatchSize(int size) {
+        int wordCount = SpatialComputeBackend.maskWordCount(size);
+        int workgroups = Math.ceilDiv(wordCount, LOCAL_SIZE);
+        long inputByteSize = (long) size * Float.BYTES;
+        if (workgroups > maximumWorkgroupsX || inputByteSize > maximumStorageBufferBytes) {
+            throw new BatchNotSupportedException("Batch exceeds the selected Vulkan device limits");
+        }
     }
 
     private static VkInstance createInstance() {
@@ -699,6 +781,17 @@ public final class VulkanSpatialComputeBackend implements ManagedSpatialComputeB
         }
     }
 
+    private static int validatePositions(float[] x, float[] y, float[] z) {
+        Objects.requireNonNull(x, "positionsX");
+        Objects.requireNonNull(y, "positionsY");
+        Objects.requireNonNull(z, "positionsZ");
+        int size = x.length;
+        if (y.length != size || z.length != size) {
+            throw new IllegalArgumentException("Position arrays must have equal lengths");
+        }
+        return size;
+    }
+
     private static int validate(float[] x, float[] y, float[] z, float[] output) {
         Objects.requireNonNull(x, "positionsX");
         Objects.requireNonNull(y, "positionsY");
@@ -799,6 +892,73 @@ public final class VulkanSpatialComputeBackend implements ManagedSpatialComputeB
         int maximumWorkgroupsX,
         long maximumStorageBufferBytes
     ) {
+    }
+
+    private static final class ResidentPositionSnapshot implements SpatialComputeBackend.PositionSnapshot {
+        private final VulkanSpatialComputeBackend owner;
+        private final float[] positionsX;
+        private final float[] positionsY;
+        private final float[] positionsZ;
+        private long positionDataGeneration;
+        private boolean closed;
+
+        private ResidentPositionSnapshot(
+            VulkanSpatialComputeBackend owner,
+            float[] positionsX,
+            float[] positionsY,
+            float[] positionsZ,
+            long positionDataGeneration
+        ) {
+            this.owner = owner;
+            this.positionsX = positionsX;
+            this.positionsY = positionsY;
+            this.positionsZ = positionsZ;
+            this.positionDataGeneration = positionDataGeneration;
+        }
+
+        @Override
+        public void radiusMask(
+            float originX,
+            float originY,
+            float originZ,
+            float squaredRadius,
+            int[] outputWords
+        ) {
+            owner.radiusMaskFromSnapshot(
+                this, originX, originY, originZ, squaredRadius, outputWords
+            );
+        }
+
+        @Override
+        public void close() {
+            synchronized (owner) {
+                closed = true;
+            }
+        }
+
+        private float[] positionsX() {
+            return positionsX;
+        }
+
+        private float[] positionsY() {
+            return positionsY;
+        }
+
+        private float[] positionsZ() {
+            return positionsZ;
+        }
+
+        private long positionDataGeneration() {
+            return positionDataGeneration;
+        }
+
+        private void positionDataGeneration(long value) {
+            positionDataGeneration = value;
+        }
+
+        private boolean closed() {
+            return closed;
+        }
     }
 
     static final class BatchNotSupportedException extends RuntimeException {

@@ -1,11 +1,17 @@
 package dev.hypercore.compute;
 
 import java.util.Arrays;
+import java.util.Collections;
+import java.util.Map;
 import java.util.Objects;
+import java.util.WeakHashMap;
 
 /** Executes read-only radius queries over immutable structure-of-arrays snapshots. */
-public final class SpatialQueryEngine {
+public final class SpatialQueryEngine implements AutoCloseable {
     private final SpatialComputeBackend backend;
+    private final Map<PositionBatch, SpatialComputeBackend.PositionSnapshot> snapshots =
+        Collections.synchronizedMap(new WeakHashMap<>());
+    private volatile boolean closed;
 
     public SpatialQueryEngine(SpatialComputeBackend backend) {
         this.backend = Objects.requireNonNull(backend, "backend");
@@ -26,17 +32,17 @@ public final class SpatialQueryEngine {
             throw new IllegalArgumentException("radius cannot be negative");
         }
         Objects.requireNonNull(positions, "positions");
+        if (closed) {
+            throw new IllegalStateException("Spatial query engine is closed");
+        }
 
         int size = positions.size();
         int[] maskWords = new int[SpatialComputeBackend.maskWordCount(size)];
-        backend.radiusMask(
+        snapshotFor(positions).radiusMask(
             originX,
             originY,
             originZ,
             radius * radius,
-            positions.positionsX,
-            positions.positionsY,
-            positions.positionsZ,
             maskWords
         );
 
@@ -57,6 +63,33 @@ public final class SpatialQueryEngine {
             adaptive.recordSpatialQuery(size, matchCount);
         }
         return new QueryResult(size, Arrays.copyOf(matches, matchCount));
+    }
+
+    private SpatialComputeBackend.PositionSnapshot snapshotFor(PositionBatch positions) {
+        synchronized (snapshots) {
+            if (closed) {
+                throw new IllegalStateException("Spatial query engine is closed");
+            }
+            return snapshots.computeIfAbsent(positions, batch -> {
+                if (backend instanceof AdaptiveSpatialComputeBackend adaptive) {
+                    return adaptive.prepareOwnedSnapshot(
+                        batch.positionsX, batch.positionsY, batch.positionsZ
+                    );
+                }
+                return backend.prepareSnapshot(
+                    batch.positionsX, batch.positionsY, batch.positionsZ
+                );
+            });
+        }
+    }
+
+    @Override
+    public void close() {
+        closed = true;
+        synchronized (snapshots) {
+            snapshots.values().forEach(SpatialComputeBackend.PositionSnapshot::close);
+            snapshots.clear();
+        }
     }
 
     private static void requireFinite(float value, String name) {

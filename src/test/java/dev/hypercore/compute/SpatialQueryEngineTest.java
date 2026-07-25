@@ -40,6 +40,20 @@ class SpatialQueryEngineTest {
     }
 
     @Test
+    void publicPreparedSnapshotsDefensivelyCopyPositions() {
+        float[] x = {1};
+        SpatialComputeBackend.PositionSnapshot snapshot = new ScalarSpatialComputeBackend()
+            .prepareSnapshot(x, new float[]{0}, new float[]{0});
+        x[0] = 100;
+        int[] mask = new int[1];
+
+        snapshot.radiusMask(0, 0, 0, 4, mask);
+
+        assertArrayEquals(new int[]{1}, mask);
+        snapshot.close();
+    }
+
+    @Test
     void recordsAdaptiveQueryMetrics() {
         try (AdaptiveSpatialComputeBackend backend = AdaptiveSpatialComputeBackend.unavailable(
             new GpuOffloadPolicy(1), "test unavailable")) {
@@ -66,5 +80,8 @@ class SpatialQueryEngineTest {
         assertThrows(IllegalArgumentException.class, () -> engine.withinRadius(Float.NaN, 0, 0, 1, empty));
         assertThrows(IllegalArgumentException.class, () -> new SpatialQueryEngine.PositionBatch(
             new float[1], new float[2], new float[1]));
+
+        engine.close();
+        assertThrows(IllegalStateException.class, () -> engine.withinRadius(0, 0, 0, 1, empty));
     }
 }

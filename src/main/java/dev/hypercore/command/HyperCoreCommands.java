@@ -109,6 +109,8 @@ public final class HyperCoreCommands {
                     + " | radiusMasks=" + status.gpuRadiusMaskBatches() + " GPU/"
                     + status.cpuRadiusMaskBatches() + " CPU"
                     + " | maskReadback=" + status.gpuRadiusMaskReadbackBytes() + " B"
+                    + " | snapshots=" + status.gpuSnapshotUploads() + " upload/"
+                    + status.gpuSnapshotReuses() + " reuse"
                     + " | spatialQueries=" + status.spatialQueries()
                     + " | matches=" + status.spatialMatches() + "/" + status.spatialCandidates()
                     + " | failures=" + status.gpuFailures()

@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Test;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -46,12 +47,13 @@ class AdaptiveSpatialComputeBackendTest {
         CountDownLatch factoryEntered = new CountDownLatch(1);
         CountDownLatch allowCreation = new CountDownLatch(1);
         AtomicBoolean gpuClosed = new AtomicBoolean();
+        AtomicInteger snapshotPrepares = new AtomicInteger();
         AdaptiveSpatialComputeBackend backend = AdaptiveSpatialComputeBackend.createForTesting(
             new GpuOffloadPolicy(1),
             () -> {
                 factoryEntered.countDown();
                 await(allowCreation);
-                return new TestGpuBackend(gpuClosed);
+                return new TestGpuBackend(gpuClosed, snapshotPrepares);
             }
         );
         try {
@@ -86,6 +88,18 @@ class AdaptiveSpatialComputeBackendTest {
             assertEquals(AdaptiveSpatialComputeBackend.InitializationState.READY,
                 backend.status().initializationState());
             assertEquals(0, backend.status().gpuFailures());
+
+            SpatialQueryEngine engine = new SpatialQueryEngine(backend);
+            SpatialQueryEngine.PositionBatch positions = new SpatialQueryEngine.PositionBatch(
+                new float[]{1}, new float[]{0}, new float[]{0}
+            );
+            assertEquals(1, engine.withinRadius(0, 0, 0, 2, positions).matchCount());
+            assertEquals(1, engine.withinRadius(0, 0, 0, 1, positions).matchCount());
+            assertEquals(3, snapshotPrepares.get());
+            assertEquals(3, backend.status().gpuRadiusMaskBatches());
+            assertEquals(1, backend.status().gpuSnapshotUploads());
+            assertEquals(1, backend.status().gpuSnapshotReuses());
+            engine.close();
         } finally {
             allowCreation.countDown();
             backend.close();
@@ -135,9 +149,15 @@ class AdaptiveSpatialComputeBackendTest {
     private static final class TestGpuBackend implements ManagedSpatialComputeBackend {
         private final ScalarSpatialComputeBackend scalar = new ScalarSpatialComputeBackend();
         private final AtomicBoolean closed;
+        private final AtomicInteger snapshotPrepares;
 
         private TestGpuBackend(AtomicBoolean closed) {
+            this(closed, new AtomicInteger());
+        }
+
+        private TestGpuBackend(AtomicBoolean closed, AtomicInteger snapshotPrepares) {
             this.closed = closed;
+            this.snapshotPrepares = snapshotPrepares;
         }
 
         @Override
@@ -153,6 +173,16 @@ class AdaptiveSpatialComputeBackendTest {
         @Override
         public String deviceName() {
             return "test-gpu";
+        }
+
+        @Override
+        public SpatialComputeBackend.PositionSnapshot prepareSnapshot(
+            float[] positionsX,
+            float[] positionsY,
+            float[] positionsZ
+        ) {
+            snapshotPrepares.incrementAndGet();
+            return ManagedSpatialComputeBackend.super.prepareSnapshot(positionsX, positionsY, positionsZ);
         }
 
         @Override
