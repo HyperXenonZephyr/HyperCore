@@ -15,6 +15,7 @@ public final class PluginManager implements AutoCloseable {
     private final PluginPermissionService permissions = new PluginPermissionService();
     private final PluginCommandRegistry commands = new PluginCommandRegistry(permissions);
     private final PluginEventBus events = new PluginEventBus();
+    private final PluginScheduler scheduler = new PluginScheduler();
     private final Map<String, PluginContainer> plugins = new LinkedHashMap<>();
     private boolean enabled;
 
@@ -28,7 +29,7 @@ public final class PluginManager implements AutoCloseable {
         PluginContainer container = new PluginContainer(
             descriptor,
             plugin,
-            new PluginContext(descriptor, commands, permissions, events),
+            new PluginContext(descriptor, commands, permissions, events, scheduler),
             PluginState.REGISTERED
         );
         plugins.put(descriptor.id(), container);
@@ -65,13 +66,18 @@ public final class PluginManager implements AutoCloseable {
         long failedPlugins = plugins.values().stream()
             .filter(plugin -> plugin.state() == PluginState.FAILED)
             .count();
+        PluginScheduler.Status schedulerStatus = scheduler.status();
         return new Status(
             plugins.size(),
             (int) enabledPlugins,
             (int) failedPlugins,
             commands.registeredCommands(),
             permissions.registeredPermissions(),
-            events.registeredListeners()
+            events.registeredListeners(),
+            schedulerStatus.scheduledTasks(),
+            schedulerStatus.completedTasks(),
+            schedulerStatus.failedTasks(),
+            schedulerStatus.cancelledTasks()
         );
     }
 
@@ -87,9 +93,14 @@ public final class PluginManager implements AutoCloseable {
         return events;
     }
 
+    public PluginScheduler scheduler() {
+        return scheduler;
+    }
+
     @Override
     public void close() {
         disableAll();
+        scheduler.close();
     }
 
     private void load(PluginContainer container) {
@@ -134,6 +145,7 @@ public final class PluginManager implements AutoCloseable {
         commands.unregisterPlugin(pluginId);
         permissions.unregisterPlugin(pluginId);
         events.unregisterPlugin(pluginId);
+        scheduler.cancelPlugin(pluginId);
     }
 
     private enum PluginState {
@@ -189,7 +201,11 @@ public final class PluginManager implements AutoCloseable {
         int failedPlugins,
         int registeredCommands,
         int registeredPermissions,
-        int registeredListeners
+        int registeredListeners,
+        int scheduledTasks,
+        long completedScheduledTasks,
+        long failedScheduledTasks,
+        long cancelledScheduledTasks
     ) {
     }
 }

@@ -86,6 +86,7 @@ public final class HyperCore {
         }
         if (event.phase == TickEvent.Phase.START) {
             runtime.tickMetrics().beginTick();
+            runtime.plugins().scheduler().tick();
         } else {
             runtime.tickMetrics().endTick();
             runtime.regionTasks().dispatchPendingTick().ifPresent(future -> future.thenAccept(result -> {

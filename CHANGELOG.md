@@ -60,6 +60,10 @@ All notable changes to HyperCore are documented in this file. The format is base
 - Added Vulkan multi-query command batching with one fence wait per bounded group of up to 32 radius queries; larger groups are chunked while preserving result order.
 - Extended Vulkan startup verification with a 33-query radius-mask self-test that crosses the 32-query submission boundary.
 - Extended `benchmarkCompute` and `BENCHMARKS.md` with eight-query individual-versus-batched submission measurements. The latest RTX 4060 run measured `2.56x` to `5.91x` faster from 4K through 1M candidates, but `0.95x` at 4M where compute cost dominated; batching is therefore not treated as universally faster.
+- Added a plugin-owned tick scheduler with sync and bounded-async next-tick, delayed, and repeating tasks exposed through `PluginContext`.
+- Added automatic cancellation of pending scheduled tasks during plugin failure or disable cleanup; repeating tasks that fail are cancelled to prevent repeated error loops.
+- Expanded `/hypercore plugins` with scheduled-task and task-failure diagnostics.
+- Added `COMPATIBILITY.md` to distinguish implemented HyperCore SPI behavior from unsupported Bukkit/Paper namespaces, external JAR loading, and world-threading claims.
 - Added unit coverage for one-time snapshot preparation, repeated GPU routing, snapshot diagnostics, and independent resident-crossover reporting.
 
 ### Fixed

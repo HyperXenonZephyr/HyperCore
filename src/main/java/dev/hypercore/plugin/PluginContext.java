@@ -14,17 +14,20 @@ public final class PluginContext {
     private final PluginCommandRegistry commands;
     private final PluginPermissionService permissions;
     private final PluginEventBus events;
+    private final PluginScheduler scheduler;
 
     PluginContext(
         PluginDescriptor descriptor,
         PluginCommandRegistry commands,
         PluginPermissionService permissions,
-        PluginEventBus events
+        PluginEventBus events,
+        PluginScheduler scheduler
     ) {
         this.descriptor = Objects.requireNonNull(descriptor, "descriptor");
         this.commands = Objects.requireNonNull(commands, "commands");
         this.permissions = Objects.requireNonNull(permissions, "permissions");
         this.events = Objects.requireNonNull(events, "events");
+        this.scheduler = Objects.requireNonNull(scheduler, "scheduler");
     }
 
     public PluginDescriptor descriptor() {
@@ -50,5 +53,29 @@ public final class PluginContext {
 
     public PluginEventBus.DispatchResult postEvent(PluginEvent event) {
         return events.post(event);
+    }
+
+    public PluginScheduler.TaskHandle runTask(Runnable action) {
+        return scheduler.runTask(descriptor.id(), action);
+    }
+
+    public PluginScheduler.TaskHandle runTaskLater(long delayTicks, Runnable action) {
+        return scheduler.runTaskLater(descriptor.id(), delayTicks, action);
+    }
+
+    public PluginScheduler.TaskHandle runTaskTimer(long delayTicks, long periodTicks, Runnable action) {
+        return scheduler.runTaskTimer(descriptor.id(), delayTicks, periodTicks, action);
+    }
+
+    public PluginScheduler.TaskHandle runTaskAsync(Runnable action) {
+        return scheduler.runTaskAsync(descriptor.id(), action);
+    }
+
+    public PluginScheduler.TaskHandle runTaskLaterAsync(long delayTicks, Runnable action) {
+        return scheduler.runTaskLaterAsync(descriptor.id(), delayTicks, action);
+    }
+
+    public PluginScheduler.TaskHandle runTaskTimerAsync(long delayTicks, long periodTicks, Runnable action) {
+        return scheduler.runTaskTimerAsync(descriptor.id(), delayTicks, periodTicks, action);
     }
 }

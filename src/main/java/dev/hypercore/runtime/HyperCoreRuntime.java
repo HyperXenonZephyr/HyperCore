@@ -35,6 +35,7 @@ public final class HyperCoreRuntime implements AutoCloseable {
         int workers = settings.resolveWorkerThreads(capabilities.logicalProcessors());
         int queueCapacity = settings.resolveQueueCapacity(workers);
         HyperCoreExecutor executor = HyperCoreExecutor.create(workers, queueCapacity);
+        plugins.scheduler().attachExecutor(executor);
         state = new State(
             executor,
             new TickMetrics(settings.tickSampleWindow()),
@@ -116,6 +117,7 @@ public final class HyperCoreRuntime implements AutoCloseable {
         state = null;
         if (current != null) {
             plugins.disableAll();
+            plugins.scheduler().detachExecutor(current.executor());
             current.spatialQueries().close();
             current.computeBackend().close();
             current.executor().close();

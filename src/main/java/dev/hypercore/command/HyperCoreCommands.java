@@ -156,6 +156,8 @@ public final class HyperCoreCommands {
                 + " | commands=" + status.registeredCommands()
                 + " | permissions=" + status.registeredPermissions()
                 + " | listeners=" + status.registeredListeners()
+                + " | scheduled=" + status.scheduledTasks()
+                + " | taskFailures=" + status.failedScheduledTasks()
         ), false);
         return status.enabledPlugins();
     }

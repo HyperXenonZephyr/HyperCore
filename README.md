@@ -7,7 +7,7 @@ HyperCore is an experimental high-performance Minecraft Java server project buil
 
 ## Current status
 
-Milestones 0 through 11 establish a buildable, dedicated-server-only Forge foundation:
+Milestones 0 through 12 establish a buildable, dedicated-server-only Forge foundation:
 
 - Minecraft 1.21.1, Forge 52.1.16, and Java 21 are pinned.
 - HyperCore loads as a server-side Forge component.
@@ -19,7 +19,7 @@ Milestones 0 through 11 establish a buildable, dedicated-server-only Forge found
 - OS, JVM, logical CPU, and graphics adapter capabilities are reported; Vulkan compute initializes by default on a dedicated daemon thread and falls back safely when unavailable.
 - A scalar CPU spatial batch backend and a Vulkan compute backend implement the same squared-distance operation for correctness comparisons.
 - A logical region-owner model provides deterministic ownership, per-target FIFO mailboxes, tick-boundary dispatch, and cross-region message accounting.
-- A controlled plugin bridge kernel provides lifecycle callbacks, plugin-owned commands, permissions, and cancellable prioritized events. The Forge command bridge exposes registered commands and `/hypercore plugins` reports bridge health.
+- A controlled plugin bridge kernel provides lifecycle callbacks, plugin-owned commands, permissions, cancellable prioritized events, and plugin-owned sync/async tick scheduling. The Forge command bridge exposes registered commands and `/hypercore plugins` reports bridge and scheduler health.
 - GPU support now includes Vulkan loader/API detection, device selection, two compiled SPIR-V compute pipelines, persistently mapped host-coherent storage buffers, direct, resident-snapshot, and 33-query chunking correctness self-tests, and a configurable batch-size offload policy. Runtime execution uses `cpu-scalar` while Vulkan initializes, switches atomically to `adaptive-vulkan` when ready, and falls back to CPU after a later dispatch failure.
 - An immutable structure-of-arrays position snapshot and radius-query service now uses a GPU-generated packed match mask instead of reading every distance back to CPU. Repeated queries over the same `PositionBatch` retain one Vulkan position upload, while `withinRadii` records up to 32 radius dispatches in one command buffer and one fence wait before transparently chunking larger groups. Query, candidate, match, snapshot, multi-query batch, mask, readback-byte, initialization, and CPU/GPU counters are exposed through `/hypercore capabilities`.
 - A deterministic `benchmarkCompute` Gradle task measures complete scalar/Vulkan calls, resident snapshot calls, and eight-query individual-versus-batched submission. The current RTX 4060 report is recorded in [BENCHMARKS.md](BENCHMARKS.md); batching improved p50 by `2.56x` to `5.91x` from 4K through 1M candidates in the latest run, while the 4M compute-dominated case measured `0.95x`.
@@ -114,9 +114,9 @@ GPU support is enabled by default and always has a CPU fallback. HyperCore enume
 
 ## Plugin bridge kernel
 
-The current plugin layer is an internal HyperCore SPI designed to establish compatibility boundaries without claiming Bukkit or Paper binary compatibility. A plugin can declare a descriptor, receive `onLoad`/`onEnable`/`onDisable` lifecycle callbacks, register commands and aliases, define permission defaults and wildcard overrides, and subscribe to prioritized cancellable events. Failed plugins are isolated and their owned registrations are removed during cleanup.
+The current plugin layer is an internal HyperCore SPI designed to establish compatibility boundaries without claiming Bukkit or Paper binary compatibility. A plugin can declare a descriptor, receive `onLoad`/`onEnable`/`onDisable` lifecycle callbacks, register commands and aliases, define permission defaults and wildcard overrides, subscribe to prioritized cancellable events, and schedule sync or async next-tick, delayed, and repeating tasks. Sync callbacks execute from the server tick caller. Async callbacks use the bounded worker pool and must not mutate server-owned world state. Failed or disabled plugins have their pending tasks and other owned registrations removed during cleanup.
 
-Forge command registration is bridged into this SPI, but external plugin JAR discovery, the `org.bukkit.*` namespace, Bukkit scheduler semantics, and complete Bukkit/Paper event coverage are not implemented yet. Those require a separately versioned adapter and a compatibility matrix.
+Forge command registration is bridged into this SPI, but external plugin JAR discovery, the `org.bukkit.*` namespace, exact Bukkit scheduler conformance, and complete Bukkit/Paper event coverage are not implemented yet. Those require a separately versioned adapter. See [COMPATIBILITY.md](COMPATIBILITY.md) for the current behavior matrix and explicit unsupported areas.
 
 ## Roadmap
 
@@ -137,7 +137,8 @@ Forge command registration is bridged into this SPI, but external plugin JAR dis
 - [x] Resident snapshot reuse across multiple spatial queries
 - [x] Multi-query Vulkan command batching with bounded chunking
 - [ ] Device-local snapshot storage and repeatable GPU crossover
-- [ ] Bukkit/Paper namespace adapter and mod/plugin compatibility matrix
+- [x] Plugin-owned tick scheduler and initial compatibility matrix
+- [ ] Bukkit/Paper namespace adapter and external plugin loading
 
 See [CHANGELOG.md](CHANGELOG.md) for completed changes.
 
