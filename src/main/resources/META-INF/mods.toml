@@ -1,0 +1,30 @@
+modLoader="javafml"
+loaderVersion="[52,)"
+license="Apache-2.0"
+serverSideOnly=true
+
+[[mods]]
+modId="hypercore"
+version="${file.jarVersion}"
+displayName="HyperCore"
+displayURL="https://github.com/HyperXenonZephyr/HyperCore"
+authors="HyperXenonZephyr"
+displayTest="IGNORE_ALL_VERSION"
+description='''
+Experimental Forge server infrastructure for hybrid compatibility, safe multicore execution, and optional GPU compute.
+'''
+
+[[dependencies.hypercore]]
+    modId="forge"
+    mandatory=true
+    versionRange="[52.1.16,53)"
+    ordering="NONE"
+    side="SERVER"
+
+[[dependencies.hypercore]]
+    modId="minecraft"
+    mandatory=true
+    versionRange="[1.21.1,1.21.2)"
+    ordering="NONE"
+    side="SERVER"
+

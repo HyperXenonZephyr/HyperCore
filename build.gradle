@@ -1,0 +1,68 @@
+plugins {
+    id 'java'
+    id 'idea'
+    id 'eclipse'
+    id 'net.minecraftforge.gradle' version '[7.0.3,8)'
+}
+
+version = '0.1.0-SNAPSHOT'
+group = 'dev.hypercore'
+
+base {
+    archivesName = 'hypercore'
+}
+
+java.toolchain.languageVersion = JavaLanguageVersion.of(21)
+
+minecraft {
+    mappings channel: 'official', version: '1.21.1'
+
+    runs {
+        configureEach {
+            workingDir = layout.projectDirectory.dir('run')
+            systemProperty 'forge.enabledGameTestNamespaces', 'hypercore'
+        }
+
+        register('server') {
+            args '--nogui'
+        }
+
+        register('gameTestServer')
+    }
+}
+
+repositories {
+    minecraft.mavenizer(it)
+    maven fg.forgeMaven
+    maven fg.minecraftLibsMaven
+    mavenCentral()
+}
+
+dependencies {
+    implementation minecraft.dependency('net.minecraftforge:forge:1.21.1-52.1.16')
+    testImplementation platform('org.junit:junit-bom:5.11.4')
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+    options.release = 21
+}
+
+tasks.named('test', Test).configure {
+    useJUnitPlatform()
+}
+
+jar {
+    manifest {
+        attributes([
+            'Specification-Title'   : 'HyperCore',
+            'Specification-Vendor'  : 'HyperCore',
+            'Specification-Version' : project.version,
+            'Implementation-Title'  : project.name,
+            'Implementation-Version': project.version,
+            'Implementation-Vendor' : 'HyperCore'
+        ])
+    }
+}
