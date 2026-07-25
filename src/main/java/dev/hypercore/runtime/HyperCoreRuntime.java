@@ -6,6 +6,7 @@ import dev.hypercore.concurrent.HyperCoreExecutor;
 import dev.hypercore.config.HyperCoreConfig;
 import dev.hypercore.hardware.RuntimeCapabilities;
 import dev.hypercore.metrics.TickMetrics;
+import dev.hypercore.region.RegionTaskCoordinator;
 
 public final class HyperCoreRuntime implements AutoCloseable {
     private final SpatialComputeBackend computeBackend = new ScalarSpatialComputeBackend();
@@ -19,10 +20,12 @@ public final class HyperCoreRuntime implements AutoCloseable {
         RuntimeCapabilities capabilities = RuntimeCapabilities.detect(settings.probeGpu());
         int workers = settings.resolveWorkerThreads(capabilities.logicalProcessors());
         int queueCapacity = settings.resolveQueueCapacity(workers);
+        HyperCoreExecutor executor = HyperCoreExecutor.create(workers, queueCapacity);
         state = new State(
-            HyperCoreExecutor.create(workers, queueCapacity),
+            executor,
             new TickMetrics(settings.tickSampleWindow()),
-            capabilities
+            capabilities,
+            new RegionTaskCoordinator(executor, workers)
         );
     }
 
@@ -40,6 +43,10 @@ public final class HyperCoreRuntime implements AutoCloseable {
 
     public RuntimeCapabilities capabilities() {
         return requireState().capabilities();
+    }
+
+    public RegionTaskCoordinator regionTasks() {
+        return requireState().regionTasks();
     }
 
     public SpatialComputeBackend computeBackend() {
@@ -84,7 +91,8 @@ public final class HyperCoreRuntime implements AutoCloseable {
     private record State(
         HyperCoreExecutor executor,
         TickMetrics tickMetrics,
-        RuntimeCapabilities capabilities
+        RuntimeCapabilities capabilities,
+        RegionTaskCoordinator regionTasks
     ) {
     }
 

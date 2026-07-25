@@ -70,6 +70,16 @@ public final class HyperCore {
             runtime.tickMetrics().beginTick();
         } else {
             runtime.tickMetrics().endTick();
+            runtime.regionTasks().dispatchPendingTick().ifPresent(future -> future.thenAccept(result -> {
+                if (!result.complete()) {
+                    LOGGER.warn(
+                        "Region tick {} completed partially: failed={}, requeued={}",
+                        result.tickId(),
+                        result.failedMessages(),
+                        result.requeuedMessages()
+                    );
+                }
+            }));
         }
     }
 

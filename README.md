@@ -7,17 +7,18 @@ HyperCore is an experimental high-performance Minecraft Java server project buil
 
 ## Current status
 
-Milestones 0 through 2 establish a buildable, dedicated-server-only Forge foundation:
+Milestones 0 through 3 establish a buildable, dedicated-server-only Forge foundation:
 
 - Minecraft 1.21.1, Forge 52.1.16, and Java 21 are pinned.
 - HyperCore loads as a server-side Forge component.
 - A bounded worker pool reserves one logical CPU for the main server thread and rejects excess work instead of growing an unbounded queue.
 - A 200-tick latency window reports average, p95, and maximum tick duration.
-- Operator diagnostics are available through `/hypercore status`, `/hypercore timings`, and `/hypercore capabilities`.
+- Operator diagnostics are available through `/hypercore status`, `/hypercore timings`, `/hypercore capabilities`, and `/hypercore regions`.
 - A Forge GameTest verifies that HyperCore loads in a real dedicated-server environment.
 - Forge configuration controls worker count, queue capacity, tick sampling, and GPU probing.
 - OS, JVM, logical CPU, and graphics adapter capabilities are reported without making GPU acceleration a startup requirement.
 - A scalar CPU spatial batch backend provides the correctness baseline for later Vector API and GPU implementations.
+- A logical region-owner model provides deterministic ownership, per-target FIFO mailboxes, tick-boundary dispatch, and cross-region message accounting.
 - GPU acceleration and plugin compatibility remain planned work, not claimed features.
 
 ## Build
@@ -66,6 +67,20 @@ Invalid values are rejected by Forge's config specification. GPU probe failures 
 
 The first backend is `cpu-scalar`. It implements a structure-of-arrays squared-distance batch used as a deterministic correctness baseline for spatial broad-phase experiments. It is not wired into Minecraft entity simulation yet. Future CPU Vector API and Vulkan implementations must produce equivalent results before performance comparisons are accepted.
 
+## Region execution model
+
+The region prototype divides each dimension into 8 by 8 chunk regions. Every region maps deterministically to one logical owner lane. Messages are addressed from a source region to a target region and are only dispatched at a tick boundary.
+
+Within a dispatched tick:
+
+- Messages for the same target region retain FIFO order.
+- Regions assigned to the same owner execute serially.
+- Different owners may execute concurrently on the bounded HyperCore worker pool.
+- Messages submitted while a tick is in flight are deferred to the next tick.
+- Executor backpressure requeues an owner batch instead of dropping its messages.
+
+This is an ownership and messaging foundation, not parallel Minecraft world ticking. Vanilla and Forge entity, block entity, chunk, and capability mutations remain on their existing threads until explicit isolation and compatibility tests prove that a workload can move safely.
+
 ## Architecture direction
 
 1. **Forge foundation**: preserve native Forge lifecycle, registries, events, and mod compatibility.
@@ -86,7 +101,7 @@ GPU support will be optional and will always have a CPU fallback. HyperCore curr
 - [x] Automated Forge dedicated-server GameTest
 - [x] Configuration and capability detection
 - [x] Scalar CPU spatial compute baseline
-- [ ] Region ownership and cross-region task model
+- [x] Region ownership and cross-region task model prototype
 - [ ] Minimal Bukkit command, permission, and event API
 - [ ] CPU vector compute baseline
 - [ ] Optional Vulkan compute prototype

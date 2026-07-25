@@ -4,6 +4,7 @@ import com.mojang.brigadier.CommandDispatcher;
 import dev.hypercore.HyperCore;
 import dev.hypercore.hardware.RuntimeCapabilities;
 import dev.hypercore.metrics.TickMetrics;
+import dev.hypercore.region.RegionTaskCoordinator;
 import dev.hypercore.runtime.HyperCoreRuntime;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.network.chat.Component;
@@ -25,6 +26,7 @@ public final class HyperCoreCommands {
             .then(literal("status").executes(context -> showStatus(context.getSource(), runtime)))
             .then(literal("timings").executes(context -> showTimings(context.getSource(), runtime)))
             .then(literal("capabilities").executes(context -> showCapabilities(context.getSource(), runtime)))
+            .then(literal("regions").executes(context -> showRegions(context.getSource(), runtime)))
         );
     }
 
@@ -89,6 +91,20 @@ public final class HyperCoreCommands {
                 + " (" + runtime.computeBackend().deviceType().name().toLowerCase(Locale.ROOT) + ")"
         ), false);
         return gpu.devices().size();
+    }
+
+    private static int showRegions(CommandSourceStack source, HyperCoreRuntime runtime) {
+        RegionTaskCoordinator.Status status = runtime.regionTasks().status();
+        source.sendSuccess(() -> Component.literal(
+            "Region owners=" + status.owners()
+                + " | queued=" + status.queuedMessages()
+                + " | inFlight=" + status.tickInFlight()
+                + " | messages=" + status.executedMessages() + "/" + status.submittedMessages()
+                + " | crossRegion=" + status.crossRegionMessages()
+                + " | failed=" + status.failedMessages()
+                + " | partialTicks=" + status.partialTicks() + "/" + status.finishedTicks()
+        ), false);
+        return status.queuedMessages();
     }
 
     private static long toMiB(long bytes) {

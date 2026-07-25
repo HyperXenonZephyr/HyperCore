@@ -1,9 +1,9 @@
 .gradle/
 .idea/
 build/
+logs/
 out/
 run/
 run-data/
 *.iml
 *.log
-

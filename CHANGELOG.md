@@ -24,6 +24,11 @@ All notable changes to HyperCore are documented in this file. The format is base
 - Added `/hypercore capabilities` and exposed the active compute backend in `/hypercore status`.
 - Added a `cpu-scalar` structure-of-arrays squared-distance backend as the correctness baseline for future vector and GPU implementations.
 - Added tests for configuration resolution, runtime lifecycle, capability reporting, compute correctness, and custom tick windows.
+- Added deterministic 8 by 8 chunk region keys and logical owner-lane assignment.
+- Added tick-boundary region mailboxes with per-target FIFO ordering and cross-region message accounting.
+- Added owner-batch backpressure recovery, message-failure isolation, and deferred submission while a region tick is in flight.
+- Added `/hypercore regions` diagnostics for queued messages, owner lanes, failures, and partial ticks.
+- Added concurrency tests for negative chunk mapping, ownership stability, mailbox ordering, tick isolation, and rejected-batch requeueing.
 
 ### Fixed
 

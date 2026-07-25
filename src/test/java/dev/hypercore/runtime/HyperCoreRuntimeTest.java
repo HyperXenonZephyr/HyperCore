@@ -20,6 +20,8 @@ class HyperCoreRuntimeTest {
             assertEquals(64, runtime.tickMetrics().windowSize());
             assertEquals("cpu-scalar", runtime.status().computeBackend());
             assertFalse(runtime.capabilities().gpu().attempted());
+            assertEquals(2, runtime.regionTasks().status().owners());
+            assertEquals(0, runtime.regionTasks().status().queuedMessages());
         } finally {
             runtime.close();
         }
