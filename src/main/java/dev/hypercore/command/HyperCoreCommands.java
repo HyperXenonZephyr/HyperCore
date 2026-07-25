@@ -26,7 +26,10 @@ public final class HyperCoreCommands {
                 context.getSource().sendSuccess(() -> Component.literal(
                     "HyperCore " + HyperCore.VERSION
                         + " | workers=" + executor.parallelism()
+                        + " | active=" + executor.activeTasks()
+                        + " | queue=" + executor.queuedTasks() + "/" + executor.queueCapacity()
                         + " | tasks=" + executor.completedTasks() + "/" + executor.submittedTasks()
+                        + " | rejected=" + executor.rejectedTasks()
                         + " | heap=" + toMiB(usedMemory) + "/" + toMiB(runtime.maxMemory()) + " MiB"
                 ), false);
                 return 1;
@@ -46,4 +49,3 @@ public final class HyperCoreCommands {
         return bytes / (1024L * 1024L);
     }
 }
-

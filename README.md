@@ -7,14 +7,14 @@ HyperCore is an experimental high-performance Minecraft Java server project buil
 
 ## Current status
 
-Milestone 0 establishes a buildable, dedicated-server-only Forge foundation:
+Milestones 0 and 1 establish a buildable, dedicated-server-only Forge foundation:
 
 - Minecraft 1.21.1, Forge 52.1.16, and Java 21 are pinned.
 - HyperCore loads as a server-side Forge component.
-- A bounded worker pool reserves one logical CPU for the main server thread.
+- A bounded worker pool reserves one logical CPU for the main server thread and rejects excess work instead of growing an unbounded queue.
 - A 200-tick latency window reports average, p95, and maximum tick duration.
 - Operator diagnostics are available through `/hypercore status` and `/hypercore timings`.
-- Forge userdev startup has been smoke-tested through the dedicated GameTest launch target; HyperCore initializes on the server environment.
+- A Forge GameTest verifies that HyperCore loads in a real dedicated-server environment.
 - GPU acceleration and plugin compatibility remain planned work, not claimed features.
 
 ## Build
@@ -54,9 +54,8 @@ GPU support will be optional and will always have a CPU fallback. Candidate work
 
 - [x] Forge 1.21.1 project foundation
 - [x] Safe background executor and basic tick diagnostics
-- [x] Unit tests for metrics and isolated worker execution
-- [x] Forge userdev server-side loading smoke test
-- [ ] Automated dedicated-server smoke test
+- [x] Unit tests for metrics, isolated worker execution, and queue backpressure
+- [x] Automated Forge dedicated-server GameTest
 - [ ] Configuration and capability detection
 - [ ] Region ownership and cross-region task model
 - [ ] Minimal Bukkit command, permission, and event API

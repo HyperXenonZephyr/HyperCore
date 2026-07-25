@@ -14,4 +14,11 @@ All notable changes to HyperCore are documented in this file. The format is base
 - `/hypercore timings` command for recent tick latency diagnostics.
 - Initial architecture, GPU policy, build instructions, and roadmap documentation.
 - JUnit coverage for tick metrics and isolated worker execution.
-- Verified Forge userdev server-side loading on Minecraft 1.21.1; the empty GameTest target exits only because no test functions are registered yet.
+- Verified Forge userdev server-side loading on Minecraft 1.21.1.
+- Replaced the unbounded executor queue with bounded backpressure, rejection metrics, and pending-task cancellation on shutdown.
+- Expanded `/hypercore status` with active worker, queue capacity, and rejection diagnostics.
+- Added an automated Forge GameTest that verifies HyperCore in the dedicated-server environment.
+
+### Fixed
+
+- Disabled Gradle configuration cache because ForgeGradle 7 could restore an incomplete merged source set after `clean`, producing a JAR with missing classes.
