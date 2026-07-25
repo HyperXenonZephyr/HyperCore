@@ -37,9 +37,15 @@ All notable changes to HyperCore are documented in this file. The format is base
 - Added adaptive GPU routing: batches above the configured threshold use Vulkan, smaller batches use `cpu-scalar`, and initialization, allocation, limit, or dispatch failures fall back without stopping the server.
 - Added `/hypercore capabilities` reporting for the selected Vulkan device, CPU/GPU batch counts, GPU failures, and fallback reason.
 - Documented the deployable `-all.jar` artifact that carries the Vulkan binding through Forge Jar-in-Jar.
+- Added an explicit asynchronous Vulkan lifecycle with `INITIALIZING`, `READY`, `UNAVAILABLE`, and `CLOSED` states; compute requests remain on CPU until the verified GPU backend is installed atomically.
+- Added race-safe Vulkan shutdown that interrupts and bounded-joins pending initialization, prevents dispatch/cleanup overlap, and closes a backend that finishes after shutdown.
+- Added `SpatialQueryEngine` with immutable structure-of-arrays snapshots, inclusive radius matching, defensive result copies, and query, candidate, and match counters.
+- Expanded `/hypercore capabilities` with Vulkan initialization state and duration plus spatial-query counters.
+- Added unit coverage for asynchronous CPU-to-GPU switching, initialization cancellation, immutable query inputs and outputs, inclusive radius boundaries, validation, and query metrics.
 
 ### Fixed
 
+- Removed Vulkan creation and self-test work from the server startup event so GPU setup no longer executes on the server thread.
 - Disabled Gradle configuration cache because ForgeGradle 7 could restore an incomplete merged source set after `clean`, producing a JAR with missing classes.
 - Disabled ForgeGradle's merged source-set output, restoring standard Gradle class directories and preventing clean builds from omitting unchanged classes.
 - Staged development classes and resources into one exploded mod directory so Forge server and GameTest runs load HyperCore correctly with standard Gradle source-set outputs.

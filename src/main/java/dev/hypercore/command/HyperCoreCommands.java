@@ -100,12 +100,20 @@ public final class HyperCoreCommands {
             source.sendSuccess(() -> Component.literal(
                 "Vulkan loader: " + runtime.vulkan().library()
                     + " | API=" + runtime.vulkan().apiVersion()
+                    + " | state=" + status.initializationState().name().toLowerCase(Locale.ROOT)
                     + " | compute=" + (status.gpuAvailable() ? status.deviceName() : "CPU fallback")
+                    + " | init=" + status.initializationDurationMillis() + " ms"
                     + " | minimumBatch=" + status.minimumBatchSize()
                     + " | batches=" + status.gpuBatches() + " GPU/" + status.cpuBatches() + " CPU"
+                    + " | spatialQueries=" + status.spatialQueries()
+                    + " | matches=" + status.spatialMatches() + "/" + status.spatialCandidates()
                     + " | failures=" + status.gpuFailures()
             ), false);
-            if (!status.gpuAvailable()) {
+            if (status.initializationState() == AdaptiveSpatialComputeBackend.InitializationState.INITIALIZING) {
+                source.sendSuccess(() -> Component.literal(
+                    "Vulkan compute initialization is running in the background; CPU fallback remains active"
+                ), false);
+            } else if (!status.gpuAvailable()) {
                 source.sendSuccess(() -> Component.literal(
                     "Vulkan compute unavailable: " + status.unavailableReason()
                 ), false);

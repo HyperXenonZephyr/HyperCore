@@ -113,7 +113,7 @@ import static org.lwjgl.vulkan.VK10.vkUnmapMemory;
 import static org.lwjgl.vulkan.VK10.vkUpdateDescriptorSets;
 import static org.lwjgl.vulkan.VK10.vkWaitForFences;
 
-public final class VulkanSpatialComputeBackend implements SpatialComputeBackend, AutoCloseable {
+public final class VulkanSpatialComputeBackend implements ManagedSpatialComputeBackend {
     public static final String ID = "gpu-vulkan";
 
     private static final String SHADER_RESOURCE = "/assets/hypercore/shaders/squared_distances.spv";

@@ -7,7 +7,7 @@ HyperCore is an experimental high-performance Minecraft Java server project buil
 
 ## Current status
 
-Milestones 0 through 4 establish a buildable, dedicated-server-only Forge foundation:
+Milestones 0 through 6 establish a buildable, dedicated-server-only Forge foundation:
 
 - Minecraft 1.21.1, Forge 52.1.16, and Java 21 are pinned.
 - HyperCore loads as a server-side Forge component.
@@ -16,11 +16,12 @@ Milestones 0 through 4 establish a buildable, dedicated-server-only Forge founda
 - Operator diagnostics are available through `/hypercore status`, `/hypercore timings`, `/hypercore capabilities`, and `/hypercore regions`.
 - A Forge GameTest verifies that HyperCore loads in a real dedicated-server environment.
 - Forge configuration controls worker count, queue capacity, tick sampling, GPU probing, and the default-on GPU compute path.
-- OS, JVM, logical CPU, and graphics adapter capabilities are reported; Vulkan compute initializes by default and falls back safely when unavailable.
+- OS, JVM, logical CPU, and graphics adapter capabilities are reported; Vulkan compute initializes by default on a dedicated daemon thread and falls back safely when unavailable.
 - A scalar CPU spatial batch backend and a Vulkan compute backend implement the same squared-distance operation for correctness comparisons.
 - A logical region-owner model provides deterministic ownership, per-target FIFO mailboxes, tick-boundary dispatch, and cross-region message accounting.
 - A controlled plugin bridge kernel provides lifecycle callbacks, plugin-owned commands, permissions, and cancellable prioritized events. The Forge command bridge exposes registered commands and `/hypercore plugins` reports bridge health.
-- GPU support now includes Vulkan loader/API detection, device selection, a compiled SPIR-V compute shader, host-visible storage buffers, a correctness self-test, and a configurable batch-size offload policy. Runtime execution defaults to `adaptive-vulkan` and falls back to `cpu-scalar` if initialization or a later dispatch fails.
+- GPU support now includes Vulkan loader/API detection, device selection, a compiled SPIR-V compute shader, host-visible storage buffers, a correctness self-test, and a configurable batch-size offload policy. Runtime execution uses `cpu-scalar` while Vulkan initializes, switches atomically to `adaptive-vulkan` when ready, and falls back to CPU after a later dispatch failure.
+- An immutable structure-of-arrays position snapshot and radius-query service turn the distance kernel into a reusable read-only spatial workflow. Query, candidate, match, initialization-state, initialization-time, and CPU/GPU batch counters are exposed through `/hypercore capabilities`.
 
 ## Build
 
@@ -70,7 +71,9 @@ Invalid values are rejected by Forge's config specification. GPU loader, device,
 
 ## Compute backends
 
-The scalar backend is the deterministic correctness baseline for structure-of-arrays squared-distance batches. The default `adaptive-vulkan` router runs a Vulkan compute shader for batches at or above `compute.gpuMinimumBatchSize` and sends smaller batches to CPU. It performs a 1,024-element GPU-vs-CPU self-test at startup and permanently falls back to `cpu-scalar` after a runtime GPU failure. This compute primitive is not wired into Minecraft entity simulation yet.
+The scalar backend is the deterministic correctness baseline for structure-of-arrays squared-distance batches. Vulkan device creation and the 1,024-element GPU-vs-CPU self-test run on a dedicated daemon thread, so server startup and compute callers continue on `cpu-scalar` while initialization is in progress. The router switches atomically to `adaptive-vulkan` when ready, sends batches below `compute.gpuMinimumBatchSize` to CPU, and permanently falls back after a runtime GPU failure.
+
+`SpatialQueryEngine` accepts an immutable copy of structure-of-arrays positions and returns the ordered indices whose squared distance is within an inclusive radius. It is a real consumer of the adaptive compute backend and records query, candidate, and match counts. It does not read live Minecraft objects or mutate world state; entity, chunk, and block simulation remain outside the GPU path.
 
 ## Region execution model
 
@@ -96,7 +99,7 @@ This is an ownership and messaging foundation, not parallel Minecraft world tick
 
 ## GPU policy
 
-GPU support is enabled by default and always has a CPU fallback. HyperCore enumerates graphics adapters and VRAM through OSHI, probes the Vulkan loader and API version through JNA, selects a compute-capable physical device, and submits a compiled SPIR-V squared-distance kernel through host-visible storage buffers. GPU use is gated by batch size and a startup correctness self-test; device limits or dispatch failures disable only the GPU path. Candidate workloads include batch terrain density generation, spatial broad-phase queries, and other data-oriented jobs. A GPU path will only be retained for a workload when it improves complete server tick or generation latency after upload, synchronization, and readback costs.
+GPU support is enabled by default and always has a CPU fallback. HyperCore enumerates graphics adapters and VRAM through OSHI, probes the Vulkan loader and API version through JNA, selects a compute-capable physical device, and submits a compiled SPIR-V squared-distance kernel through host-visible storage buffers. Vulkan creation and self-test are asynchronous; shutdown interrupts and bounded-joins initialization, and a backend that finishes after shutdown closes its native resources instead of becoming active. GPU use is gated by batch size and correctness verification; device limits or dispatch failures disable only the GPU path. Candidate workloads include batch terrain density generation, spatial broad-phase queries, and other data-oriented jobs. A GPU path will only be retained for a workload when it improves complete server tick or generation latency after upload, synchronization, and readback costs.
 
 ## Plugin bridge kernel
 
@@ -116,6 +119,7 @@ Forge command registration is bridged into this SPI, but external plugin JAR dis
 - [x] Controlled plugin bridge kernel for commands, permissions, lifecycle, and events
 - [ ] CPU vector compute baseline
 - [x] Vulkan compute prototype with SPIR-V shader, self-test, and CPU fallback
+- [x] Asynchronous Vulkan lifecycle and immutable spatial-radius query service
 - [ ] Bukkit/Paper namespace adapter and mod/plugin compatibility matrix
 
 See [CHANGELOG.md](CHANGELOG.md) for completed changes.

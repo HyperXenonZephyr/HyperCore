@@ -2,6 +2,7 @@ package dev.hypercore;
 
 import com.mojang.logging.LogUtils;
 import dev.hypercore.command.HyperCoreCommands;
+import dev.hypercore.compute.AdaptiveSpatialComputeBackend;
 import dev.hypercore.config.HyperCoreConfig;
 import dev.hypercore.hardware.RuntimeCapabilities;
 import dev.hypercore.plugin.ForgePluginCommandBridge;
@@ -62,14 +63,19 @@ public final class HyperCore {
         );
         logGpuCapabilities(capabilities.gpu());
         logVulkanCapabilities();
-        if (runtime.computeStatus().gpuAvailable()) {
+        AdaptiveSpatialComputeBackend.Status computeStatus = runtime.computeStatus();
+        if (computeStatus.gpuAvailable()) {
             LOGGER.info(
                 "Vulkan compute is enabled on {} with a minimum batch size of {}",
-                runtime.computeStatus().deviceName(),
-                runtime.computeStatus().minimumBatchSize()
+                computeStatus.deviceName(),
+                computeStatus.minimumBatchSize()
             );
+        } else if (computeStatus.initializationState() == AdaptiveSpatialComputeBackend.InitializationState.INITIALIZING) {
+            LOGGER.info("Vulkan compute is initializing asynchronously; CPU fallback is serving batches");
+        } else if (computeStatus.initializationState() == AdaptiveSpatialComputeBackend.InitializationState.CLOSED) {
+            LOGGER.info("Vulkan compute is closed");
         } else {
-            LOGGER.warn("Vulkan compute is unavailable; using cpu-scalar: {}", runtime.computeStatus().unavailableReason());
+            LOGGER.warn("Vulkan compute is unavailable; using cpu-scalar: {}", computeStatus.unavailableReason());
         }
     }
 

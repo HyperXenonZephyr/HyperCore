@@ -3,6 +3,7 @@ package dev.hypercore.runtime;
 import dev.hypercore.compute.AdaptiveSpatialComputeBackend;
 import dev.hypercore.compute.GpuOffloadPolicy;
 import dev.hypercore.compute.SpatialComputeBackend;
+import dev.hypercore.compute.SpatialQueryEngine;
 import dev.hypercore.concurrent.HyperCoreExecutor;
 import dev.hypercore.config.HyperCoreConfig;
 import dev.hypercore.hardware.RuntimeCapabilities;
@@ -41,7 +42,8 @@ public final class HyperCoreRuntime implements AutoCloseable {
             new RegionTaskCoordinator(executor, workers),
             vulkan,
             gpuOffloadPolicy,
-            computeBackend
+            computeBackend,
+            new SpatialQueryEngine(computeBackend)
         );
         plugins.enableAll();
     }
@@ -84,6 +86,10 @@ public final class HyperCoreRuntime implements AutoCloseable {
 
     public AdaptiveSpatialComputeBackend.Status computeStatus() {
         return requireState().computeBackend().status();
+    }
+
+    public SpatialQueryEngine spatialQueries() {
+        return requireState().spatialQueries();
     }
 
     public Status status() {
@@ -130,7 +136,8 @@ public final class HyperCoreRuntime implements AutoCloseable {
         RegionTaskCoordinator regionTasks,
         VulkanRuntimeProbe.Result vulkan,
         GpuOffloadPolicy gpuOffloadPolicy,
-        AdaptiveSpatialComputeBackend computeBackend
+        AdaptiveSpatialComputeBackend computeBackend,
+        SpatialQueryEngine spatialQueries
     ) {
     }
 

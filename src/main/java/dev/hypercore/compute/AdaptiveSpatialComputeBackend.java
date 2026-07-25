@@ -4,56 +4,77 @@ import com.mojang.logging.LogUtils;
 import org.slf4j.Logger;
 
 import java.util.Objects;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 
+/** Routes batch work to Vulkan when ready and keeps a deterministic CPU path available. */
 public final class AdaptiveSpatialComputeBackend implements SpatialComputeBackend, AutoCloseable {
     public static final String VULKAN_ID = "adaptive-vulkan";
-
     private static final Logger LOGGER = LogUtils.getLogger();
+    private static final long INITIALIZER_JOIN_MILLIS = 5_000L;
 
     private final ScalarSpatialComputeBackend cpu = new ScalarSpatialComputeBackend();
     private final GpuOffloadPolicy policy;
     private final AtomicLong cpuBatches = new AtomicLong();
     private final AtomicLong gpuBatches = new AtomicLong();
     private final AtomicLong gpuFailures = new AtomicLong();
-    private volatile VulkanSpatialComputeBackend gpu;
+    private final AtomicLong spatialQueries = new AtomicLong();
+    private final AtomicLong spatialCandidates = new AtomicLong();
+    private final AtomicLong spatialMatches = new AtomicLong();
+    private final CountDownLatch initializationComplete;
+    private final GpuBackendFactory gpuFactory;
+    private final long initializationStartedNanos;
+    private volatile long initializationFinishedNanos;
+    private volatile InitializationState initializationState;
+    private volatile ManagedSpatialComputeBackend gpu;
     private volatile String unavailableReason;
+    private volatile Thread initializer;
+    private volatile boolean closed;
 
     private AdaptiveSpatialComputeBackend(
         GpuOffloadPolicy policy,
-        VulkanSpatialComputeBackend gpu,
-        String unavailableReason
+        ManagedSpatialComputeBackend gpu,
+        InitializationState state,
+        String unavailableReason,
+        GpuBackendFactory gpuFactory
     ) {
         this.policy = Objects.requireNonNull(policy, "policy");
         this.gpu = gpu;
+        this.initializationState = Objects.requireNonNull(state, "state");
         this.unavailableReason = Objects.requireNonNullElse(unavailableReason, "");
+        this.gpuFactory = gpuFactory;
+        this.initializationComplete = new CountDownLatch(state == InitializationState.INITIALIZING ? 1 : 0);
+        this.initializationStartedNanos = System.nanoTime();
+        this.initializationFinishedNanos = state == InitializationState.INITIALIZING ? 0L : initializationStartedNanos;
     }
 
+    /** Starts Vulkan creation off the server lifecycle thread. */
     public static AdaptiveSpatialComputeBackend create(GpuOffloadPolicy policy, boolean enabled) {
         if (!enabled) {
-            return new AdaptiveSpatialComputeBackend(policy, null, "disabled by configuration");
+            return unavailable(policy, "disabled by configuration");
         }
-        VulkanSpatialComputeBackend gpu = null;
-        try {
-            gpu = VulkanSpatialComputeBackend.create();
-            verify(gpu);
-            return new AdaptiveSpatialComputeBackend(policy, gpu, "");
-        } catch (RuntimeException | LinkageError error) {
-            if (gpu != null) {
-                try {
-                    gpu.close();
-                } catch (RuntimeException closeError) {
-                    error.addSuppressed(closeError);
-                }
-            }
-            String reason = error.getClass().getSimpleName() + ": " + normalize(error.getMessage());
-            LOGGER.warn("Vulkan compute initialization failed; using cpu-scalar: {}", reason);
-            return new AdaptiveSpatialComputeBackend(policy, null, reason);
-        }
+        AdaptiveSpatialComputeBackend backend = new AdaptiveSpatialComputeBackend(
+            policy, null, InitializationState.INITIALIZING, "", VulkanSpatialComputeBackend::create);
+        Thread initializer = new Thread(backend::initializeGpu, "HyperCore-Vulkan-Init");
+        initializer.setDaemon(true);
+        backend.initializer = initializer;
+        initializer.start();
+        return backend;
     }
 
     public static AdaptiveSpatialComputeBackend unavailable(GpuOffloadPolicy policy, String reason) {
-        return new AdaptiveSpatialComputeBackend(policy, null, reason);
+        return new AdaptiveSpatialComputeBackend(policy, null, InitializationState.UNAVAILABLE, reason, null);
+    }
+
+    static AdaptiveSpatialComputeBackend createForTesting(GpuOffloadPolicy policy, GpuBackendFactory gpuFactory) {
+        AdaptiveSpatialComputeBackend backend = new AdaptiveSpatialComputeBackend(
+            policy, null, InitializationState.INITIALIZING, "", Objects.requireNonNull(gpuFactory, "gpuFactory"));
+        Thread initializer = new Thread(backend::initializeGpu, "HyperCore-Vulkan-Init-Test");
+        initializer.setDaemon(true);
+        backend.initializer = initializer;
+        initializer.start();
+        return backend;
     }
 
     @Override
@@ -77,11 +98,17 @@ public final class AdaptiveSpatialComputeBackend implements SpatialComputeBacken
         float[] output
     ) {
         int size = validate(positionsX, positionsY, positionsZ, output);
-        VulkanSpatialComputeBackend currentGpu = gpu;
+        ManagedSpatialComputeBackend currentGpu = gpu;
         GpuOffloadPolicy.Decision decision = policy.evaluate(size, currentGpu != null, currentGpu != null);
         if (decision.offload()) {
             try {
-                currentGpu.squaredDistances(originX, originY, originZ, positionsX, positionsY, positionsZ, output);
+                // Keep dispatch and native cleanup mutually exclusive.
+                synchronized (this) {
+                    if (closed || gpu != currentGpu) {
+                        throw new IllegalStateException("Vulkan compute backend is closing");
+                    }
+                    currentGpu.squaredDistances(originX, originY, originZ, positionsX, positionsY, positionsZ, output);
+                }
                 gpuBatches.incrementAndGet();
                 return;
             } catch (VulkanSpatialComputeBackend.BatchNotSupportedException unsupported) {
@@ -95,44 +122,127 @@ public final class AdaptiveSpatialComputeBackend implements SpatialComputeBacken
         cpuBatches.incrementAndGet();
     }
 
-    public Status status() {
-        VulkanSpatialComputeBackend currentGpu = gpu;
+    void recordSpatialQuery(int candidateCount, int matchCount) {
+        spatialQueries.incrementAndGet();
+        spatialCandidates.addAndGet(candidateCount);
+        spatialMatches.addAndGet(matchCount);
+    }
+
+    public synchronized Status status() {
+        ManagedSpatialComputeBackend currentGpu = gpu;
+        long finished = initializationFinishedNanos;
+        long duration = finished == 0L ? System.nanoTime() - initializationStartedNanos : finished - initializationStartedNanos;
         return new Status(
             currentGpu != null,
+            initializationState,
+            duration / 1_000_000L,
             currentGpu == null ? "" : currentGpu.deviceName(),
             policy.minimumBatchSize(),
             cpuBatches.get(),
             gpuBatches.get(),
             gpuFailures.get(),
+            spatialQueries.get(),
+            spatialCandidates.get(),
+            spatialMatches.get(),
             unavailableReason
         );
     }
 
+    boolean awaitInitialization(long timeout, TimeUnit unit) throws InterruptedException {
+        return initializationComplete.await(timeout, unit);
+    }
+
     @Override
-    public synchronized void close() {
-        VulkanSpatialComputeBackend currentGpu = gpu;
-        gpu = null;
+    public void close() {
+        Thread pendingInitializer;
+        ManagedSpatialComputeBackend currentGpu;
+        synchronized (this) {
+            if (closed) {
+                return;
+            }
+            closed = true;
+            initializationState = InitializationState.CLOSED;
+            if (initializationFinishedNanos == 0L) {
+                initializationFinishedNanos = System.nanoTime();
+            }
+            pendingInitializer = initializer;
+            initializer = null;
+            currentGpu = gpu;
+            gpu = null;
+        }
+        if (pendingInitializer != null && pendingInitializer != Thread.currentThread()) {
+            pendingInitializer.interrupt();
+            try {
+                pendingInitializer.join(INITIALIZER_JOIN_MILLIS);
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                LOGGER.warn("Interrupted while waiting for Vulkan initialization to stop");
+            }
+        }
         if (currentGpu != null) {
-            currentGpu.close();
+            closeGpu(currentGpu);
         }
     }
 
-    private synchronized void disableGpu(VulkanSpatialComputeBackend failedGpu, Throwable error) {
-        if (gpu != failedGpu) {
+    private void initializeGpu() {
+        ManagedSpatialComputeBackend created = null;
+        try {
+            created = gpuFactory.create();
+            verify(created);
+            synchronized (this) {
+                if (closed) {
+                    closeGpu(created);
+                    return;
+                }
+                gpu = created;
+                initializationState = InitializationState.READY;
+                initializationFinishedNanos = System.nanoTime();
+                unavailableReason = "";
+                initializer = null;
+            }
+            LOGGER.info("Vulkan compute initialized asynchronously on {}", created.deviceName());
+        } catch (RuntimeException | LinkageError error) {
+            if (created != null) {
+                closeGpu(created);
+            }
+            String reason = error.getClass().getSimpleName() + ": " + normalize(error.getMessage());
+            synchronized (this) {
+                if (!closed) {
+                    initializationState = InitializationState.UNAVAILABLE;
+                    initializationFinishedNanos = System.nanoTime();
+                    unavailableReason = reason;
+                    initializer = null;
+                }
+            }
+            if (!closed) {
+                LOGGER.warn("Vulkan compute initialization failed; using cpu-scalar: {}", reason);
+            }
+        } finally {
+            initializationComplete.countDown();
+        }
+    }
+
+    private synchronized void disableGpu(ManagedSpatialComputeBackend failedGpu, Throwable error) {
+        if (gpu != failedGpu || closed) {
             return;
         }
         gpu = null;
+        initializationState = InitializationState.UNAVAILABLE;
         gpuFailures.incrementAndGet();
         unavailableReason = error.getClass().getSimpleName() + ": " + normalize(error.getMessage());
         LOGGER.error("Vulkan compute failed and has been disabled; using cpu-scalar", error);
+        closeGpu(failedGpu);
+    }
+
+    private static void closeGpu(ManagedSpatialComputeBackend backend) {
         try {
-            failedGpu.close();
-        } catch (RuntimeException closeError) {
-            LOGGER.warn("Vulkan compute cleanup also failed", closeError);
+            backend.close();
+        } catch (RuntimeException | LinkageError closeError) {
+            LOGGER.warn("Vulkan compute cleanup failed", closeError);
         }
     }
 
-    private static void verify(VulkanSpatialComputeBackend gpu) {
+    private static void verify(SpatialComputeBackend gpu) {
         int size = 1_024;
         float[] x = new float[size];
         float[] y = new float[size];
@@ -174,13 +284,30 @@ public final class AdaptiveSpatialComputeBackend implements SpatialComputeBacken
         return size;
     }
 
+    public enum InitializationState {
+        INITIALIZING,
+        READY,
+        UNAVAILABLE,
+        CLOSED
+    }
+
+    @FunctionalInterface
+    interface GpuBackendFactory {
+        ManagedSpatialComputeBackend create();
+    }
+
     public record Status(
         boolean gpuAvailable,
+        InitializationState initializationState,
+        long initializationDurationMillis,
         String deviceName,
         int minimumBatchSize,
         long cpuBatches,
         long gpuBatches,
         long gpuFailures,
+        long spatialQueries,
+        long spatialCandidates,
+        long spatialMatches,
         String unavailableReason
     ) {
     }
