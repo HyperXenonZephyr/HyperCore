@@ -130,11 +130,12 @@ public final class HyperCoreExecutor implements AutoCloseable {
         @Override
         public void run() {
             try {
-                future.complete(supplier.get());
-            } catch (Throwable error) {
-                future.completeExceptionally(error);
-            } finally {
+                T result = supplier.get();
                 completedTasks.increment();
+                future.complete(result);
+            } catch (Throwable error) {
+                completedTasks.increment();
+                future.completeExceptionally(error);
             }
         }
 

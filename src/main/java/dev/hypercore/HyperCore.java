@@ -62,6 +62,15 @@ public final class HyperCore {
         );
         logGpuCapabilities(capabilities.gpu());
         logVulkanCapabilities();
+        if (runtime.computeStatus().gpuAvailable()) {
+            LOGGER.info(
+                "Vulkan compute is enabled on {} with a minimum batch size of {}",
+                runtime.computeStatus().deviceName(),
+                runtime.computeStatus().minimumBatchSize()
+            );
+        } else {
+            LOGGER.warn("Vulkan compute is unavailable; using cpu-scalar: {}", runtime.computeStatus().unavailableReason());
+        }
     }
 
     @SubscribeEvent

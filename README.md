@@ -7,7 +7,7 @@ HyperCore is an experimental high-performance Minecraft Java server project buil
 
 ## Current status
 
-Milestones 0 through 3 establish a buildable, dedicated-server-only Forge foundation:
+Milestones 0 through 4 establish a buildable, dedicated-server-only Forge foundation:
 
 - Minecraft 1.21.1, Forge 52.1.16, and Java 21 are pinned.
 - HyperCore loads as a server-side Forge component.
@@ -15,12 +15,12 @@ Milestones 0 through 3 establish a buildable, dedicated-server-only Forge founda
 - A 200-tick latency window reports average, p95, and maximum tick duration.
 - Operator diagnostics are available through `/hypercore status`, `/hypercore timings`, `/hypercore capabilities`, and `/hypercore regions`.
 - A Forge GameTest verifies that HyperCore loads in a real dedicated-server environment.
-- Forge configuration controls worker count, queue capacity, tick sampling, and GPU probing.
-- OS, JVM, logical CPU, and graphics adapter capabilities are reported without making GPU acceleration a startup requirement.
-- A scalar CPU spatial batch backend provides the correctness baseline for later Vector API and GPU implementations.
+- Forge configuration controls worker count, queue capacity, tick sampling, GPU probing, and the default-on GPU compute path.
+- OS, JVM, logical CPU, and graphics adapter capabilities are reported; Vulkan compute initializes by default and falls back safely when unavailable.
+- A scalar CPU spatial batch backend and a Vulkan compute backend implement the same squared-distance operation for correctness comparisons.
 - A logical region-owner model provides deterministic ownership, per-target FIFO mailboxes, tick-boundary dispatch, and cross-region message accounting.
 - A controlled plugin bridge kernel provides lifecycle callbacks, plugin-owned commands, permissions, and cancellable prioritized events. The Forge command bridge exposes registered commands and `/hypercore plugins` reports bridge health.
-- GPU probing now includes Vulkan loader/API detection and a configurable batch-size offload policy. Runtime execution remains `cpu-scalar` until a Vulkan compute backend passes correctness and end-to-end latency gates.
+- GPU support now includes Vulkan loader/API detection, device selection, a compiled SPIR-V compute shader, host-visible storage buffers, a correctness self-test, and a configurable batch-size offload policy. Runtime execution defaults to `adaptive-vulkan` and falls back to `cpu-scalar` if initialization or a later dispatch fails.
 
 ## Build
 
@@ -61,13 +61,14 @@ Forge creates `config/hypercore-common.toml` on first launch.
 | `execution.queueCapacity` | `0` | Automatic mode allocates 64 queued tasks per worker, with a minimum of 256. |
 | `metrics.tickSampleWindow` | `200` | Controls the rolling tick latency sample count. |
 | `compute.probeGpu` | `true` | Enables best-effort graphics adapter enumeration during startup. |
-| `compute.gpuMinimumBatchSize` | `16384` | Minimum batch size eligible for a future GPU backend. |
+| `compute.enableGpu` | `true` | Enables Vulkan compute initialization and the CPU fallback router. |
+| `compute.gpuMinimumBatchSize` | `16384` | Minimum batch size eligible for Vulkan offload. |
 
-Invalid values are rejected by Forge's config specification. GPU probe failures are reported and fall back to CPU-only operation.
+Invalid values are rejected by Forge's config specification. GPU loader, device, allocation, and dispatch failures are reported and fall back to CPU-only operation without stopping the server.
 
 ## Compute backends
 
-The first backend is `cpu-scalar`. It implements a structure-of-arrays squared-distance batch used as a deterministic correctness baseline for spatial broad-phase experiments. It is not wired into Minecraft entity simulation yet. Future CPU Vector API and Vulkan implementations must produce equivalent results before performance comparisons are accepted.
+The scalar backend is the deterministic correctness baseline for structure-of-arrays squared-distance batches. The default `adaptive-vulkan` router runs a Vulkan compute shader for batches at or above `compute.gpuMinimumBatchSize` and sends smaller batches to CPU. It performs a 1,024-element GPU-vs-CPU self-test at startup and permanently falls back to `cpu-scalar` after a runtime GPU failure. This compute primitive is not wired into Minecraft entity simulation yet.
 
 ## Region execution model
 
@@ -88,12 +89,12 @@ This is an ownership and messaging foundation, not parallel Minecraft world tick
 1. **Forge foundation**: preserve native Forge lifecycle, registries, events, and mod compatibility.
 2. **Compatibility bridge**: implement a controlled Bukkit-compatible API and event bridge rather than merging unrelated patched server jars.
 3. **Parallel execution**: establish region ownership and tick-boundary message passing before parallel world mutation.
-4. **Compute backends**: benchmark CPU scalar, Java Vector API, and optional GPU implementations for batch-friendly workloads.
+4. **Compute backends**: benchmark CPU scalar, Java Vector API, and GPU implementations for batch-friendly workloads.
 5. **Validation**: require behavior tests and end-to-end MSPT results for every optimization.
 
 ## GPU policy
 
-GPU support will be optional and will always have a CPU fallback. HyperCore currently enumerates graphics adapters and VRAM through OSHI, probes the Vulkan loader and supported API version through JNA, and evaluates whether a batch reaches the configured offload threshold. It still does not submit GPU work. Candidate workloads include batch terrain density generation, spatial broad-phase queries, and other data-oriented jobs. A GPU path will only be retained when it improves complete server tick or generation latency after upload, synchronization, and readback costs.
+GPU support is enabled by default and always has a CPU fallback. HyperCore enumerates graphics adapters and VRAM through OSHI, probes the Vulkan loader and API version through JNA, selects a compute-capable physical device, and submits a compiled SPIR-V squared-distance kernel through host-visible storage buffers. GPU use is gated by batch size and a startup correctness self-test; device limits or dispatch failures disable only the GPU path. Candidate workloads include batch terrain density generation, spatial broad-phase queries, and other data-oriented jobs. A GPU path will only be retained for a workload when it improves complete server tick or generation latency after upload, synchronization, and readback costs.
 
 ## Plugin bridge kernel
 
@@ -112,7 +113,7 @@ Forge command registration is bridged into this SPI, but external plugin JAR dis
 - [x] Region ownership and cross-region task model prototype
 - [x] Controlled plugin bridge kernel for commands, permissions, lifecycle, and events
 - [ ] CPU vector compute baseline
-- [ ] Optional Vulkan compute prototype
+- [x] Vulkan compute prototype with SPIR-V shader, self-test, and CPU fallback
 - [ ] Bukkit/Paper namespace adapter and mod/plugin compatibility matrix
 
 See [CHANGELOG.md](CHANGELOG.md) for completed changes.

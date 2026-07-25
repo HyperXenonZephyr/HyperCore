@@ -3,6 +3,7 @@ plugins {
     id 'idea'
     id 'eclipse'
     id 'net.minecraftforge.gradle' version '[7.0.3,8)'
+    id 'net.minecraftforge.jarjar' version '0.2.3'
 }
 
 version = '0.1.0-SNAPSHOT'
@@ -13,12 +14,24 @@ base {
 }
 
 def devModDirectory = layout.buildDirectory.dir('dev-mod/hypercore')
+def generatedShaderResources = layout.buildDirectory.dir('generated-resources/shaders')
+def lwjglVersion = '3.3.3'
+def operatingSystem = System.getProperty('os.name').toLowerCase(Locale.ROOT)
+def architecture = System.getProperty('os.arch').toLowerCase(Locale.ROOT)
+def lwjglNatives = operatingSystem.contains('win')
+    ? (architecture.contains('aarch64') || architecture.contains('arm64') ? 'natives-windows-arm64' : 'natives-windows')
+    : operatingSystem.contains('mac')
+        ? (architecture.contains('aarch64') || architecture.contains('arm64') ? 'natives-macos-arm64' : 'natives-macos')
+        : (architecture.contains('aarch64') || architecture.contains('arm64') ? 'natives-linux-arm64' : 'natives-linux')
 
 sourceSets {
     devMod {
         java.setSrcDirs([])
         resources.setSrcDirs([])
         output.dir(devModDirectory)
+    }
+    shaderCompiler {
+        resources.setSrcDirs([])
     }
 }
 
@@ -55,9 +68,18 @@ repositories {
     mavenCentral()
 }
 
+jarJar.register()
+
 dependencies {
     implementation minecraft.dependency('net.minecraftforge:forge:1.21.1-52.1.16')
+    implementation(jarJar("org.lwjgl:lwjgl-vulkan:${lwjglVersion}")) {
+        transitive = false
+    }
     compileOnly 'com.github.oshi:oshi-core:6.4.10'
+    shaderCompilerImplementation "org.lwjgl:lwjgl:${lwjglVersion}"
+    shaderCompilerImplementation "org.lwjgl:lwjgl-shaderc:${lwjglVersion}"
+    shaderCompilerRuntimeOnly "org.lwjgl:lwjgl:${lwjglVersion}:${lwjglNatives}"
+    shaderCompilerRuntimeOnly "org.lwjgl:lwjgl-shaderc:${lwjglVersion}:${lwjglNatives}"
     testImplementation platform('org.junit:junit-bom:5.11.4')
     testImplementation 'org.junit.jupiter:junit-jupiter'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
@@ -70,6 +92,25 @@ tasks.withType(JavaCompile).configureEach {
 
 tasks.named('test', Test).configure {
     useJUnitPlatform()
+}
+
+tasks.register('compileComputeShaders', JavaExec) {
+    dependsOn tasks.named('shaderCompilerClasses')
+    classpath = sourceSets.shaderCompiler.runtimeClasspath
+    mainClass = 'dev.hypercore.tools.ComputeShaderCompiler'
+    args(
+        layout.projectDirectory.file('src/main/shaders/squared_distances.comp').asFile.absolutePath,
+        generatedShaderResources.get().file('assets/hypercore/shaders/squared_distances.spv').asFile.absolutePath
+    )
+    inputs.file layout.projectDirectory.file('src/main/shaders/squared_distances.comp')
+    outputs.file generatedShaderResources.map {
+        it.file('assets/hypercore/shaders/squared_distances.spv')
+    }
+}
+
+tasks.named('processResources').configure {
+    dependsOn tasks.named('compileComputeShaders')
+    from generatedShaderResources
 }
 
 tasks.register('prepareDevMod', Sync) {

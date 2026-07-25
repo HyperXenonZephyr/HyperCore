@@ -31,11 +31,15 @@ All notable changes to HyperCore are documented in this file. The format is base
 - Added concurrency tests for negative chunk mapping, ownership stability, mailbox ordering, tick isolation, and rejected-batch requeueing.
 - Added the controlled plugin bridge kernel with plugin lifecycle management, command aliases, permission defaults and overrides, prioritized cancellable events, cleanup on failure, and a Forge Brigadier command bridge.
 - Added `/hypercore plugins` diagnostics and plugin-owned command dispatch while explicitly keeping Bukkit/Paper namespace and external JAR compatibility out of scope for this milestone.
-- Added Vulkan loader/API probing through JNA, a configurable `compute.gpuMinimumBatchSize` threshold, and explicit GPU offload decisions that preserve the CPU fallback until a real backend is available.
+- Added the Vulkan loader/API probe foundation through JNA, a configurable `compute.gpuMinimumBatchSize` threshold, and explicit GPU offload decisions with a CPU fallback.
 - Added unit coverage for plugin lifecycle, command dispatch, permissions, event ordering, Vulkan version parsing, and GPU offload policy decisions.
+- Added a default-on LWJGL Vulkan compute backend with Jar-in-Jar packaging, build-time Shaderc compilation, device and queue selection, host-visible storage buffers, a compiled squared-distance SPIR-V kernel, and a 1,024-element CPU/GPU correctness self-test.
+- Added adaptive GPU routing: batches above the configured threshold use Vulkan, smaller batches use `cpu-scalar`, and initialization, allocation, limit, or dispatch failures fall back without stopping the server.
+- Added `/hypercore capabilities` reporting for the selected Vulkan device, CPU/GPU batch counts, GPU failures, and fallback reason.
 
 ### Fixed
 
 - Disabled Gradle configuration cache because ForgeGradle 7 could restore an incomplete merged source set after `clean`, producing a JAR with missing classes.
 - Disabled ForgeGradle's merged source-set output, restoring standard Gradle class directories and preventing clean builds from omitting unchanged classes.
 - Staged development classes and resources into one exploded mod directory so Forge server and GameTest runs load HyperCore correctly with standard Gradle source-set outputs.
+- Fixed executor completion metrics so a completed future cannot become visible before `completedTasks` is incremented.

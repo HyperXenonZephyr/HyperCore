@@ -2,6 +2,7 @@ package dev.hypercore.command;
 
 import com.mojang.brigadier.CommandDispatcher;
 import dev.hypercore.HyperCore;
+import dev.hypercore.compute.AdaptiveSpatialComputeBackend;
 import dev.hypercore.hardware.RuntimeCapabilities;
 import dev.hypercore.metrics.TickMetrics;
 import dev.hypercore.region.RegionTaskCoordinator;
@@ -95,12 +96,20 @@ public final class HyperCoreCommands {
         if (!runtime.vulkan().attempted()) {
             source.sendSuccess(() -> Component.literal("Vulkan loader probe: disabled"), false);
         } else if (runtime.vulkan().available()) {
+            AdaptiveSpatialComputeBackend.Status status = runtime.computeStatus();
             source.sendSuccess(() -> Component.literal(
                 "Vulkan loader: " + runtime.vulkan().library()
                     + " | API=" + runtime.vulkan().apiVersion()
-                    + " | GPU backend=not implemented"
-                    + " | minimumBatch=" + runtime.gpuOffloadPolicy().minimumBatchSize()
+                    + " | compute=" + (status.gpuAvailable() ? status.deviceName() : "CPU fallback")
+                    + " | minimumBatch=" + status.minimumBatchSize()
+                    + " | batches=" + status.gpuBatches() + " GPU/" + status.cpuBatches() + " CPU"
+                    + " | failures=" + status.gpuFailures()
             ), false);
+            if (!status.gpuAvailable()) {
+                source.sendSuccess(() -> Component.literal(
+                    "Vulkan compute unavailable: " + status.unavailableReason()
+                ), false);
+            }
         } else {
             source.sendSuccess(() -> Component.literal(
                 "Vulkan loader probe failed: " + runtime.vulkan().error()

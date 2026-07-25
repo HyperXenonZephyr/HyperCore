@@ -21,8 +21,12 @@ public final class HyperCoreConfig {
         .comment("Probe graphics adapters during server startup. Probe failures never prevent startup.")
         .define("compute.probeGpu", true);
 
+    private static final ForgeConfigSpec.BooleanValue ENABLE_GPU = BUILDER
+        .comment("Enable the Vulkan compute backend when initialization and correctness self-tests succeed.")
+        .define("compute.enableGpu", true);
+
     private static final ForgeConfigSpec.IntValue GPU_MINIMUM_BATCH_SIZE = BUILDER
-        .comment("Minimum element count considered for a future GPU compute offload.")
+        .comment("Minimum element count eligible for Vulkan compute offload.")
         .defineInRange("compute.gpuMinimumBatchSize", 16_384, 256, 16_777_216);
 
     public static final ForgeConfigSpec SPEC = BUILDER.build();
@@ -36,6 +40,7 @@ public final class HyperCoreConfig {
             QUEUE_CAPACITY.get(),
             TICK_SAMPLE_WINDOW.get(),
             PROBE_GPU.get(),
+            ENABLE_GPU.get(),
             GPU_MINIMUM_BATCH_SIZE.get()
         );
     }
@@ -45,6 +50,7 @@ public final class HyperCoreConfig {
         int queueCapacity,
         int tickSampleWindow,
         boolean probeGpu,
+        boolean enableGpu,
         int gpuMinimumBatchSize
     ) {
         public Settings {

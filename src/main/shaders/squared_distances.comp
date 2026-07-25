@@ -1,0 +1,38 @@
+#version 450
+
+layout(local_size_x = 256) in;
+
+layout(set = 0, binding = 0, std430) readonly buffer PositionsX {
+    float values[];
+} positionsX;
+
+layout(set = 0, binding = 1, std430) readonly buffer PositionsY {
+    float values[];
+} positionsY;
+
+layout(set = 0, binding = 2, std430) readonly buffer PositionsZ {
+    float values[];
+} positionsZ;
+
+layout(set = 0, binding = 3, std430) writeonly buffer SquaredDistances {
+    float values[];
+} outputValues;
+
+layout(push_constant) uniform Parameters {
+    float originX;
+    float originY;
+    float originZ;
+    uint count;
+} parameters;
+
+void main() {
+    uint index = gl_GlobalInvocationID.x;
+    if (index >= parameters.count) {
+        return;
+    }
+
+    float deltaX = positionsX.values[index] - parameters.originX;
+    float deltaY = positionsY.values[index] - parameters.originY;
+    float deltaZ = positionsZ.values[index] - parameters.originZ;
+    outputValues.values[index] = deltaX * deltaX + deltaY * deltaY + deltaZ * deltaZ;
+}
