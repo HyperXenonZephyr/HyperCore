@@ -18,6 +18,7 @@ public final class SpatialComputeBenchmark {
         SpatialComputeBackend cpu,
         SpatialComputeBackend gpu,
         String gpuDevice,
+        String gpuTransferMode,
         int[] batchSizes,
         int warmupIterations,
         int sampleIterations
@@ -25,6 +26,7 @@ public final class SpatialComputeBenchmark {
         Objects.requireNonNull(cpu, "cpu");
         Objects.requireNonNull(gpu, "gpu");
         Objects.requireNonNull(gpuDevice, "gpuDevice");
+        Objects.requireNonNull(gpuTransferMode, "gpuTransferMode");
         Objects.requireNonNull(batchSizes, "batchSizes");
         if (batchSizes.length == 0) {
             throw new IllegalArgumentException("batchSizes cannot be empty");
@@ -68,7 +70,7 @@ public final class SpatialComputeBenchmark {
                 (long) cpuMask.length * Integer.BYTES
             ));
         }
-        return new Report(gpuDevice, warmupIterations, sampleIterations, List.copyOf(results));
+        return new Report(gpuDevice, gpuTransferMode, warmupIterations, sampleIterations, List.copyOf(results));
     }
 
     static long percentile(long[] samples, double percentile) {
@@ -157,12 +159,14 @@ public final class SpatialComputeBenchmark {
 
     public record Report(
         String gpuDevice,
+        String gpuTransferMode,
         int warmupIterations,
         int sampleIterations,
         List<BatchResult> batches
     ) {
         public Report {
             gpuDevice = Objects.requireNonNull(gpuDevice, "gpuDevice");
+            gpuTransferMode = Objects.requireNonNull(gpuTransferMode, "gpuTransferMode");
             batches = List.copyOf(batches);
         }
 
@@ -188,6 +192,7 @@ public final class SpatialComputeBenchmark {
             output.append("# HyperCore Compute Benchmark\n\n")
                 .append("Generated: ").append(generatedAt).append("\n\n")
                 .append("- GPU: `").append(gpuDevice).append("`\n")
+                .append("- GPU transfer mode: `").append(gpuTransferMode).append("`\n")
                 .append("- Java: `").append(System.getProperty("java.version")).append("`\n")
                 .append("- OS: `").append(System.getProperty("os.name")).append(' ')
                 .append(System.getProperty("os.arch")).append("`\n")
@@ -196,7 +201,7 @@ public final class SpatialComputeBenchmark {
                 .append("- Timed samples per backend and batch: ").append(sampleIterations).append("\n\n")
                 .append("The position arrays and output masks are allocated before timing. CPU timings include scalar mask ")
                 .append("construction. GPU timings include three host uploads, compute dispatch, fence wait, and packed-mask ")
-                .append("readback through persistent buffers. Snapshot creation and result-index expansion are excluded.\n\n")
+                .append("readback through persistent mapped host-coherent buffers. Snapshot creation and result-index expansion are excluded.\n\n")
                 .append("| Candidates | CPU p50 (ms) | CPU p95 (ms) | GPU p50 (ms) | GPU p95 (ms) | p50 speedup | GPU readback |\n")
                 .append("| ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n");
             for (BatchResult batch : batches) {

@@ -7,7 +7,7 @@ HyperCore is an experimental high-performance Minecraft Java server project buil
 
 ## Current status
 
-Milestones 0 through 7 establish a buildable, dedicated-server-only Forge foundation:
+Milestones 0 through 9 establish a buildable, dedicated-server-only Forge foundation:
 
 - Minecraft 1.21.1, Forge 52.1.16, and Java 21 are pinned.
 - HyperCore loads as a server-side Forge component.
@@ -20,9 +20,9 @@ Milestones 0 through 7 establish a buildable, dedicated-server-only Forge founda
 - A scalar CPU spatial batch backend and a Vulkan compute backend implement the same squared-distance operation for correctness comparisons.
 - A logical region-owner model provides deterministic ownership, per-target FIFO mailboxes, tick-boundary dispatch, and cross-region message accounting.
 - A controlled plugin bridge kernel provides lifecycle callbacks, plugin-owned commands, permissions, and cancellable prioritized events. The Forge command bridge exposes registered commands and `/hypercore plugins` reports bridge health.
-- GPU support now includes Vulkan loader/API detection, device selection, two compiled SPIR-V compute pipelines, persistent host-visible storage buffers, correctness self-tests, and a configurable batch-size offload policy. Runtime execution uses `cpu-scalar` while Vulkan initializes, switches atomically to `adaptive-vulkan` when ready, and falls back to CPU after a later dispatch failure.
+- GPU support now includes Vulkan loader/API detection, device selection, two compiled SPIR-V compute pipelines, persistently mapped host-coherent storage buffers, correctness self-tests, and a configurable batch-size offload policy. Runtime execution uses `cpu-scalar` while Vulkan initializes, switches atomically to `adaptive-vulkan` when ready, and falls back to CPU after a later dispatch failure.
 - An immutable structure-of-arrays position snapshot and radius-query service now uses a GPU-generated packed match mask instead of reading every distance back to CPU. Query, candidate, match, mask, readback-byte, initialization-state, initialization-time, and CPU/GPU batch counters are exposed through `/hypercore capabilities`.
-- A deterministic `benchmarkCompute` Gradle task measures complete scalar and Vulkan mask calls after warmup, including GPU uploads, dispatch, fence wait, and packed readback. The current RTX 4060 report is recorded in [BENCHMARKS.md](BENCHMARKS.md); it found no conservative GPU p50 crossover from 4K through 4M candidates.
+- A deterministic `benchmarkCompute` Gradle task measures complete scalar and Vulkan mask calls after warmup, including GPU uploads, dispatch, fence wait, and packed readback. The current RTX 4060 report and directional pre/post persistent-mapping comparison are recorded in [BENCHMARKS.md](BENCHMARKS.md); neither run found a conservative GPU p50 crossover from 4K through 4M candidates.
 
 ## Build
 
@@ -84,7 +84,7 @@ The scalar backend is the deterministic correctness baseline for structure-of-ar
 
 `SpatialQueryEngine` accepts an immutable copy of structure-of-arrays positions and returns the ordered indices whose squared distance is within an inclusive radius. Its scalar path packs matches directly, while its Vulkan path processes 32 candidates per invocation and returns one 32-bit mask word. This reduces result readback from four bytes per candidate to four bytes per 32 candidates, excluding fixed synchronization costs. It is a real consumer of the adaptive compute backend and records query, candidate, match, mask-batch, and GPU readback-byte counts.
 
-The packed mask is an exact transfer-size improvement, not an end-to-end performance claim. On the current RTX 4060 calibration, CPU p50 remained lower than GPU p50 at every tested size because upload and synchronization costs dominate. Entity, chunk, and block simulation still remain outside the GPU path. The default offload threshold is intentionally unchanged until persistent staging and end-to-end query/tick measurements establish a sustained crossover.
+The packed mask is an exact transfer-size improvement, not an end-to-end performance claim. Vulkan buffers now remain persistently mapped for their lifetime, removing per-dispatch map/unmap calls. On the current RTX 4060 calibration, CPU p50 still remained lower than GPU p50 at every tested size because three full position uploads and synchronization costs dominate; the persistent mapping change improved several large-batch readings but did not establish a crossover. Entity, chunk, and block simulation still remain outside the GPU path. The default offload threshold is intentionally unchanged until resident snapshot reuse and end-to-end query/tick measurements establish a sustained crossover.
 
 ## Region execution model
 
@@ -110,7 +110,7 @@ This is an ownership and messaging foundation, not parallel Minecraft world tick
 
 ## GPU policy
 
-GPU support is enabled by default and always has a CPU fallback. HyperCore enumerates graphics adapters and VRAM through OSHI, probes the Vulkan loader and API version through JNA, selects a compute-capable physical device, and submits compiled squared-distance and packed-radius-mask SPIR-V kernels through persistent host-visible storage buffers. Vulkan creation and both correctness self-tests are asynchronous; shutdown interrupts and bounded-joins initialization, and a backend that finishes after shutdown closes its native resources instead of becoming active. GPU use is gated by batch size and correctness verification; device limits or dispatch failures disable only the GPU path. Candidate workloads include batch terrain density generation, spatial broad-phase queries, and other data-oriented jobs. A GPU path will only be retained for a workload when it improves complete server tick or generation latency after upload, synchronization, and readback costs.
+GPU support is enabled by default and always has a CPU fallback. HyperCore enumerates graphics adapters and VRAM through OSHI, probes the Vulkan loader and API version through JNA, selects a compute-capable physical device, and submits compiled squared-distance and packed-radius-mask SPIR-V kernels through persistently mapped host-coherent storage buffers. Vulkan creation and both correctness self-tests are asynchronous; shutdown interrupts and bounded-joins initialization, and a backend that finishes after shutdown closes its native resources instead of becoming active. GPU use is gated by batch size and correctness verification; device limits or dispatch failures disable only the GPU path. Candidate workloads include batch terrain density generation, spatial broad-phase queries, and other data-oriented jobs. A GPU path will only be retained for a workload when it improves complete server tick or generation latency after upload, synchronization, and readback costs.
 
 ## Plugin bridge kernel
 
@@ -133,7 +133,8 @@ Forge command registration is bridged into this SPI, but external plugin JAR dis
 - [x] Asynchronous Vulkan lifecycle and immutable spatial-radius query service
 - [x] Packed GPU radius-mask pipeline with compressed result readback
 - [x] Reproducible scalar-vs-Vulkan packed-mask benchmark harness
-- [ ] Persistent mapped staging buffers and measured GPU crossover
+- [x] Persistent mapped host-coherent Vulkan buffers
+- [ ] Resident snapshot reuse across multiple spatial queries and measured GPU crossover
 - [ ] Bukkit/Paper namespace adapter and mod/plugin compatibility matrix
 
 See [CHANGELOG.md](CHANGELOG.md) for completed changes.

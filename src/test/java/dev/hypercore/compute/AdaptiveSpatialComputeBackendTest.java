@@ -69,6 +69,7 @@ class AdaptiveSpatialComputeBackendTest {
             assertEquals(AdaptiveSpatialComputeBackend.InitializationState.READY,
                 backend.status().initializationState());
             assertEquals("test-gpu", backend.status().deviceName());
+            assertEquals("managed", backend.status().transferMode());
 
             backend.squaredDistances(0, 0, 0, new float[]{3}, new float[]{0}, new float[]{0}, new float[1]);
             assertEquals(1, backend.status().gpuBatches());

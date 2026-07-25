@@ -102,6 +102,7 @@ public final class HyperCoreCommands {
                     + " | API=" + runtime.vulkan().apiVersion()
                     + " | state=" + status.initializationState().name().toLowerCase(Locale.ROOT)
                     + " | compute=" + (status.gpuAvailable() ? status.deviceName() : "CPU fallback")
+                    + " | transfer=" + (status.gpuAvailable() ? status.transferMode() : "cpu")
                     + " | init=" + status.initializationDurationMillis() + " ms"
                     + " | minimumBatch=" + status.minimumBatchSize()
                     + " | batches=" + status.gpuBatches() + " GPU/" + status.cpuBatches() + " CPU"

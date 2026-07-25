@@ -22,6 +22,7 @@ public final class ComputeBenchmarkMain {
                 new ScalarSpatialComputeBackend(),
                 gpu,
                 gpu.deviceName(),
+                gpu.transferMode(),
                 BATCH_SIZES,
                 20,
                 15

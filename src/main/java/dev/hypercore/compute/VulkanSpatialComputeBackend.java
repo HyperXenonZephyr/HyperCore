@@ -50,8 +50,7 @@ import java.util.Objects;
 
 import static org.lwjgl.system.MemoryStack.stackPush;
 import static org.lwjgl.system.MemoryUtil.NULL;
-import static org.lwjgl.system.MemoryUtil.memFloatBuffer;
-import static org.lwjgl.system.MemoryUtil.memIntBuffer;
+import static org.lwjgl.system.MemoryUtil.memByteBuffer;
 import static org.lwjgl.vulkan.VK10.VK_API_VERSION_1_0;
 import static org.lwjgl.vulkan.VK10.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
 import static org.lwjgl.vulkan.VK10.VK_COMMAND_BUFFER_LEVEL_PRIMARY;
@@ -218,6 +217,11 @@ public final class VulkanSpatialComputeBackend implements ManagedSpatialComputeB
 
     public String deviceName() {
         return deviceName;
+    }
+
+    @Override
+    public String transferMode() {
+        return "persistent-mapped-host-coherent";
     }
 
     @Override
@@ -442,41 +446,24 @@ public final class VulkanSpatialComputeBackend implements ManagedSpatialComputeB
     }
 
     private void upload(GpuBuffer target, float[] values, int size) {
-        try (MemoryStack stack = stackPush()) {
-            PointerBuffer mapped = stack.mallocPointer(1);
-            check(vkMapMemory(device, target.memory(), 0, (long) size * Float.BYTES, 0, mapped), "map upload buffer");
-            try {
-                FloatBuffer destination = memFloatBuffer(mapped.get(0), size);
-                destination.put(values, 0, size);
-            } finally {
-                vkUnmapMemory(device, target.memory());
-            }
-        }
+        FloatBuffer destination = target.mapped().duplicate()
+            .order(ByteOrder.nativeOrder())
+            .asFloatBuffer();
+        destination.put(values, 0, size);
     }
 
     private void download(GpuBuffer source, float[] output, int size) {
-        try (MemoryStack stack = stackPush()) {
-            PointerBuffer mapped = stack.mallocPointer(1);
-            check(vkMapMemory(device, source.memory(), 0, (long) size * Float.BYTES, 0, mapped), "map result buffer");
-            try {
-                memFloatBuffer(mapped.get(0), size).get(output, 0, size);
-            } finally {
-                vkUnmapMemory(device, source.memory());
-            }
-        }
+        FloatBuffer values = source.mapped().duplicate()
+            .order(ByteOrder.nativeOrder())
+            .asFloatBuffer();
+        values.get(output, 0, size);
     }
 
     private void downloadMask(GpuBuffer source, int[] output, int wordCount) {
-        try (MemoryStack stack = stackPush()) {
-            PointerBuffer mapped = stack.mallocPointer(1);
-            check(vkMapMemory(device, source.memory(), 0, (long) wordCount * Integer.BYTES, 0, mapped),
-                "map radius mask buffer");
-            try {
-                memIntBuffer(mapped.get(0), wordCount).get(output, 0, wordCount);
-            } finally {
-                vkUnmapMemory(device, source.memory());
-            }
-        }
+        IntBuffer values = source.mapped().duplicate()
+            .order(ByteOrder.nativeOrder())
+            .asIntBuffer();
+        values.get(output, 0, wordCount);
     }
 
     private static VkInstance createInstance() {
@@ -820,8 +807,11 @@ public final class VulkanSpatialComputeBackend implements ManagedSpatialComputeB
         }
     }
 
-    private record GpuBuffer(long buffer, long memory, long sizeBytes) {
+    private record GpuBuffer(long buffer, long memory, long sizeBytes, ByteBuffer mapped) {
         private static GpuBuffer create(VkDevice device, VkPhysicalDevice physicalDevice, long sizeBytes) {
+            if (sizeBytes > Integer.MAX_VALUE) {
+                throw new IllegalArgumentException("Host-visible buffer exceeds Java buffer capacity");
+            }
             try (MemoryStack stack = stackPush()) {
                 VkBufferCreateInfo createInfo = VkBufferCreateInfo.calloc(stack)
                     .sType$Default()
@@ -840,12 +830,21 @@ public final class VulkanSpatialComputeBackend implements ManagedSpatialComputeB
                     .memoryTypeIndex(memoryType);
                 LongBuffer memoryHandle = stack.mallocLong(1);
                 long memory = NULL;
+                boolean mapped = false;
                 try {
                     check(vkAllocateMemory(device, allocation, null, memoryHandle), "allocate storage buffer memory");
                     memory = memoryHandle.get(0);
                     check(vkBindBufferMemory(device, buffer, memory, 0), "bind storage buffer memory");
-                    return new GpuBuffer(buffer, memory, sizeBytes);
+                    PointerBuffer mappedAddress = stack.mallocPointer(1);
+                    check(vkMapMemory(device, memory, 0, sizeBytes, 0, mappedAddress), "map persistent storage buffer");
+                    mapped = true;
+                    ByteBuffer mappedBytes = memByteBuffer(mappedAddress.get(0), (int) sizeBytes)
+                        .order(ByteOrder.nativeOrder());
+                    return new GpuBuffer(buffer, memory, sizeBytes, mappedBytes);
                 } catch (RuntimeException error) {
+                    if (mapped) {
+                        vkUnmapMemory(device, memory);
+                    }
                     if (memory != NULL) {
                         vkFreeMemory(device, memory, null);
                     }
@@ -856,6 +855,7 @@ public final class VulkanSpatialComputeBackend implements ManagedSpatialComputeB
         }
 
         private void close(VkDevice device) {
+            vkUnmapMemory(device, memory);
             vkDestroyBuffer(device, buffer, null);
             vkFreeMemory(device, memory, null);
         }

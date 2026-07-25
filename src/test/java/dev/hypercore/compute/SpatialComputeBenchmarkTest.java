@@ -6,6 +6,7 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class SpatialComputeBenchmarkTest {
     @Test
@@ -21,6 +22,7 @@ class SpatialComputeBenchmarkTest {
     void recommendsFirstMeasuredGpuCrossover() {
         SpatialComputeBenchmark.Report report = new SpatialComputeBenchmark.Report(
             "test-gpu",
+            "test-transfer",
             1,
             3,
             List.of(
@@ -31,12 +33,14 @@ class SpatialComputeBenchmarkTest {
         );
 
         assertEquals(4_096, report.recommendedMinimumBatchSize());
+        assertTrue(report.markdown("test-time").contains("GPU transfer mode: `test-transfer`"));
     }
 
     @Test
     void rejectsAnIsolatedGpuWinAsThresholdEvidence() {
         SpatialComputeBenchmark.Report report = new SpatialComputeBenchmark.Report(
             "test-gpu",
+            "test-transfer",
             1,
             3,
             List.of(
