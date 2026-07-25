@@ -24,6 +24,8 @@ public final class AdaptiveSpatialComputeBackend implements SpatialComputeBacken
     private final AtomicLong gpuRadiusMaskReadbackBytes = new AtomicLong();
     private final AtomicLong gpuSnapshotUploads = new AtomicLong();
     private final AtomicLong gpuSnapshotReuses = new AtomicLong();
+    private final AtomicLong gpuMultiQueryBatches = new AtomicLong();
+    private final AtomicLong gpuMultiQueryQueries = new AtomicLong();
     private final AtomicLong spatialQueries = new AtomicLong();
     private final AtomicLong spatialCandidates = new AtomicLong();
     private final AtomicLong spatialMatches = new AtomicLong();
@@ -276,6 +278,86 @@ public final class AdaptiveSpatialComputeBackend implements SpatialComputeBacken
         cpuRadiusMaskBatches.incrementAndGet();
     }
 
+    private void radiusMasksFromSnapshot(
+        AdaptivePositionSnapshot snapshot,
+        SpatialComputeBackend.RadiusMaskQuery[] queries,
+        int[] outputWords
+    ) {
+        if (snapshot.closed) {
+            throw new IllegalStateException("Position snapshot is closed");
+        }
+        Objects.requireNonNull(queries, "queries");
+        Objects.requireNonNull(outputWords, "outputWords");
+        int size = snapshot.positionsX.length;
+        int wordCount = SpatialComputeBackend.maskWordCount(size);
+        long requiredWords = (long) wordCount * queries.length;
+        if (requiredWords > outputWords.length) {
+            throw new IllegalArgumentException("Output mask cannot fit every radius query");
+        }
+        for (int queryIndex = 0; queryIndex < queries.length; queryIndex++) {
+            Objects.requireNonNull(queries[queryIndex], "queries[" + queryIndex + "]");
+        }
+        if (queries.length == 0) {
+            return;
+        }
+
+        ManagedSpatialComputeBackend currentGpu = gpu;
+        GpuOffloadPolicy.Decision decision = policy.evaluate(size, currentGpu != null, currentGpu != null);
+        if (decision.offload()) {
+            boolean uploaded;
+            try {
+                synchronized (this) {
+                    if (closed || snapshot.closed || gpu != currentGpu) {
+                        throw new IllegalStateException("Vulkan compute backend is closing");
+                    }
+                    if (snapshot.gpuBackend != currentGpu) {
+                        if (snapshot.gpuSnapshot != null) {
+                            snapshot.gpuSnapshot.close();
+                        }
+                        snapshot.gpuSnapshot = currentGpu instanceof VulkanSpatialComputeBackend vulkan
+                            ? vulkan.prepareOwnedSnapshot(
+                                snapshot.positionsX, snapshot.positionsY, snapshot.positionsZ
+                            )
+                            : currentGpu.prepareSnapshot(
+                                snapshot.positionsX, snapshot.positionsY, snapshot.positionsZ
+                            );
+                        snapshot.gpuBackend = currentGpu;
+                    }
+                    uploaded = activeGpuSnapshot != snapshot;
+                    snapshot.gpuSnapshot.radiusMasks(queries, outputWords);
+                    activeGpuSnapshot = snapshot;
+                }
+                gpuBatches.incrementAndGet();
+                gpuRadiusMaskBatches.addAndGet(queries.length);
+                gpuRadiusMaskReadbackBytes.addAndGet(requiredWords * Integer.BYTES);
+                gpuMultiQueryBatches.incrementAndGet();
+                gpuMultiQueryQueries.addAndGet(queries.length);
+                if (uploaded) {
+                    gpuSnapshotUploads.incrementAndGet();
+                } else {
+                    gpuSnapshotReuses.incrementAndGet();
+                }
+                return;
+            } catch (VulkanSpatialComputeBackend.BatchNotSupportedException unsupported) {
+                // This batch can still run correctly on the scalar fallback.
+            } catch (RuntimeException | LinkageError error) {
+                disableGpu(currentGpu, error);
+            }
+        }
+
+        int[] singleMask = new int[wordCount];
+        for (int queryIndex = 0; queryIndex < queries.length; queryIndex++) {
+            SpatialComputeBackend.RadiusMaskQuery query = queries[queryIndex];
+            cpu.radiusMask(
+                query.originX(), query.originY(), query.originZ(), query.squaredRadius(),
+                snapshot.positionsX, snapshot.positionsY, snapshot.positionsZ, singleMask
+            );
+            System.arraycopy(singleMask, 0, outputWords, queryIndex * wordCount, wordCount);
+        }
+        cpuBatches.incrementAndGet();
+        cpuRadiusMaskBatches.addAndGet(queries.length);
+    }
+
     void recordSpatialQuery(int candidateCount, int matchCount) {
         spatialQueries.incrementAndGet();
         spatialCandidates.addAndGet(candidateCount);
@@ -301,6 +383,8 @@ public final class AdaptiveSpatialComputeBackend implements SpatialComputeBacken
             gpuRadiusMaskReadbackBytes.get(),
             gpuSnapshotUploads.get(),
             gpuSnapshotReuses.get(),
+            gpuMultiQueryBatches.get(),
+            gpuMultiQueryQueries.get(),
             spatialQueries.get(),
             spatialCandidates.get(),
             spatialMatches.get(),
@@ -457,6 +541,25 @@ public final class AdaptiveSpatialComputeBackend implements SpatialComputeBacken
             verifyMask("resident-shifted", shiftedMask, actualShiftedMask);
             original.radiusMask(1.25f, -2.5f, 4.0f, 4_096.0f, actualMask);
             verifyMask("resident-restored", expectedMask, actualMask);
+
+            SpatialComputeBackend.RadiusMaskQuery[] queries =
+                new SpatialComputeBackend.RadiusMaskQuery[33];
+            for (int queryIndex = 0; queryIndex < queries.length; queryIndex++) {
+                queries[queryIndex] = new SpatialComputeBackend.RadiusMaskQuery(
+                    queryIndex - 16.0f,
+                    queryIndex % 7 - 3.0f,
+                    queryIndex % 11 - 5.0f,
+                    4_096.0f + queryIndex * 16.0f
+                );
+            }
+            int[] expectedBatchMask = new int[wordCount * queries.length];
+            int[] actualBatchMask = new int[expectedBatchMask.length];
+            try (SpatialComputeBackend.PositionSnapshot scalar =
+                     new ScalarSpatialComputeBackend().prepareSnapshot(x, y, z)) {
+                scalar.radiusMasks(queries, expectedBatchMask);
+            }
+            original.radiusMasks(queries, actualBatchMask);
+            verifyMask("resident-multi-query", expectedBatchMask, actualBatchMask);
         }
     }
 
@@ -531,6 +634,11 @@ public final class AdaptiveSpatialComputeBackend implements SpatialComputeBacken
         }
 
         @Override
+        public int size() {
+            return positionsX.length;
+        }
+
+        @Override
         public void radiusMask(
             float originX,
             float originY,
@@ -541,6 +649,14 @@ public final class AdaptiveSpatialComputeBackend implements SpatialComputeBacken
             owner.radiusMaskFromSnapshot(
                 this, originX, originY, originZ, squaredRadius, outputWords
             );
+        }
+
+        @Override
+        public void radiusMasks(
+            SpatialComputeBackend.RadiusMaskQuery[] queries,
+            int[] outputWords
+        ) {
+            owner.radiusMasksFromSnapshot(this, queries, outputWords);
         }
 
         @Override
@@ -589,6 +705,8 @@ public final class AdaptiveSpatialComputeBackend implements SpatialComputeBacken
         long gpuRadiusMaskReadbackBytes,
         long gpuSnapshotUploads,
         long gpuSnapshotReuses,
+        long gpuMultiQueryBatches,
+        long gpuMultiQueryQueries,
         long spatialQueries,
         long spatialCandidates,
         long spatialMatches,

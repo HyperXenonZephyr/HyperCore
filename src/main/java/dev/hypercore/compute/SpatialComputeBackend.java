@@ -25,16 +25,32 @@ public interface SpatialComputeBackend {
         float[] snapshotX = positionsX.clone();
         float[] snapshotY = positionsY.clone();
         float[] snapshotZ = positionsZ.clone();
-        return (originX, originY, originZ, squaredRadius, outputWords) -> radiusMask(
-            originX,
-            originY,
-            originZ,
-            squaredRadius,
-            snapshotX,
-            snapshotY,
-            snapshotZ,
-            outputWords
-        );
+        return new PositionSnapshot() {
+            @Override
+            public int size() {
+                return snapshotX.length;
+            }
+
+            @Override
+            public void radiusMask(
+                float originX,
+                float originY,
+                float originZ,
+                float squaredRadius,
+                int[] outputWords
+            ) {
+                SpatialComputeBackend.this.radiusMask(
+                    originX,
+                    originY,
+                    originZ,
+                    squaredRadius,
+                    snapshotX,
+                    snapshotY,
+                    snapshotZ,
+                    outputWords
+                );
+            }
+        };
     }
 
     void squaredDistances(
@@ -93,6 +109,8 @@ public interface SpatialComputeBackend {
     }
 
     interface PositionSnapshot extends AutoCloseable {
+        int size();
+
         void radiusMask(
             float originX,
             float originY,
@@ -101,8 +119,38 @@ public interface SpatialComputeBackend {
             int[] outputWords
         );
 
+        default void radiusMasks(RadiusMaskQuery[] queries, int[] outputWords) {
+            Objects.requireNonNull(queries, "queries");
+            Objects.requireNonNull(outputWords, "outputWords");
+            int wordCount = maskWordCount(size());
+            long requiredWords = (long) wordCount * queries.length;
+            if (requiredWords > outputWords.length) {
+                throw new IllegalArgumentException("Output mask cannot fit every radius query");
+            }
+            int[] singleMask = new int[wordCount];
+            for (int queryIndex = 0; queryIndex < queries.length; queryIndex++) {
+                RadiusMaskQuery query = Objects.requireNonNull(queries[queryIndex], "queries[" + queryIndex + "]");
+                radiusMask(
+                    query.originX(),
+                    query.originY(),
+                    query.originZ(),
+                    query.squaredRadius(),
+                    singleMask
+                );
+                System.arraycopy(singleMask, 0, outputWords, queryIndex * wordCount, wordCount);
+            }
+        }
+
         @Override
         default void close() {
+        }
+    }
+
+    record RadiusMaskQuery(float originX, float originY, float originZ, float squaredRadius) {
+        public RadiusMaskQuery {
+            if (Float.isNaN(squaredRadius) || squaredRadius < 0.0f) {
+                throw new IllegalArgumentException("squaredRadius must be non-negative");
+            }
         }
     }
 

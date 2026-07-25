@@ -46,10 +46,60 @@ public final class SpatialQueryEngine implements AutoCloseable {
             maskWords
         );
 
+        QueryResult result = decodeResult(size, maskWords, 0);
+        if (backend instanceof AdaptiveSpatialComputeBackend adaptive) {
+            adaptive.recordSpatialQuery(size, result.matchCount());
+        }
+        return result;
+    }
+
+    public QueryResult[] withinRadii(PositionBatch positions, RadiusQuery... queries) {
+        Objects.requireNonNull(positions, "positions");
+        Objects.requireNonNull(queries, "queries");
+        if (closed) {
+            throw new IllegalStateException("Spatial query engine is closed");
+        }
+        if (queries.length == 0) {
+            return new QueryResult[0];
+        }
+        SpatialComputeBackend.RadiusMaskQuery[] backendQueries =
+            new SpatialComputeBackend.RadiusMaskQuery[queries.length];
+        for (int queryIndex = 0; queryIndex < queries.length; queryIndex++) {
+            RadiusQuery query = Objects.requireNonNull(queries[queryIndex], "queries[" + queryIndex + "]");
+            backendQueries[queryIndex] = new SpatialComputeBackend.RadiusMaskQuery(
+                query.originX(),
+                query.originY(),
+                query.originZ(),
+                query.radius() * query.radius()
+            );
+        }
+
+        int size = positions.size();
+        int wordCount = SpatialComputeBackend.maskWordCount(size);
+        long requiredWords = (long) wordCount * queries.length;
+        if (requiredWords > Integer.MAX_VALUE) {
+            throw new IllegalArgumentException("Batched query output is too large");
+        }
+        int[] maskWords = new int[(int) requiredWords];
+        snapshotFor(positions).radiusMasks(backendQueries, maskWords);
+
+        QueryResult[] results = new QueryResult[queries.length];
+        for (int queryIndex = 0; queryIndex < queries.length; queryIndex++) {
+            QueryResult result = decodeResult(size, maskWords, queryIndex * wordCount);
+            results[queryIndex] = result;
+            if (backend instanceof AdaptiveSpatialComputeBackend adaptive) {
+                adaptive.recordSpatialQuery(size, result.matchCount());
+            }
+        }
+        return results;
+    }
+
+    private static QueryResult decodeResult(int size, int[] maskWords, int wordOffset) {
+        int wordCount = SpatialComputeBackend.maskWordCount(size);
         int[] matches = new int[size];
         int matchCount = 0;
-        for (int word = 0; word < maskWords.length; word++) {
-            int remaining = maskWords[word];
+        for (int word = 0; word < wordCount; word++) {
+            int remaining = maskWords[wordOffset + word];
             while (remaining != 0) {
                 int bit = Integer.numberOfTrailingZeros(remaining);
                 int index = word * Integer.SIZE + bit;
@@ -58,9 +108,6 @@ public final class SpatialQueryEngine implements AutoCloseable {
                 }
                 remaining &= remaining - 1;
             }
-        }
-        if (backend instanceof AdaptiveSpatialComputeBackend adaptive) {
-            adaptive.recordSpatialQuery(size, matchCount);
         }
         return new QueryResult(size, Arrays.copyOf(matches, matchCount));
     }
@@ -117,6 +164,18 @@ public final class SpatialQueryEngine implements AutoCloseable {
 
         public int size() {
             return positionsX.length;
+        }
+    }
+
+    public record RadiusQuery(float originX, float originY, float originZ, float radius) {
+        public RadiusQuery {
+            requireFinite(originX, "originX");
+            requireFinite(originY, "originY");
+            requireFinite(originZ, "originZ");
+            requireFinite(radius, "radius");
+            if (radius < 0.0f) {
+                throw new IllegalArgumentException("radius cannot be negative");
+            }
         }
     }
 

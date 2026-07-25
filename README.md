@@ -7,7 +7,7 @@ HyperCore is an experimental high-performance Minecraft Java server project buil
 
 ## Current status
 
-Milestones 0 through 10 establish a buildable, dedicated-server-only Forge foundation:
+Milestones 0 through 11 establish a buildable, dedicated-server-only Forge foundation:
 
 - Minecraft 1.21.1, Forge 52.1.16, and Java 21 are pinned.
 - HyperCore loads as a server-side Forge component.
@@ -20,9 +20,9 @@ Milestones 0 through 10 establish a buildable, dedicated-server-only Forge found
 - A scalar CPU spatial batch backend and a Vulkan compute backend implement the same squared-distance operation for correctness comparisons.
 - A logical region-owner model provides deterministic ownership, per-target FIFO mailboxes, tick-boundary dispatch, and cross-region message accounting.
 - A controlled plugin bridge kernel provides lifecycle callbacks, plugin-owned commands, permissions, and cancellable prioritized events. The Forge command bridge exposes registered commands and `/hypercore plugins` reports bridge health.
-- GPU support now includes Vulkan loader/API detection, device selection, two compiled SPIR-V compute pipelines, persistently mapped host-coherent storage buffers, direct and resident-snapshot correctness self-tests, and a configurable batch-size offload policy. Runtime execution uses `cpu-scalar` while Vulkan initializes, switches atomically to `adaptive-vulkan` when ready, and falls back to CPU after a later dispatch failure.
-- An immutable structure-of-arrays position snapshot and radius-query service now uses a GPU-generated packed match mask instead of reading every distance back to CPU. Repeated queries over the same `PositionBatch` retain one Vulkan position upload and invalidate it safely when another batch replaces the shared buffers. Query, candidate, match, snapshot-upload, snapshot-reuse, mask, readback-byte, initialization-state, initialization-time, and CPU/GPU batch counters are exposed through `/hypercore capabilities`.
-- A deterministic `benchmarkCompute` Gradle task measures both complete scalar/Vulkan mask calls and repeated Vulkan queries over a prepared resident snapshot. The current RTX 4060 report and four-run repeatability check are recorded in [BENCHMARKS.md](BENCHMARKS.md); resident reuse reduced GPU p50 substantially at large batches, but did not produce a repeatable conservative crossover from 4K through 4M candidates.
+- GPU support now includes Vulkan loader/API detection, device selection, two compiled SPIR-V compute pipelines, persistently mapped host-coherent storage buffers, direct, resident-snapshot, and 33-query chunking correctness self-tests, and a configurable batch-size offload policy. Runtime execution uses `cpu-scalar` while Vulkan initializes, switches atomically to `adaptive-vulkan` when ready, and falls back to CPU after a later dispatch failure.
+- An immutable structure-of-arrays position snapshot and radius-query service now uses a GPU-generated packed match mask instead of reading every distance back to CPU. Repeated queries over the same `PositionBatch` retain one Vulkan position upload, while `withinRadii` records up to 32 radius dispatches in one command buffer and one fence wait before transparently chunking larger groups. Query, candidate, match, snapshot, multi-query batch, mask, readback-byte, initialization, and CPU/GPU counters are exposed through `/hypercore capabilities`.
+- A deterministic `benchmarkCompute` Gradle task measures complete scalar/Vulkan calls, resident snapshot calls, and eight-query individual-versus-batched submission. The current RTX 4060 report is recorded in [BENCHMARKS.md](BENCHMARKS.md); batching improved p50 by `2.56x` to `5.91x` from 4K through 1M candidates in the latest run, while the 4M compute-dominated case measured `0.95x`.
 
 ## Build
 
@@ -82,9 +82,9 @@ Invalid values are rejected by Forge's config specification. GPU loader, device,
 
 The scalar backend is the deterministic correctness baseline for structure-of-arrays squared-distance batches. Vulkan device creation and the 1,024-element GPU-vs-CPU self-test run on a dedicated daemon thread, so server startup and compute callers continue on `cpu-scalar` while initialization is in progress. The router switches atomically to `adaptive-vulkan` when ready, sends batches below `compute.gpuMinimumBatchSize` to CPU, and permanently falls back after a runtime GPU failure.
 
-`SpatialQueryEngine` accepts an immutable copy of structure-of-arrays positions and returns the ordered indices whose squared distance is within an inclusive radius. Its scalar path packs matches directly, while its Vulkan path processes 32 candidates per invocation and returns one 32-bit mask word. The engine weakly caches one prepared backend snapshot per `PositionBatch`; repeated queries reuse resident XYZ data, while snapshot switching or direct buffer use is detected by a Vulkan data generation and triggers a correct re-upload. Runtime shutdown closes query snapshots before the compute backend. This reduces result readback from four bytes per candidate to four bytes per 32 candidates and avoids three full uploads on an uninterrupted repeated query, excluding fixed synchronization costs.
+`SpatialQueryEngine` accepts an immutable copy of structure-of-arrays positions and returns the ordered indices whose squared distance is within an inclusive radius. Its scalar path packs matches directly, while its Vulkan path processes 32 candidates per invocation and returns one 32-bit mask word. The engine weakly caches one prepared backend snapshot per `PositionBatch`; repeated queries reuse resident XYZ data, while snapshot switching or direct buffer use is detected by a Vulkan data generation and triggers a correct re-upload. `withinRadii` returns query-major results and batches up to 32 Vulkan dispatches into one submission and fence wait. Larger groups are chunked without changing result order. Runtime shutdown closes query snapshots before the compute backend.
 
-The packed mask and resident snapshot are exact transfer reductions, not end-to-end server performance claims. Vulkan buffers remain persistently mapped for their lifetime, and repeated queries over one snapshot skip all three position uploads. On the latest RTX 4060 calibration, this reduced the 4,194,304-candidate GPU p50 from 28.492 ms for a full call to 14.815 ms for a resident call, compared with a 22.157 ms CPU p50. Two of four independent runs reported different conservative resident crossover points, so the result is not stable enough for threshold tuning. Entity, chunk, and block simulation remain outside the GPU path. The default offload threshold is intentionally unchanged until a repeatable crossover and end-to-end query/tick improvement are established.
+The packed mask, resident snapshot, and multi-query submission are exact transfer and synchronization reductions, not end-to-end server performance claims. In the latest RTX 4060 run, eight batched queries were `5.76x`, `5.91x`, `3.63x`, `3.44x`, and `2.56x` faster than eight individual GPU submissions from 4K through 1M candidates. At 4M, compute cost dominated and the batch measured `0.95x`, so batching is not treated as universally faster. Resident CPU crossover also remains process-sensitive. Entity, chunk, and block simulation remain outside the GPU path, and the default offload threshold stays unchanged until repeatable end-to-end query or tick gains are established.
 
 ## Region execution model
 
@@ -135,7 +135,8 @@ Forge command registration is bridged into this SPI, but external plugin JAR dis
 - [x] Reproducible scalar-vs-Vulkan packed-mask benchmark harness
 - [x] Persistent mapped host-coherent Vulkan buffers
 - [x] Resident snapshot reuse across multiple spatial queries
-- [ ] Device-local snapshot storage, multi-query submission, and repeatable GPU crossover
+- [x] Multi-query Vulkan command batching with bounded chunking
+- [ ] Device-local snapshot storage and repeatable GPU crossover
 - [ ] Bukkit/Paper namespace adapter and mod/plugin compatibility matrix
 
 See [CHANGELOG.md](CHANGELOG.md) for completed changes.

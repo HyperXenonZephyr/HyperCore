@@ -111,6 +111,8 @@ public final class HyperCoreCommands {
                     + " | maskReadback=" + status.gpuRadiusMaskReadbackBytes() + " B"
                     + " | snapshots=" + status.gpuSnapshotUploads() + " upload/"
                     + status.gpuSnapshotReuses() + " reuse"
+                    + " | multiQuery=" + status.gpuMultiQueryBatches() + " batch/"
+                    + status.gpuMultiQueryQueries() + " queries"
                     + " | spatialQueries=" + status.spatialQueries()
                     + " | matches=" + status.spatialMatches() + "/" + status.spatialCandidates()
                     + " | failures=" + status.gpuFailures()

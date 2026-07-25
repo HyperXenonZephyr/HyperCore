@@ -24,6 +24,26 @@ class SpatialQueryEngineTest {
     }
 
     @Test
+    void returnsQueryMajorResultsForBatchedRadii() {
+        SpatialQueryEngine engine = new SpatialQueryEngine(new ScalarSpatialComputeBackend());
+        SpatialQueryEngine.PositionBatch positions = new SpatialQueryEngine.PositionBatch(
+            new float[]{0, 3, 8}, new float[3], new float[3]
+        );
+
+        SpatialQueryEngine.QueryResult[] results = engine.withinRadii(
+            positions,
+            new SpatialQueryEngine.RadiusQuery(0, 0, 0, 1),
+            new SpatialQueryEngine.RadiusQuery(0, 0, 0, 5),
+            new SpatialQueryEngine.RadiusQuery(8, 0, 0, 1)
+        );
+
+        assertEquals(3, results.length);
+        assertArrayEquals(new int[]{0}, results[0].matchingIndices());
+        assertArrayEquals(new int[]{0, 1}, results[1].matchingIndices());
+        assertArrayEquals(new int[]{2}, results[2].matchingIndices());
+    }
+
+    @Test
     void snapshotsInputAndDefensivelyCopiesResults() {
         float[] x = {1, 10};
         float[] y = {0, 0};

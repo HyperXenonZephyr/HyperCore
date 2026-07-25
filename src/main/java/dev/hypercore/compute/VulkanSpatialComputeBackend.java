@@ -119,6 +119,7 @@ public final class VulkanSpatialComputeBackend implements ManagedSpatialComputeB
     private static final String DISTANCE_SHADER_RESOURCE = "/assets/hypercore/shaders/squared_distances.spv";
     private static final String RADIUS_MASK_SHADER_RESOURCE = "/assets/hypercore/shaders/radius_mask.spv";
     private static final int LOCAL_SIZE = 256;
+    private static final int MAX_QUERIES_PER_SUBMISSION = 32;
     private static final long FENCE_TIMEOUT_NANOS = 30_000_000_000L;
 
     private final VkInstance instance;
@@ -449,15 +450,55 @@ public final class VulkanSpatialComputeBackend implements ManagedSpatialComputeB
                 stack.longs(descriptorSet),
                 null
             );
-            ByteBuffer parameters = stack.malloc(5 * Float.BYTES).order(ByteOrder.nativeOrder());
+            ByteBuffer parameters = stack.malloc(6 * Float.BYTES).order(ByteOrder.nativeOrder());
             parameters.putFloat(originX)
                 .putFloat(originY)
                 .putFloat(originZ)
                 .putFloat(squaredRadius)
                 .putInt(size)
+                .putInt(0)
                 .flip();
             vkCmdPushConstants(commandBuffer, pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, parameters);
             vkCmdDispatch(commandBuffer, workgroups, 1, 1);
+            check(vkEndCommandBuffer(commandBuffer), "end command buffer");
+        }
+    }
+
+    private void recordRadiusMasks(
+        SpatialComputeBackend.RadiusMaskQuery[] queries,
+        int queryOffset,
+        int queryCount,
+        int size,
+        int workgroups,
+        int wordCount
+    ) {
+        check(vkResetCommandBuffer(commandBuffer, VK_COMMAND_BUFFER_RESET_RELEASE_RESOURCES_BIT), "reset command buffer");
+        try (MemoryStack stack = stackPush()) {
+            VkCommandBufferBeginInfo beginInfo = VkCommandBufferBeginInfo.calloc(stack).sType$Default();
+            check(vkBeginCommandBuffer(commandBuffer, beginInfo), "begin command buffer");
+            vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, radiusMaskPipeline);
+            vkCmdBindDescriptorSets(
+                commandBuffer,
+                VK_PIPELINE_BIND_POINT_COMPUTE,
+                pipelineLayout,
+                0,
+                stack.longs(descriptorSet),
+                null
+            );
+            ByteBuffer parameters = stack.malloc(6 * Float.BYTES).order(ByteOrder.nativeOrder());
+            for (int localQuery = 0; localQuery < queryCount; localQuery++) {
+                SpatialComputeBackend.RadiusMaskQuery query = queries[queryOffset + localQuery];
+                parameters.clear();
+                parameters.putFloat(query.originX())
+                    .putFloat(query.originY())
+                    .putFloat(query.originZ())
+                    .putFloat(query.squaredRadius())
+                    .putInt(size)
+                    .putInt(localQuery * wordCount)
+                    .flip();
+                vkCmdPushConstants(commandBuffer, pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, parameters);
+                vkCmdDispatch(commandBuffer, workgroups, 1, 1);
+            }
             check(vkEndCommandBuffer(commandBuffer), "end command buffer");
         }
     }
@@ -491,10 +532,14 @@ public final class VulkanSpatialComputeBackend implements ManagedSpatialComputeB
     }
 
     private void downloadMask(GpuBuffer source, int[] output, int wordCount) {
+        downloadMask(source, output, 0, wordCount);
+    }
+
+    private void downloadMask(GpuBuffer source, int[] output, int outputOffset, int wordCount) {
         IntBuffer values = source.mapped().duplicate()
             .order(ByteOrder.nativeOrder())
             .asIntBuffer();
-        values.get(output, 0, wordCount);
+        values.get(output, outputOffset, wordCount);
     }
 
     private synchronized void radiusMaskFromSnapshot(
@@ -530,6 +575,51 @@ public final class VulkanSpatialComputeBackend implements ManagedSpatialComputeB
         recordRadiusMask(originX, originY, originZ, squaredRadius, size, workgroups);
         submitAndWait();
         downloadMask(buffers.output(), outputWords, wordCount);
+    }
+
+    private synchronized void radiusMasksFromSnapshot(
+        ResidentPositionSnapshot snapshot,
+        SpatialComputeBackend.RadiusMaskQuery[] queries,
+        int[] outputWords
+    ) {
+        ensureOpen();
+        if (snapshot.closed()) {
+            throw new IllegalStateException("Position snapshot is closed");
+        }
+        Objects.requireNonNull(queries, "queries");
+        Objects.requireNonNull(outputWords, "outputWords");
+        int size = snapshot.positionsX().length;
+        int wordCount = SpatialComputeBackend.maskWordCount(size);
+        long requiredWords = (long) wordCount * queries.length;
+        if (requiredWords > outputWords.length) {
+            throw new IllegalArgumentException("Output mask cannot fit every radius query");
+        }
+        for (int queryIndex = 0; queryIndex < queries.length; queryIndex++) {
+            Objects.requireNonNull(queries[queryIndex], "queries[" + queryIndex + "]");
+        }
+        if (size == 0 || queries.length == 0) {
+            return;
+        }
+
+        validateRadiusBatchSize(size);
+        int workgroups = Math.ceilDiv(wordCount, LOCAL_SIZE);
+        ensureCapacity(size);
+        if (snapshot.positionDataGeneration() != positionDataGeneration) {
+            uploadPositions(
+                snapshot.positionsX(), snapshot.positionsY(), snapshot.positionsZ(), size
+            );
+            snapshot.positionDataGeneration(positionDataGeneration);
+        }
+        for (int queryOffset = 0; queryOffset < queries.length; queryOffset += MAX_QUERIES_PER_SUBMISSION) {
+            int queryCount = Math.min(MAX_QUERIES_PER_SUBMISSION, queries.length - queryOffset);
+            long chunkWords = (long) queryCount * wordCount;
+            if (chunkWords * Integer.BYTES > buffers.output().sizeBytes()) {
+                throw new BatchNotSupportedException("Batched radius-mask output exceeds buffer capacity");
+            }
+            recordRadiusMasks(queries, queryOffset, queryCount, size, workgroups, wordCount);
+            submitAndWait();
+            downloadMask(buffers.output(), outputWords, queryOffset * wordCount, (int) chunkWords);
+        }
     }
 
     private void uploadPositions(float[] positionsX, float[] positionsY, float[] positionsZ, int size) {
@@ -665,7 +755,7 @@ public final class VulkanSpatialComputeBackend implements ManagedSpatialComputeB
             VkPushConstantRange.Buffer pushConstants = VkPushConstantRange.calloc(1, stack)
                 .stageFlags(VK_SHADER_STAGE_COMPUTE_BIT)
                 .offset(0)
-                .size(20);
+                .size(24);
             VkPipelineLayoutCreateInfo createInfo = VkPipelineLayoutCreateInfo.calloc(stack)
                 .sType$Default()
                 .pSetLayouts(stack.longs(descriptorSetLayout))
@@ -917,6 +1007,11 @@ public final class VulkanSpatialComputeBackend implements ManagedSpatialComputeB
         }
 
         @Override
+        public int size() {
+            return positionsX.length;
+        }
+
+        @Override
         public void radiusMask(
             float originX,
             float originY,
@@ -927,6 +1022,14 @@ public final class VulkanSpatialComputeBackend implements ManagedSpatialComputeB
             owner.radiusMaskFromSnapshot(
                 this, originX, originY, originZ, squaredRadius, outputWords
             );
+        }
+
+        @Override
+        public void radiusMasks(
+            SpatialComputeBackend.RadiusMaskQuery[] queries,
+            int[] outputWords
+        ) {
+            owner.radiusMasksFromSnapshot(this, queries, outputWords);
         }
 
         @Override

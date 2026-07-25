@@ -24,6 +24,7 @@ layout(push_constant) uniform Parameters {
     float originZ;
     float squaredRadius;
     uint count;
+    uint outputWordOffset;
 } parameters;
 
 void main() {
@@ -44,5 +45,5 @@ void main() {
             mask |= 1u << (index - start);
         }
     }
-    outputMask.values[wordIndex] = mask;
+    outputMask.values[parameters.outputWordOffset + wordIndex] = mask;
 }

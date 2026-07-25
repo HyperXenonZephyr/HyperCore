@@ -56,6 +56,10 @@ All notable changes to HyperCore are documented in this file. The format is base
 - Extended Vulkan startup verification with an original-shifted-original snapshot sequence that exercises resident reuse and re-upload after shared-buffer invalidation.
 - Added adaptive CPU fallback for snapshots created before Vulkan is ready, snapshot upload/reuse diagnostics in `/hypercore capabilities`, and query-snapshot cleanup before compute-backend shutdown.
 - Extended `benchmarkCompute` to measure full-transfer and resident-snapshot GPU calls independently. Four RTX 4060 runs confirmed lower resident GPU cost at large batches but did not establish a repeatable conservative crossover, so the default threshold remains unchanged.
+- Added `RadiusMaskQuery` and `SpatialQueryEngine.withinRadii(...)` for query-major multi-radius results over one immutable position snapshot.
+- Added Vulkan multi-query command batching with one fence wait per bounded group of up to 32 radius queries; larger groups are chunked while preserving result order.
+- Extended Vulkan startup verification with a 33-query radius-mask self-test that crosses the 32-query submission boundary.
+- Extended `benchmarkCompute` and `BENCHMARKS.md` with eight-query individual-versus-batched submission measurements. The latest RTX 4060 run measured `2.56x` to `5.91x` faster from 4K through 1M candidates, but `0.95x` at 4M where compute cost dominated; batching is therefore not treated as universally faster.
 - Added unit coverage for one-time snapshot preparation, repeated GPU routing, snapshot diagnostics, and independent resident-crossover reporting.
 
 ### Fixed

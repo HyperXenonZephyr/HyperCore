@@ -9,6 +9,7 @@ import java.util.Objects;
 /** Measures complete backend calls over prebuilt position snapshots and warmed buffers. */
 public final class SpatialComputeBenchmark {
     private static final double REQUIRED_GPU_ADVANTAGE = 0.95;
+    private static final int MULTI_QUERY_COUNT = 8;
     private static volatile int blackhole;
 
     private SpatialComputeBenchmark() {
@@ -44,6 +45,10 @@ public final class SpatialComputeBenchmark {
             int[] cpuMask = new int[SpatialComputeBackend.maskWordCount(batchSize)];
             int[] gpuMask = new int[cpuMask.length];
             int[] residentMask = new int[cpuMask.length];
+            SpatialComputeBackend.RadiusMaskQuery[] multiQueries = createQueries(MULTI_QUERY_COUNT);
+            int[] individualMultiMask = new int[cpuMask.length * MULTI_QUERY_COUNT];
+            int[] batchedMultiMask = new int[individualMultiMask.length];
+            int[] singleMultiMask = new int[cpuMask.length];
 
             for (int iteration = 0; iteration < warmupIterations; iteration++) {
                 execute(cpu, positions, cpuMask);
@@ -64,6 +69,8 @@ public final class SpatialComputeBenchmark {
             }
 
             long[] residentSamples = new long[sampleIterations];
+            long[] individualMultiSamples = new long[sampleIterations];
+            long[] batchedMultiSamples = new long[sampleIterations];
             try (SpatialComputeBackend.PositionSnapshot residentSnapshot = gpu.prepareSnapshot(
                 positions.x(), positions.y(), positions.z()
             )) {
@@ -75,6 +82,30 @@ public final class SpatialComputeBenchmark {
                 for (int sample = 0; sample < sampleIterations; sample++) {
                     residentSamples[sample] = measure(residentSnapshot, residentMask);
                 }
+                for (int iteration = 0; iteration < warmupIterations; iteration++) {
+                    executeIndividualQueries(
+                        residentSnapshot, multiQueries, singleMultiMask, individualMultiMask
+                    );
+                    residentSnapshot.radiusMasks(multiQueries, batchedMultiMask);
+                }
+                verifyMultiQueryMasks(positions, individualMultiMask, batchedMultiMask);
+                for (int sample = 0; sample < sampleIterations; sample++) {
+                    if ((sample & 1) == 0) {
+                        individualMultiSamples[sample] = measureIndividualQueries(
+                            residentSnapshot, multiQueries, singleMultiMask, individualMultiMask
+                        );
+                        batchedMultiSamples[sample] = measureBatchedQueries(
+                            residentSnapshot, multiQueries, batchedMultiMask
+                        );
+                    } else {
+                        batchedMultiSamples[sample] = measureBatchedQueries(
+                            residentSnapshot, multiQueries, batchedMultiMask
+                        );
+                        individualMultiSamples[sample] = measureIndividualQueries(
+                            residentSnapshot, multiQueries, singleMultiMask, individualMultiMask
+                        );
+                    }
+                }
             }
             results.add(new BatchResult(
                 batchSize,
@@ -84,7 +115,12 @@ public final class SpatialComputeBenchmark {
                 percentile(gpuSamples, 0.95),
                 percentile(residentSamples, 0.50),
                 percentile(residentSamples, 0.95),
-                (long) cpuMask.length * Integer.BYTES
+                (long) cpuMask.length * Integer.BYTES,
+                MULTI_QUERY_COUNT,
+                percentile(individualMultiSamples, 0.50),
+                percentile(individualMultiSamples, 0.95),
+                percentile(batchedMultiSamples, 0.50),
+                percentile(batchedMultiSamples, 0.95)
             ));
         }
         return new Report(gpuDevice, gpuTransferMode, warmupIterations, sampleIterations, List.copyOf(results));
@@ -134,6 +170,23 @@ public final class SpatialComputeBenchmark {
         }
     }
 
+    private static void verifyMultiQueryMasks(
+        PositionData positions,
+        int[] individualMasks,
+        int[] batchedMasks
+    ) {
+        if (!Arrays.equals(individualMasks, batchedMasks)) {
+            for (int word = 0; word < individualMasks.length; word++) {
+                if (individualMasks[word] != batchedMasks[word]) {
+                    throw new IllegalStateException(
+                        "Multi-query benchmark correctness mismatch at batch " + positions.size()
+                            + ", flattened word " + word
+                    );
+                }
+            }
+        }
+    }
+
     private static long measure(SpatialComputeBackend backend, PositionData positions, int[] output) {
         long started = System.nanoTime();
         execute(backend, positions, output);
@@ -148,6 +201,47 @@ public final class SpatialComputeBenchmark {
         long elapsed = System.nanoTime() - started;
         blackhole ^= output[output.length - 1];
         return elapsed;
+    }
+
+    private static long measureIndividualQueries(
+        SpatialComputeBackend.PositionSnapshot snapshot,
+        SpatialComputeBackend.RadiusMaskQuery[] queries,
+        int[] singleMask,
+        int[] output
+    ) {
+        long started = System.nanoTime();
+        executeIndividualQueries(snapshot, queries, singleMask, output);
+        long elapsed = System.nanoTime() - started;
+        blackhole ^= output[output.length - 1];
+        return elapsed;
+    }
+
+    private static long measureBatchedQueries(
+        SpatialComputeBackend.PositionSnapshot snapshot,
+        SpatialComputeBackend.RadiusMaskQuery[] queries,
+        int[] output
+    ) {
+        long started = System.nanoTime();
+        snapshot.radiusMasks(queries, output);
+        long elapsed = System.nanoTime() - started;
+        blackhole ^= output[output.length - 1];
+        return elapsed;
+    }
+
+    private static void executeIndividualQueries(
+        SpatialComputeBackend.PositionSnapshot snapshot,
+        SpatialComputeBackend.RadiusMaskQuery[] queries,
+        int[] singleMask,
+        int[] output
+    ) {
+        int wordCount = singleMask.length;
+        for (int queryIndex = 0; queryIndex < queries.length; queryIndex++) {
+            SpatialComputeBackend.RadiusMaskQuery query = queries[queryIndex];
+            snapshot.radiusMask(
+                query.originX(), query.originY(), query.originZ(), query.squaredRadius(), singleMask
+            );
+            System.arraycopy(singleMask, 0, output, queryIndex * wordCount, wordCount);
+        }
     }
 
     private static void execute(SpatialComputeBackend backend, PositionData positions, int[] output) {
@@ -165,6 +259,19 @@ public final class SpatialComputeBenchmark {
 
     private static void execute(SpatialComputeBackend.PositionSnapshot snapshot, int[] output) {
         snapshot.radiusMask(1.25f, -2.5f, 4.0f, 4_096.0f, output);
+    }
+
+    private static SpatialComputeBackend.RadiusMaskQuery[] createQueries(int count) {
+        SpatialComputeBackend.RadiusMaskQuery[] queries = new SpatialComputeBackend.RadiusMaskQuery[count];
+        for (int queryIndex = 0; queryIndex < count; queryIndex++) {
+            queries[queryIndex] = new SpatialComputeBackend.RadiusMaskQuery(
+                queryIndex * 3.25f - 12.0f,
+                queryIndex % 3 * 2.0f - 2.0f,
+                queryIndex * -1.75f + 6.0f,
+                3_600.0f + queryIndex * 128.0f
+            );
+        }
+        return queries;
     }
 
     private record PositionData(float[] x, float[] y, float[] z) {
@@ -194,8 +301,40 @@ public final class SpatialComputeBenchmark {
         long gpuP95Nanos,
         long residentGpuP50Nanos,
         long residentGpuP95Nanos,
-        long gpuReadbackBytes
+        long gpuReadbackBytes,
+        int multiQueryCount,
+        long individualMultiGpuP50Nanos,
+        long individualMultiGpuP95Nanos,
+        long batchedMultiGpuP50Nanos,
+        long batchedMultiGpuP95Nanos
     ) {
+        public BatchResult(
+            int batchSize,
+            long cpuP50Nanos,
+            long cpuP95Nanos,
+            long gpuP50Nanos,
+            long gpuP95Nanos,
+            long residentGpuP50Nanos,
+            long residentGpuP95Nanos,
+            long gpuReadbackBytes
+        ) {
+            this(
+                batchSize,
+                cpuP50Nanos,
+                cpuP95Nanos,
+                gpuP50Nanos,
+                gpuP95Nanos,
+                residentGpuP50Nanos,
+                residentGpuP95Nanos,
+                gpuReadbackBytes,
+                1,
+                residentGpuP50Nanos,
+                residentGpuP95Nanos,
+                residentGpuP50Nanos,
+                residentGpuP95Nanos
+            );
+        }
+
         public BatchResult(
             int batchSize,
             long cpuP50Nanos,
@@ -222,6 +361,10 @@ public final class SpatialComputeBenchmark {
 
         public double residentP50Speedup() {
             return (double) cpuP50Nanos / residentGpuP50Nanos;
+        }
+
+        public double multiQuerySpeedup() {
+            return (double) individualMultiGpuP50Nanos / batchedMultiGpuP50Nanos;
         }
     }
 
@@ -304,6 +447,25 @@ public final class SpatialComputeBenchmark {
                     batch.p50Speedup(),
                     batch.residentP50Speedup(),
                     batch.gpuReadbackBytes()
+                ));
+            }
+            output.append("\n## Multi-Query Submission\n\n")
+                .append("Each row compares repeated resident queries, each with its own queue submission and fence wait, against ")
+                .append("one command buffer containing the same queries and one fence wait.\n\n")
+                .append("| Candidates | Queries | Individual GPU p50 | Individual GPU p95 | Batched GPU p50 | Batched GPU p95 | Submission speedup | Total readback |\n")
+                .append("| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n");
+            for (BatchResult batch : batches) {
+                output.append(String.format(
+                    Locale.ROOT,
+                    "| %,d | %d | %.3f ms | %.3f ms | %.3f ms | %.3f ms | %.2fx | %,d B |%n",
+                    batch.batchSize(),
+                    batch.multiQueryCount(),
+                    nanosToMillis(batch.individualMultiGpuP50Nanos()),
+                    nanosToMillis(batch.individualMultiGpuP95Nanos()),
+                    nanosToMillis(batch.batchedMultiGpuP50Nanos()),
+                    nanosToMillis(batch.batchedMultiGpuP95Nanos()),
+                    batch.multiQuerySpeedup(),
+                    batch.gpuReadbackBytes() * batch.multiQueryCount()
                 ));
             }
             int recommendation = recommendedMinimumBatchSize();

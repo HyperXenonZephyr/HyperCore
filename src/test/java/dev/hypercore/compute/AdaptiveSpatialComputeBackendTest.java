@@ -99,6 +99,18 @@ class AdaptiveSpatialComputeBackendTest {
             assertEquals(3, backend.status().gpuRadiusMaskBatches());
             assertEquals(1, backend.status().gpuSnapshotUploads());
             assertEquals(1, backend.status().gpuSnapshotReuses());
+
+            SpatialQueryEngine.QueryResult[] batched = engine.withinRadii(
+                positions,
+                new SpatialQueryEngine.RadiusQuery(0, 0, 0, 1),
+                new SpatialQueryEngine.RadiusQuery(10, 0, 0, 1)
+            );
+            assertEquals(1, batched[0].matchCount());
+            assertEquals(0, batched[1].matchCount());
+            assertEquals(5, backend.status().gpuRadiusMaskBatches());
+            assertEquals(1, backend.status().gpuMultiQueryBatches());
+            assertEquals(2, backend.status().gpuMultiQueryQueries());
+            assertEquals(2, backend.status().gpuSnapshotReuses());
             engine.close();
         } finally {
             allowCreation.countDown();

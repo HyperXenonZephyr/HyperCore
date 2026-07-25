@@ -36,6 +36,7 @@ class SpatialComputeBenchmarkTest {
         assertEquals(4_096, report.recommendedResidentMinimumBatchSize());
         assertTrue(report.markdown("test-time").contains("GPU transfer mode: `test-transfer`"));
         assertTrue(report.markdown("test-time").contains("Resident GPU p50"));
+        assertTrue(report.markdown("test-time").contains("Multi-Query Submission"));
     }
 
     @Test
@@ -53,6 +54,27 @@ class SpatialComputeBenchmarkTest {
 
         assertEquals(-1, report.recommendedMinimumBatchSize());
         assertEquals(1_024, report.recommendedResidentMinimumBatchSize());
+    }
+
+    @Test
+    void calculatesMultiQuerySubmissionSpeedup() {
+        SpatialComputeBenchmark.BatchResult result = new SpatialComputeBenchmark.BatchResult(
+            4_096,
+            100,
+            200,
+            300,
+            400,
+            250,
+            350,
+            512,
+            8,
+            800,
+            900,
+            200,
+            300
+        );
+
+        assertEquals(4.0, result.multiQuerySpeedup());
     }
 
     @Test
