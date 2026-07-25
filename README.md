@@ -35,6 +35,8 @@ On Windows:
 ./gradlew.bat build
 ```
 
+Deploy `build/libs/hypercore-0.1.0-SNAPSHOT-all.jar`. The `-all.jar` artifact contains the Jar-in-Jar Vulkan binding; the plain JAR is intended for development and dependency-aware tooling.
+
 The development server can be launched with:
 
 ```powershell

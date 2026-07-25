@@ -36,6 +36,7 @@ All notable changes to HyperCore are documented in this file. The format is base
 - Added a default-on LWJGL Vulkan compute backend with Jar-in-Jar packaging, build-time Shaderc compilation, device and queue selection, host-visible storage buffers, a compiled squared-distance SPIR-V kernel, and a 1,024-element CPU/GPU correctness self-test.
 - Added adaptive GPU routing: batches above the configured threshold use Vulkan, smaller batches use `cpu-scalar`, and initialization, allocation, limit, or dispatch failures fall back without stopping the server.
 - Added `/hypercore capabilities` reporting for the selected Vulkan device, CPU/GPU batch counts, GPU failures, and fallback reason.
+- Documented the deployable `-all.jar` artifact that carries the Vulkan binding through Forge Jar-in-Jar.
 
 ### Fixed
 
