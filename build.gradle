@@ -139,6 +139,14 @@ tasks.matching { it.name == 'runServer' || it.name == 'runGameTestServer' }.conf
     dependsOn tasks.named('prepareDevMod')
 }
 
+tasks.register('benchmarkCompute', JavaExec) {
+    dependsOn tasks.named('classes')
+    classpath = sourceSets.main.output + configurations.runtimeClasspath
+    mainClass = 'dev.hypercore.compute.ComputeBenchmarkMain'
+    args(layout.buildDirectory.file('reports/hypercore/compute-benchmark.md').get().asFile.absolutePath)
+    outputs.upToDateWhen { false }
+}
+
 jar {
     manifest {
         attributes([

@@ -22,6 +22,7 @@ Milestones 0 through 7 establish a buildable, dedicated-server-only Forge founda
 - A controlled plugin bridge kernel provides lifecycle callbacks, plugin-owned commands, permissions, and cancellable prioritized events. The Forge command bridge exposes registered commands and `/hypercore plugins` reports bridge health.
 - GPU support now includes Vulkan loader/API detection, device selection, two compiled SPIR-V compute pipelines, persistent host-visible storage buffers, correctness self-tests, and a configurable batch-size offload policy. Runtime execution uses `cpu-scalar` while Vulkan initializes, switches atomically to `adaptive-vulkan` when ready, and falls back to CPU after a later dispatch failure.
 - An immutable structure-of-arrays position snapshot and radius-query service now uses a GPU-generated packed match mask instead of reading every distance back to CPU. Query, candidate, match, mask, readback-byte, initialization-state, initialization-time, and CPU/GPU batch counters are exposed through `/hypercore capabilities`.
+- A deterministic `benchmarkCompute` Gradle task measures complete scalar and Vulkan mask calls after warmup, including GPU uploads, dispatch, fence wait, and packed readback. The current RTX 4060 report is recorded in [BENCHMARKS.md](BENCHMARKS.md); it found no conservative GPU p50 crossover from 4K through 4M candidates.
 
 ## Build
 
@@ -52,6 +53,14 @@ Automated dedicated-server validation does not require accepting the normal serv
 ./gradlew.bat runGameTestServer
 ```
 
+Run the local CPU/GPU calibration with:
+
+```powershell
+./gradlew.bat benchmarkCompute
+```
+
+The generated report is written to `build/reports/hypercore/compute-benchmark.md`. It is a microbenchmark of the spatial mask backend, not an MSPT or world-simulation benchmark.
+
 The development run tasks automatically stage compiled classes and resources into a single mod directory under `build/dev-mod`. This keeps normal Gradle build outputs reproducible while giving Forge one complete exploded mod root.
 
 ## Configuration
@@ -75,7 +84,7 @@ The scalar backend is the deterministic correctness baseline for structure-of-ar
 
 `SpatialQueryEngine` accepts an immutable copy of structure-of-arrays positions and returns the ordered indices whose squared distance is within an inclusive radius. Its scalar path packs matches directly, while its Vulkan path processes 32 candidates per invocation and returns one 32-bit mask word. This reduces result readback from four bytes per candidate to four bytes per 32 candidates, excluding fixed synchronization costs. It is a real consumer of the adaptive compute backend and records query, candidate, match, mask-batch, and GPU readback-byte counts.
 
-The packed mask is an exact transfer-size improvement, not an end-to-end performance claim. Entity, chunk, and block simulation still remain outside the GPU path, and complete query/tick benchmarks are required before changing the default offload threshold.
+The packed mask is an exact transfer-size improvement, not an end-to-end performance claim. On the current RTX 4060 calibration, CPU p50 remained lower than GPU p50 at every tested size because upload and synchronization costs dominate. Entity, chunk, and block simulation still remain outside the GPU path. The default offload threshold is intentionally unchanged until persistent staging and end-to-end query/tick measurements establish a sustained crossover.
 
 ## Region execution model
 
@@ -123,6 +132,8 @@ Forge command registration is bridged into this SPI, but external plugin JAR dis
 - [x] Vulkan compute prototype with SPIR-V shader, self-test, and CPU fallback
 - [x] Asynchronous Vulkan lifecycle and immutable spatial-radius query service
 - [x] Packed GPU radius-mask pipeline with compressed result readback
+- [x] Reproducible scalar-vs-Vulkan packed-mask benchmark harness
+- [ ] Persistent mapped staging buffers and measured GPU crossover
 - [ ] Bukkit/Paper namespace adapter and mod/plugin compatibility matrix
 
 See [CHANGELOG.md](CHANGELOG.md) for completed changes.

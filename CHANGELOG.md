@@ -47,6 +47,8 @@ All notable changes to HyperCore are documented in this file. The format is base
 - Extended Vulkan startup verification to compare packed GPU radius masks against the scalar baseline before the backend becomes ready.
 - Added CPU/GPU radius-mask batch counts and GPU mask-readback bytes to `/hypercore capabilities`.
 - Added unit coverage for packed-word boundaries, undersized mask rejection, adaptive GPU routing, and mask diagnostics.
+- Added the `benchmarkCompute` Gradle task and durable `BENCHMARKS.md` report with warmed CPU/Vulkan p50 and p95 measurements, complete GPU transfer/dispatch/readback scope, and conservative crossover detection.
+- Recorded that the current RTX 4060 run has no sustained GPU p50 crossover from 4,096 through 4,194,304 candidates; the configured offload threshold remains unchanged pending persistent staging-buffer work.
 
 ### Fixed
 
