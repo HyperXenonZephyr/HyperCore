@@ -29,6 +29,10 @@ All notable changes to HyperCore are documented in this file. The format is base
 - Added owner-batch backpressure recovery, message-failure isolation, and deferred submission while a region tick is in flight.
 - Added `/hypercore regions` diagnostics for queued messages, owner lanes, failures, and partial ticks.
 - Added concurrency tests for negative chunk mapping, ownership stability, mailbox ordering, tick isolation, and rejected-batch requeueing.
+- Added the controlled plugin bridge kernel with plugin lifecycle management, command aliases, permission defaults and overrides, prioritized cancellable events, cleanup on failure, and a Forge Brigadier command bridge.
+- Added `/hypercore plugins` diagnostics and plugin-owned command dispatch while explicitly keeping Bukkit/Paper namespace and external JAR compatibility out of scope for this milestone.
+- Added Vulkan loader/API probing through JNA, a configurable `compute.gpuMinimumBatchSize` threshold, and explicit GPU offload decisions that preserve the CPU fallback until a real backend is available.
+- Added unit coverage for plugin lifecycle, command dispatch, permissions, event ordering, Vulkan version parsing, and GPU offload policy decisions.
 
 ### Fixed
 

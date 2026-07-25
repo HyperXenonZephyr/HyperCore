@@ -12,7 +12,7 @@ class HyperCoreRuntimeTest {
     void appliesSettingsWhenRuntimeStarts() {
         HyperCoreRuntime runtime = new HyperCoreRuntime();
 
-        runtime.start(new HyperCoreConfig.Settings(2, 32, 64, false));
+        runtime.start(new HyperCoreConfig.Settings(2, 32, 64, false, 8_192));
         try {
             assertTrue(runtime.isStarted());
             assertEquals(2, runtime.status().workers());
@@ -22,6 +22,9 @@ class HyperCoreRuntimeTest {
             assertFalse(runtime.capabilities().gpu().attempted());
             assertEquals(2, runtime.regionTasks().status().owners());
             assertEquals(0, runtime.regionTasks().status().queuedMessages());
+            assertFalse(runtime.vulkan().attempted());
+            assertEquals(8_192, runtime.gpuOffloadPolicy().minimumBatchSize());
+            assertEquals(0, runtime.plugins().status().registeredPlugins());
         } finally {
             runtime.close();
         }

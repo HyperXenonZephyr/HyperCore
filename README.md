@@ -19,7 +19,8 @@ Milestones 0 through 3 establish a buildable, dedicated-server-only Forge founda
 - OS, JVM, logical CPU, and graphics adapter capabilities are reported without making GPU acceleration a startup requirement.
 - A scalar CPU spatial batch backend provides the correctness baseline for later Vector API and GPU implementations.
 - A logical region-owner model provides deterministic ownership, per-target FIFO mailboxes, tick-boundary dispatch, and cross-region message accounting.
-- GPU acceleration and plugin compatibility remain planned work, not claimed features.
+- A controlled plugin bridge kernel provides lifecycle callbacks, plugin-owned commands, permissions, and cancellable prioritized events. The Forge command bridge exposes registered commands and `/hypercore plugins` reports bridge health.
+- GPU probing now includes Vulkan loader/API detection and a configurable batch-size offload policy. Runtime execution remains `cpu-scalar` until a Vulkan compute backend passes correctness and end-to-end latency gates.
 
 ## Build
 
@@ -60,6 +61,7 @@ Forge creates `config/hypercore-common.toml` on first launch.
 | `execution.queueCapacity` | `0` | Automatic mode allocates 64 queued tasks per worker, with a minimum of 256. |
 | `metrics.tickSampleWindow` | `200` | Controls the rolling tick latency sample count. |
 | `compute.probeGpu` | `true` | Enables best-effort graphics adapter enumeration during startup. |
+| `compute.gpuMinimumBatchSize` | `16384` | Minimum batch size eligible for a future GPU backend. |
 
 Invalid values are rejected by Forge's config specification. GPU probe failures are reported and fall back to CPU-only operation.
 
@@ -91,7 +93,13 @@ This is an ownership and messaging foundation, not parallel Minecraft world tick
 
 ## GPU policy
 
-GPU support will be optional and will always have a CPU fallback. HyperCore currently enumerates graphics adapters and VRAM through OSHI, but does not submit GPU work yet. Candidate workloads include batch terrain density generation, spatial broad-phase queries, and other data-oriented jobs. A GPU path will only be retained when it improves complete server tick or generation latency after upload, synchronization, and readback costs.
+GPU support will be optional and will always have a CPU fallback. HyperCore currently enumerates graphics adapters and VRAM through OSHI, probes the Vulkan loader and supported API version through JNA, and evaluates whether a batch reaches the configured offload threshold. It still does not submit GPU work. Candidate workloads include batch terrain density generation, spatial broad-phase queries, and other data-oriented jobs. A GPU path will only be retained when it improves complete server tick or generation latency after upload, synchronization, and readback costs.
+
+## Plugin bridge kernel
+
+The current plugin layer is an internal HyperCore SPI designed to establish compatibility boundaries without claiming Bukkit or Paper binary compatibility. A plugin can declare a descriptor, receive `onLoad`/`onEnable`/`onDisable` lifecycle callbacks, register commands and aliases, define permission defaults and wildcard overrides, and subscribe to prioritized cancellable events. Failed plugins are isolated and their owned registrations are removed during cleanup.
+
+Forge command registration is bridged into this SPI, but external plugin JAR discovery, the `org.bukkit.*` namespace, Bukkit scheduler semantics, and complete Bukkit/Paper event coverage are not implemented yet. Those require a separately versioned adapter and a compatibility matrix.
 
 ## Roadmap
 
@@ -102,10 +110,10 @@ GPU support will be optional and will always have a CPU fallback. HyperCore curr
 - [x] Configuration and capability detection
 - [x] Scalar CPU spatial compute baseline
 - [x] Region ownership and cross-region task model prototype
-- [ ] Minimal Bukkit command, permission, and event API
+- [x] Controlled plugin bridge kernel for commands, permissions, lifecycle, and events
 - [ ] CPU vector compute baseline
 - [ ] Optional Vulkan compute prototype
-- [ ] Mod/plugin compatibility matrix and performance suite
+- [ ] Bukkit/Paper namespace adapter and mod/plugin compatibility matrix
 
 See [CHANGELOG.md](CHANGELOG.md) for completed changes.
 

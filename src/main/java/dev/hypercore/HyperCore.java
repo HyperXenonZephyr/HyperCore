@@ -4,6 +4,7 @@ import com.mojang.logging.LogUtils;
 import dev.hypercore.command.HyperCoreCommands;
 import dev.hypercore.config.HyperCoreConfig;
 import dev.hypercore.hardware.RuntimeCapabilities;
+import dev.hypercore.plugin.ForgePluginCommandBridge;
 import dev.hypercore.runtime.HyperCoreRuntime;
 import net.minecraftforge.common.MinecraftForge;
 import net.minecraftforge.event.RegisterCommandsEvent;
@@ -45,6 +46,7 @@ public final class HyperCore {
     @SubscribeEvent
     public void onRegisterCommands(RegisterCommandsEvent event) {
         HyperCoreCommands.register(event.getDispatcher(), runtime);
+        ForgePluginCommandBridge.register(event.getDispatcher(), runtime.plugins());
     }
 
     @SubscribeEvent
@@ -59,6 +61,7 @@ public final class HyperCore {
             capabilities.gpu().devices().size()
         );
         logGpuCapabilities(capabilities.gpu());
+        logVulkanCapabilities();
     }
 
     @SubscribeEvent
@@ -113,6 +116,20 @@ public final class HyperCore {
                 device.vramBytes() / (1024L * 1024L),
                 device.deviceId()
             );
+        }
+    }
+
+    private void logVulkanCapabilities() {
+        if (!runtime.vulkan().attempted()) {
+            LOGGER.info("Vulkan loader probe is disabled");
+        } else if (runtime.vulkan().available()) {
+            LOGGER.info(
+                "Vulkan loader {} is available with API version {}",
+                runtime.vulkan().library(),
+                runtime.vulkan().apiVersion()
+            );
+        } else {
+            LOGGER.warn("Vulkan loader probe failed: {}", runtime.vulkan().error());
         }
     }
 }

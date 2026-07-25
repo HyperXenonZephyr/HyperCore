@@ -21,6 +21,10 @@ public final class HyperCoreConfig {
         .comment("Probe graphics adapters during server startup. Probe failures never prevent startup.")
         .define("compute.probeGpu", true);
 
+    private static final ForgeConfigSpec.IntValue GPU_MINIMUM_BATCH_SIZE = BUILDER
+        .comment("Minimum element count considered for a future GPU compute offload.")
+        .defineInRange("compute.gpuMinimumBatchSize", 16_384, 256, 16_777_216);
+
     public static final ForgeConfigSpec SPEC = BUILDER.build();
 
     private HyperCoreConfig() {
@@ -31,11 +35,18 @@ public final class HyperCoreConfig {
             WORKER_THREADS.get(),
             QUEUE_CAPACITY.get(),
             TICK_SAMPLE_WINDOW.get(),
-            PROBE_GPU.get()
+            PROBE_GPU.get(),
+            GPU_MINIMUM_BATCH_SIZE.get()
         );
     }
 
-    public record Settings(int workerThreads, int queueCapacity, int tickSampleWindow, boolean probeGpu) {
+    public record Settings(
+        int workerThreads,
+        int queueCapacity,
+        int tickSampleWindow,
+        boolean probeGpu,
+        int gpuMinimumBatchSize
+    ) {
         public Settings {
             if (workerThreads < 0) {
                 throw new IllegalArgumentException("workerThreads cannot be negative");
@@ -45,6 +56,9 @@ public final class HyperCoreConfig {
             }
             if (tickSampleWindow < 1) {
                 throw new IllegalArgumentException("tickSampleWindow must be positive");
+            }
+            if (gpuMinimumBatchSize < 1) {
+                throw new IllegalArgumentException("gpuMinimumBatchSize must be positive");
             }
         }
 

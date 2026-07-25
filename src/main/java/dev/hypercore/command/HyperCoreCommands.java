@@ -5,6 +5,7 @@ import dev.hypercore.HyperCore;
 import dev.hypercore.hardware.RuntimeCapabilities;
 import dev.hypercore.metrics.TickMetrics;
 import dev.hypercore.region.RegionTaskCoordinator;
+import dev.hypercore.plugin.PluginManager;
 import dev.hypercore.runtime.HyperCoreRuntime;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.network.chat.Component;
@@ -27,6 +28,7 @@ public final class HyperCoreCommands {
             .then(literal("timings").executes(context -> showTimings(context.getSource(), runtime)))
             .then(literal("capabilities").executes(context -> showCapabilities(context.getSource(), runtime)))
             .then(literal("regions").executes(context -> showRegions(context.getSource(), runtime)))
+            .then(literal("plugins").executes(context -> showPlugins(context.getSource(), runtime)))
         );
     }
 
@@ -90,6 +92,20 @@ public final class HyperCoreCommands {
             "Active compute backend: " + runtime.computeBackend().id()
                 + " (" + runtime.computeBackend().deviceType().name().toLowerCase(Locale.ROOT) + ")"
         ), false);
+        if (!runtime.vulkan().attempted()) {
+            source.sendSuccess(() -> Component.literal("Vulkan loader probe: disabled"), false);
+        } else if (runtime.vulkan().available()) {
+            source.sendSuccess(() -> Component.literal(
+                "Vulkan loader: " + runtime.vulkan().library()
+                    + " | API=" + runtime.vulkan().apiVersion()
+                    + " | GPU backend=not implemented"
+                    + " | minimumBatch=" + runtime.gpuOffloadPolicy().minimumBatchSize()
+            ), false);
+        } else {
+            source.sendSuccess(() -> Component.literal(
+                "Vulkan loader probe failed: " + runtime.vulkan().error()
+            ), false);
+        }
         return gpu.devices().size();
     }
 
@@ -105,6 +121,18 @@ public final class HyperCoreCommands {
                 + " | partialTicks=" + status.partialTicks() + "/" + status.finishedTicks()
         ), false);
         return status.queuedMessages();
+    }
+
+    private static int showPlugins(CommandSourceStack source, HyperCoreRuntime runtime) {
+        PluginManager.Status status = runtime.plugins().status();
+        source.sendSuccess(() -> Component.literal(
+            "Plugins=" + status.enabledPlugins() + "/" + status.registeredPlugins()
+                + " | failed=" + status.failedPlugins()
+                + " | commands=" + status.registeredCommands()
+                + " | permissions=" + status.registeredPermissions()
+                + " | listeners=" + status.registeredListeners()
+        ), false);
+        return status.enabledPlugins();
     }
 
     private static long toMiB(long bytes) {

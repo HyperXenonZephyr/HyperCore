@@ -2,14 +2,18 @@ package dev.hypercore.runtime;
 
 import dev.hypercore.compute.ScalarSpatialComputeBackend;
 import dev.hypercore.compute.SpatialComputeBackend;
+import dev.hypercore.compute.GpuOffloadPolicy;
 import dev.hypercore.concurrent.HyperCoreExecutor;
 import dev.hypercore.config.HyperCoreConfig;
 import dev.hypercore.hardware.RuntimeCapabilities;
+import dev.hypercore.hardware.VulkanRuntimeProbe;
 import dev.hypercore.metrics.TickMetrics;
 import dev.hypercore.region.RegionTaskCoordinator;
+import dev.hypercore.plugin.PluginManager;
 
 public final class HyperCoreRuntime implements AutoCloseable {
     private final SpatialComputeBackend computeBackend = new ScalarSpatialComputeBackend();
+    private final PluginManager plugins = new PluginManager();
     private volatile State state;
 
     public synchronized void start(HyperCoreConfig.Settings settings) {
@@ -18,6 +22,9 @@ public final class HyperCoreRuntime implements AutoCloseable {
         }
 
         RuntimeCapabilities capabilities = RuntimeCapabilities.detect(settings.probeGpu());
+        VulkanRuntimeProbe.Result vulkan = settings.probeGpu()
+            ? VulkanRuntimeProbe.detect()
+            : VulkanRuntimeProbe.disabled();
         int workers = settings.resolveWorkerThreads(capabilities.logicalProcessors());
         int queueCapacity = settings.resolveQueueCapacity(workers);
         HyperCoreExecutor executor = HyperCoreExecutor.create(workers, queueCapacity);
@@ -25,8 +32,11 @@ public final class HyperCoreRuntime implements AutoCloseable {
             executor,
             new TickMetrics(settings.tickSampleWindow()),
             capabilities,
-            new RegionTaskCoordinator(executor, workers)
+            new RegionTaskCoordinator(executor, workers),
+            vulkan,
+            new GpuOffloadPolicy(settings.gpuMinimumBatchSize())
         );
+        plugins.enableAll();
     }
 
     public boolean isStarted() {
@@ -47,6 +57,18 @@ public final class HyperCoreRuntime implements AutoCloseable {
 
     public RegionTaskCoordinator regionTasks() {
         return requireState().regionTasks();
+    }
+
+    public PluginManager plugins() {
+        return plugins;
+    }
+
+    public VulkanRuntimeProbe.Result vulkan() {
+        return requireState().vulkan();
+    }
+
+    public GpuOffloadPolicy gpuOffloadPolicy() {
+        return requireState().gpuOffloadPolicy();
     }
 
     public SpatialComputeBackend computeBackend() {
@@ -76,6 +98,7 @@ public final class HyperCoreRuntime implements AutoCloseable {
         State current = state;
         state = null;
         if (current != null) {
+            plugins.disableAll();
             current.executor().close();
         }
     }
@@ -92,7 +115,9 @@ public final class HyperCoreRuntime implements AutoCloseable {
         HyperCoreExecutor executor,
         TickMetrics tickMetrics,
         RuntimeCapabilities capabilities,
-        RegionTaskCoordinator regionTasks
+        RegionTaskCoordinator regionTasks,
+        VulkanRuntimeProbe.Result vulkan,
+        GpuOffloadPolicy gpuOffloadPolicy
     ) {
     }
 
