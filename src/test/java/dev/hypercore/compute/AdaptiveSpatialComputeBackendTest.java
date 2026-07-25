@@ -9,6 +9,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class AdaptiveSpatialComputeBackendTest {
@@ -71,6 +72,19 @@ class AdaptiveSpatialComputeBackendTest {
 
             backend.squaredDistances(0, 0, 0, new float[]{3}, new float[]{0}, new float[]{0}, new float[1]);
             assertEquals(1, backend.status().gpuBatches());
+
+            int[] mask = new int[1];
+            backend.radiusMask(0, 0, 0, 4, new float[]{1}, new float[]{0}, new float[]{0}, mask);
+            assertArrayEquals(new int[]{1}, mask);
+            assertEquals(1, backend.status().gpuRadiusMaskBatches());
+            assertEquals(Integer.BYTES, backend.status().gpuRadiusMaskReadbackBytes());
+
+            assertThrows(IllegalArgumentException.class, () -> backend.radiusMask(
+                0, 0, 0, -1, new float[]{1}, new float[]{0}, new float[]{0}, new int[1]
+            ));
+            assertEquals(AdaptiveSpatialComputeBackend.InitializationState.READY,
+                backend.status().initializationState());
+            assertEquals(0, backend.status().gpuFailures());
         } finally {
             allowCreation.countDown();
             backend.close();

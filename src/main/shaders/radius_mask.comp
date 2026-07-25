@@ -1,0 +1,48 @@
+#version 450
+
+layout(local_size_x = 256) in;
+
+layout(set = 0, binding = 0, std430) readonly buffer PositionsX {
+    float values[];
+} positionsX;
+
+layout(set = 0, binding = 1, std430) readonly buffer PositionsY {
+    float values[];
+} positionsY;
+
+layout(set = 0, binding = 2, std430) readonly buffer PositionsZ {
+    float values[];
+} positionsZ;
+
+layout(set = 0, binding = 3, std430) writeonly buffer RadiusMask {
+    uint values[];
+} outputMask;
+
+layout(push_constant) uniform Parameters {
+    float originX;
+    float originY;
+    float originZ;
+    float squaredRadius;
+    uint count;
+} parameters;
+
+void main() {
+    uint wordIndex = gl_GlobalInvocationID.x;
+    uint start = wordIndex * 32u;
+    if (start >= parameters.count) {
+        return;
+    }
+
+    uint mask = 0u;
+    uint end = min(start + 32u, parameters.count);
+    for (uint index = start; index < end; index++) {
+        float deltaX = positionsX.values[index] - parameters.originX;
+        float deltaY = positionsY.values[index] - parameters.originY;
+        float deltaZ = positionsZ.values[index] - parameters.originZ;
+        float squaredDistance = deltaX * deltaX + deltaY * deltaY + deltaZ * deltaZ;
+        if (squaredDistance <= parameters.squaredRadius) {
+            mask |= 1u << (index - start);
+        }
+    }
+    outputMask.values[wordIndex] = mask;
+}

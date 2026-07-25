@@ -42,6 +42,11 @@ All notable changes to HyperCore are documented in this file. The format is base
 - Added `SpatialQueryEngine` with immutable structure-of-arrays snapshots, inclusive radius matching, defensive result copies, and query, candidate, and match counters.
 - Expanded `/hypercore capabilities` with Vulkan initialization state and duration plus spatial-query counters.
 - Added unit coverage for asynchronous CPU-to-GPU switching, initialization cancellation, immutable query inputs and outputs, inclusive radius boundaries, validation, and query metrics.
+- Added a second build-time Shaderc pipeline that evaluates 32 radius candidates per Vulkan invocation and returns a packed 32-bit match mask.
+- Routed `SpatialQueryEngine` through the packed mask contract on both scalar and adaptive backends, reducing Vulkan result readback from four bytes per candidate to four bytes per 32 candidates.
+- Extended Vulkan startup verification to compare packed GPU radius masks against the scalar baseline before the backend becomes ready.
+- Added CPU/GPU radius-mask batch counts and GPU mask-readback bytes to `/hypercore capabilities`.
+- Added unit coverage for packed-word boundaries, undersized mask rejection, adaptive GPU routing, and mask diagnostics.
 
 ### Fixed
 

@@ -28,23 +28,29 @@ public final class SpatialQueryEngine {
         Objects.requireNonNull(positions, "positions");
 
         int size = positions.size();
-        float[] squaredDistances = new float[size];
-        backend.squaredDistances(
+        int[] maskWords = new int[SpatialComputeBackend.maskWordCount(size)];
+        backend.radiusMask(
             originX,
             originY,
             originZ,
+            radius * radius,
             positions.positionsX,
             positions.positionsY,
             positions.positionsZ,
-            squaredDistances
+            maskWords
         );
 
-        float squaredRadius = radius * radius;
         int[] matches = new int[size];
         int matchCount = 0;
-        for (int index = 0; index < size; index++) {
-            if (squaredDistances[index] <= squaredRadius) {
-                matches[matchCount++] = index;
+        for (int word = 0; word < maskWords.length; word++) {
+            int remaining = maskWords[word];
+            while (remaining != 0) {
+                int bit = Integer.numberOfTrailingZeros(remaining);
+                int index = word * Integer.SIZE + bit;
+                if (index < size) {
+                    matches[matchCount++] = index;
+                }
+                remaining &= remaining - 1;
             }
         }
         if (backend instanceof AdaptiveSpatialComputeBackend adaptive) {

@@ -51,6 +51,8 @@ class SpatialQueryEngineTest {
             assertEquals(1, backend.status().spatialQueries());
             assertEquals(3, backend.status().spatialCandidates());
             assertEquals(2, backend.status().spatialMatches());
+            assertEquals(1, backend.status().cpuRadiusMaskBatches());
+            assertEquals(0, backend.status().gpuRadiusMaskBatches());
         }
     }
 

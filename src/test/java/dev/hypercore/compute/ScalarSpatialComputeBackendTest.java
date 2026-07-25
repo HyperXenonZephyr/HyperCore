@@ -43,4 +43,30 @@ class ScalarSpatialComputeBackendTest {
             )
         );
     }
+
+    @Test
+    void packsInclusiveRadiusMatchesAcrossWordBoundaries() {
+        float[] x = new float[35];
+        float[] y = new float[35];
+        float[] z = new float[35];
+        for (int index = 0; index < x.length; index++) {
+            x[index] = index;
+        }
+        int[] output = new int[2];
+
+        backend.radiusMask(0, 0, 0, 32 * 32, x, y, z, output);
+
+        assertArrayEquals(new int[]{-1, 1}, output);
+    }
+
+    @Test
+    void rejectsUndersizedRadiusMaskOutput() {
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> backend.radiusMask(
+                0, 0, 0, 1,
+                new float[33], new float[33], new float[33], new int[1]
+            )
+        );
+    }
 }

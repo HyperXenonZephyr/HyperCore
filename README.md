@@ -7,7 +7,7 @@ HyperCore is an experimental high-performance Minecraft Java server project buil
 
 ## Current status
 
-Milestones 0 through 6 establish a buildable, dedicated-server-only Forge foundation:
+Milestones 0 through 7 establish a buildable, dedicated-server-only Forge foundation:
 
 - Minecraft 1.21.1, Forge 52.1.16, and Java 21 are pinned.
 - HyperCore loads as a server-side Forge component.
@@ -20,8 +20,8 @@ Milestones 0 through 6 establish a buildable, dedicated-server-only Forge founda
 - A scalar CPU spatial batch backend and a Vulkan compute backend implement the same squared-distance operation for correctness comparisons.
 - A logical region-owner model provides deterministic ownership, per-target FIFO mailboxes, tick-boundary dispatch, and cross-region message accounting.
 - A controlled plugin bridge kernel provides lifecycle callbacks, plugin-owned commands, permissions, and cancellable prioritized events. The Forge command bridge exposes registered commands and `/hypercore plugins` reports bridge health.
-- GPU support now includes Vulkan loader/API detection, device selection, a compiled SPIR-V compute shader, host-visible storage buffers, a correctness self-test, and a configurable batch-size offload policy. Runtime execution uses `cpu-scalar` while Vulkan initializes, switches atomically to `adaptive-vulkan` when ready, and falls back to CPU after a later dispatch failure.
-- An immutable structure-of-arrays position snapshot and radius-query service turn the distance kernel into a reusable read-only spatial workflow. Query, candidate, match, initialization-state, initialization-time, and CPU/GPU batch counters are exposed through `/hypercore capabilities`.
+- GPU support now includes Vulkan loader/API detection, device selection, two compiled SPIR-V compute pipelines, persistent host-visible storage buffers, correctness self-tests, and a configurable batch-size offload policy. Runtime execution uses `cpu-scalar` while Vulkan initializes, switches atomically to `adaptive-vulkan` when ready, and falls back to CPU after a later dispatch failure.
+- An immutable structure-of-arrays position snapshot and radius-query service now uses a GPU-generated packed match mask instead of reading every distance back to CPU. Query, candidate, match, mask, readback-byte, initialization-state, initialization-time, and CPU/GPU batch counters are exposed through `/hypercore capabilities`.
 
 ## Build
 
@@ -73,7 +73,9 @@ Invalid values are rejected by Forge's config specification. GPU loader, device,
 
 The scalar backend is the deterministic correctness baseline for structure-of-arrays squared-distance batches. Vulkan device creation and the 1,024-element GPU-vs-CPU self-test run on a dedicated daemon thread, so server startup and compute callers continue on `cpu-scalar` while initialization is in progress. The router switches atomically to `adaptive-vulkan` when ready, sends batches below `compute.gpuMinimumBatchSize` to CPU, and permanently falls back after a runtime GPU failure.
 
-`SpatialQueryEngine` accepts an immutable copy of structure-of-arrays positions and returns the ordered indices whose squared distance is within an inclusive radius. It is a real consumer of the adaptive compute backend and records query, candidate, and match counts. It does not read live Minecraft objects or mutate world state; entity, chunk, and block simulation remain outside the GPU path.
+`SpatialQueryEngine` accepts an immutable copy of structure-of-arrays positions and returns the ordered indices whose squared distance is within an inclusive radius. Its scalar path packs matches directly, while its Vulkan path processes 32 candidates per invocation and returns one 32-bit mask word. This reduces result readback from four bytes per candidate to four bytes per 32 candidates, excluding fixed synchronization costs. It is a real consumer of the adaptive compute backend and records query, candidate, match, mask-batch, and GPU readback-byte counts.
+
+The packed mask is an exact transfer-size improvement, not an end-to-end performance claim. Entity, chunk, and block simulation still remain outside the GPU path, and complete query/tick benchmarks are required before changing the default offload threshold.
 
 ## Region execution model
 
@@ -99,7 +101,7 @@ This is an ownership and messaging foundation, not parallel Minecraft world tick
 
 ## GPU policy
 
-GPU support is enabled by default and always has a CPU fallback. HyperCore enumerates graphics adapters and VRAM through OSHI, probes the Vulkan loader and API version through JNA, selects a compute-capable physical device, and submits a compiled SPIR-V squared-distance kernel through host-visible storage buffers. Vulkan creation and self-test are asynchronous; shutdown interrupts and bounded-joins initialization, and a backend that finishes after shutdown closes its native resources instead of becoming active. GPU use is gated by batch size and correctness verification; device limits or dispatch failures disable only the GPU path. Candidate workloads include batch terrain density generation, spatial broad-phase queries, and other data-oriented jobs. A GPU path will only be retained for a workload when it improves complete server tick or generation latency after upload, synchronization, and readback costs.
+GPU support is enabled by default and always has a CPU fallback. HyperCore enumerates graphics adapters and VRAM through OSHI, probes the Vulkan loader and API version through JNA, selects a compute-capable physical device, and submits compiled squared-distance and packed-radius-mask SPIR-V kernels through persistent host-visible storage buffers. Vulkan creation and both correctness self-tests are asynchronous; shutdown interrupts and bounded-joins initialization, and a backend that finishes after shutdown closes its native resources instead of becoming active. GPU use is gated by batch size and correctness verification; device limits or dispatch failures disable only the GPU path. Candidate workloads include batch terrain density generation, spatial broad-phase queries, and other data-oriented jobs. A GPU path will only be retained for a workload when it improves complete server tick or generation latency after upload, synchronization, and readback costs.
 
 ## Plugin bridge kernel
 
@@ -120,6 +122,7 @@ Forge command registration is bridged into this SPI, but external plugin JAR dis
 - [ ] CPU vector compute baseline
 - [x] Vulkan compute prototype with SPIR-V shader, self-test, and CPU fallback
 - [x] Asynchronous Vulkan lifecycle and immutable spatial-radius query service
+- [x] Packed GPU radius-mask pipeline with compressed result readback
 - [ ] Bukkit/Paper namespace adapter and mod/plugin compatibility matrix
 
 See [CHANGELOG.md](CHANGELOG.md) for completed changes.

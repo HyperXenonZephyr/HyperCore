@@ -51,6 +51,7 @@ import java.util.Objects;
 import static org.lwjgl.system.MemoryStack.stackPush;
 import static org.lwjgl.system.MemoryUtil.NULL;
 import static org.lwjgl.system.MemoryUtil.memFloatBuffer;
+import static org.lwjgl.system.MemoryUtil.memIntBuffer;
 import static org.lwjgl.vulkan.VK10.VK_API_VERSION_1_0;
 import static org.lwjgl.vulkan.VK10.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
 import static org.lwjgl.vulkan.VK10.VK_COMMAND_BUFFER_LEVEL_PRIMARY;
@@ -116,7 +117,8 @@ import static org.lwjgl.vulkan.VK10.vkWaitForFences;
 public final class VulkanSpatialComputeBackend implements ManagedSpatialComputeBackend {
     public static final String ID = "gpu-vulkan";
 
-    private static final String SHADER_RESOURCE = "/assets/hypercore/shaders/squared_distances.spv";
+    private static final String DISTANCE_SHADER_RESOURCE = "/assets/hypercore/shaders/squared_distances.spv";
+    private static final String RADIUS_MASK_SHADER_RESOURCE = "/assets/hypercore/shaders/radius_mask.spv";
     private static final int LOCAL_SIZE = 256;
     private static final long FENCE_TIMEOUT_NANOS = 30_000_000_000L;
 
@@ -132,6 +134,8 @@ public final class VulkanSpatialComputeBackend implements ManagedSpatialComputeB
     private final long pipelineLayout;
     private final long shaderModule;
     private final long pipeline;
+    private final long radiusMaskShaderModule;
+    private final long radiusMaskPipeline;
     private final long descriptorPool;
     private final long descriptorSet;
     private final long commandPool;
@@ -148,6 +152,8 @@ public final class VulkanSpatialComputeBackend implements ManagedSpatialComputeB
         long createdPipelineLayout = NULL;
         long createdShaderModule = NULL;
         long createdPipeline = NULL;
+        long createdRadiusMaskShaderModule = NULL;
+        long createdRadiusMaskPipeline = NULL;
         long createdDescriptorPool = NULL;
         long createdCommandPool = NULL;
         long createdFence = NULL;
@@ -168,10 +174,14 @@ public final class VulkanSpatialComputeBackend implements ManagedSpatialComputeB
             descriptorSetLayout = createdDescriptorSetLayout;
             createdPipelineLayout = createPipelineLayout(device, descriptorSetLayout);
             pipelineLayout = createdPipelineLayout;
-            createdShaderModule = createShaderModule(device);
+            createdShaderModule = createShaderModule(device, DISTANCE_SHADER_RESOURCE);
             shaderModule = createdShaderModule;
             createdPipeline = createPipeline(device, pipelineLayout, shaderModule);
             pipeline = createdPipeline;
+            createdRadiusMaskShaderModule = createShaderModule(device, RADIUS_MASK_SHADER_RESOURCE);
+            radiusMaskShaderModule = createdRadiusMaskShaderModule;
+            createdRadiusMaskPipeline = createPipeline(device, pipelineLayout, radiusMaskShaderModule);
+            radiusMaskPipeline = createdRadiusMaskPipeline;
             createdDescriptorPool = createDescriptorPool(device);
             descriptorPool = createdDescriptorPool;
             descriptorSet = allocateDescriptorSet(device, descriptorPool, descriptorSetLayout);
@@ -188,6 +198,8 @@ public final class VulkanSpatialComputeBackend implements ManagedSpatialComputeB
                 createdPipelineLayout,
                 createdShaderModule,
                 createdPipeline,
+                createdRadiusMaskShaderModule,
+                createdRadiusMaskPipeline,
                 createdDescriptorPool,
                 createdCommandPool,
                 createdFence
@@ -250,6 +262,42 @@ public final class VulkanSpatialComputeBackend implements ManagedSpatialComputeB
     }
 
     @Override
+    public synchronized void radiusMask(
+        float originX,
+        float originY,
+        float originZ,
+        float squaredRadius,
+        float[] positionsX,
+        float[] positionsY,
+        float[] positionsZ,
+        int[] outputWords
+    ) {
+        ensureOpen();
+        int size = validateMask(positionsX, positionsY, positionsZ, outputWords);
+        if (Float.isNaN(squaredRadius) || squaredRadius < 0.0f) {
+            throw new IllegalArgumentException("squaredRadius must be non-negative");
+        }
+        if (size == 0) {
+            return;
+        }
+
+        int wordCount = SpatialComputeBackend.maskWordCount(size);
+        int workgroups = Math.ceilDiv(wordCount, LOCAL_SIZE);
+        long inputByteSize = (long) size * Float.BYTES;
+        if (workgroups > maximumWorkgroupsX || inputByteSize > maximumStorageBufferBytes) {
+            throw new BatchNotSupportedException("Batch exceeds the selected Vulkan device limits");
+        }
+
+        ensureCapacity(size);
+        upload(buffers.positionsX(), positionsX, size);
+        upload(buffers.positionsY(), positionsY, size);
+        upload(buffers.positionsZ(), positionsZ, size);
+        recordRadiusMask(originX, originY, originZ, squaredRadius, size, workgroups);
+        submitAndWait();
+        downloadMask(buffers.output(), outputWords, wordCount);
+    }
+
+    @Override
     public synchronized void close() {
         if (closed) {
             return;
@@ -263,6 +311,8 @@ public final class VulkanSpatialComputeBackend implements ManagedSpatialComputeB
         vkDestroyFence(device, fence, null);
         vkDestroyCommandPool(device, commandPool, null);
         vkDestroyDescriptorPool(device, descriptorPool, null);
+        vkDestroyPipeline(device, radiusMaskPipeline, null);
+        vkDestroyShaderModule(device, radiusMaskShaderModule, null);
         vkDestroyPipeline(device, pipeline, null);
         vkDestroyShaderModule(device, shaderModule, null);
         vkDestroyPipelineLayout(device, pipelineLayout, null);
@@ -343,6 +393,40 @@ public final class VulkanSpatialComputeBackend implements ManagedSpatialComputeB
         }
     }
 
+    private void recordRadiusMask(
+        float originX,
+        float originY,
+        float originZ,
+        float squaredRadius,
+        int size,
+        int workgroups
+    ) {
+        check(vkResetCommandBuffer(commandBuffer, VK_COMMAND_BUFFER_RESET_RELEASE_RESOURCES_BIT), "reset command buffer");
+        try (MemoryStack stack = stackPush()) {
+            VkCommandBufferBeginInfo beginInfo = VkCommandBufferBeginInfo.calloc(stack).sType$Default();
+            check(vkBeginCommandBuffer(commandBuffer, beginInfo), "begin command buffer");
+            vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, radiusMaskPipeline);
+            vkCmdBindDescriptorSets(
+                commandBuffer,
+                VK_PIPELINE_BIND_POINT_COMPUTE,
+                pipelineLayout,
+                0,
+                stack.longs(descriptorSet),
+                null
+            );
+            ByteBuffer parameters = stack.malloc(5 * Float.BYTES).order(ByteOrder.nativeOrder());
+            parameters.putFloat(originX)
+                .putFloat(originY)
+                .putFloat(originZ)
+                .putFloat(squaredRadius)
+                .putInt(size)
+                .flip();
+            vkCmdPushConstants(commandBuffer, pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, parameters);
+            vkCmdDispatch(commandBuffer, workgroups, 1, 1);
+            check(vkEndCommandBuffer(commandBuffer), "end command buffer");
+        }
+    }
+
     private void submitAndWait() {
         try (MemoryStack stack = stackPush()) {
             check(vkResetFences(device, stack.longs(fence)), "reset fence");
@@ -376,6 +460,19 @@ public final class VulkanSpatialComputeBackend implements ManagedSpatialComputeB
             check(vkMapMemory(device, source.memory(), 0, (long) size * Float.BYTES, 0, mapped), "map result buffer");
             try {
                 memFloatBuffer(mapped.get(0), size).get(output, 0, size);
+            } finally {
+                vkUnmapMemory(device, source.memory());
+            }
+        }
+    }
+
+    private void downloadMask(GpuBuffer source, int[] output, int wordCount) {
+        try (MemoryStack stack = stackPush()) {
+            PointerBuffer mapped = stack.mallocPointer(1);
+            check(vkMapMemory(device, source.memory(), 0, (long) wordCount * Integer.BYTES, 0, mapped),
+                "map radius mask buffer");
+            try {
+                memIntBuffer(mapped.get(0), wordCount).get(output, 0, wordCount);
             } finally {
                 vkUnmapMemory(device, source.memory());
             }
@@ -499,7 +596,7 @@ public final class VulkanSpatialComputeBackend implements ManagedSpatialComputeB
             VkPushConstantRange.Buffer pushConstants = VkPushConstantRange.calloc(1, stack)
                 .stageFlags(VK_SHADER_STAGE_COMPUTE_BIT)
                 .offset(0)
-                .size(16);
+                .size(20);
             VkPipelineLayoutCreateInfo createInfo = VkPipelineLayoutCreateInfo.calloc(stack)
                 .sType$Default()
                 .pSetLayouts(stack.longs(descriptorSetLayout))
@@ -510,8 +607,8 @@ public final class VulkanSpatialComputeBackend implements ManagedSpatialComputeB
         }
     }
 
-    private static long createShaderModule(VkDevice device) {
-        byte[] bytecode = readShader();
+    private static long createShaderModule(VkDevice device, String resource) {
+        byte[] bytecode = readShader(resource);
         ByteBuffer code = ByteBuffer.allocateDirect(bytecode.length).order(ByteOrder.nativeOrder());
         code.put(bytecode).flip();
         try (MemoryStack stack = stackPush()) {
@@ -604,10 +701,10 @@ public final class VulkanSpatialComputeBackend implements ManagedSpatialComputeB
         }
     }
 
-    private static byte[] readShader() {
-        try (InputStream input = VulkanSpatialComputeBackend.class.getResourceAsStream(SHADER_RESOURCE)) {
+    private static byte[] readShader(String resource) {
+        try (InputStream input = VulkanSpatialComputeBackend.class.getResourceAsStream(resource)) {
             if (input == null) {
-                throw new IllegalStateException("Missing compute shader: " + SHADER_RESOURCE);
+                throw new IllegalStateException("Missing compute shader: " + resource);
             }
             return input.readAllBytes();
         } catch (IOException error) {
@@ -623,6 +720,18 @@ public final class VulkanSpatialComputeBackend implements ManagedSpatialComputeB
         int size = x.length;
         if (y.length != size || z.length != size || output.length < size) {
             throw new IllegalArgumentException("Position arrays must have equal lengths and fit in output");
+        }
+        return size;
+    }
+
+    private static int validateMask(float[] x, float[] y, float[] z, int[] output) {
+        Objects.requireNonNull(x, "positionsX");
+        Objects.requireNonNull(y, "positionsY");
+        Objects.requireNonNull(z, "positionsZ");
+        Objects.requireNonNull(output, "outputWords");
+        int size = x.length;
+        if (y.length != size || z.length != size || output.length < SpatialComputeBackend.maskWordCount(size)) {
+            throw new IllegalArgumentException("Position arrays must have equal lengths and fit in output mask");
         }
         return size;
     }
@@ -654,6 +763,8 @@ public final class VulkanSpatialComputeBackend implements ManagedSpatialComputeB
         long pipelineLayout,
         long shaderModule,
         long pipeline,
+        long radiusMaskShaderModule,
+        long radiusMaskPipeline,
         long descriptorPool,
         long commandPool,
         long fence
@@ -667,6 +778,12 @@ public final class VulkanSpatialComputeBackend implements ManagedSpatialComputeB
             }
             if (descriptorPool != NULL) {
                 vkDestroyDescriptorPool(device, descriptorPool, null);
+            }
+            if (radiusMaskPipeline != NULL) {
+                vkDestroyPipeline(device, radiusMaskPipeline, null);
+            }
+            if (radiusMaskShaderModule != NULL) {
+                vkDestroyShaderModule(device, radiusMaskShaderModule, null);
             }
             if (pipeline != NULL) {
                 vkDestroyPipeline(device, pipeline, null);

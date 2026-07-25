@@ -108,8 +108,23 @@ tasks.register('compileComputeShaders', JavaExec) {
     }
 }
 
+tasks.register('compileRadiusMaskShader', JavaExec) {
+    dependsOn tasks.named('shaderCompilerClasses')
+    classpath = sourceSets.shaderCompiler.runtimeClasspath
+    mainClass = 'dev.hypercore.tools.ComputeShaderCompiler'
+    args(
+        layout.projectDirectory.file('src/main/shaders/radius_mask.comp').asFile.absolutePath,
+        generatedShaderResources.get().file('assets/hypercore/shaders/radius_mask.spv').asFile.absolutePath
+    )
+    inputs.file layout.projectDirectory.file('src/main/shaders/radius_mask.comp')
+    outputs.file generatedShaderResources.map {
+        it.file('assets/hypercore/shaders/radius_mask.spv')
+    }
+}
+
 tasks.named('processResources').configure {
     dependsOn tasks.named('compileComputeShaders')
+    dependsOn tasks.named('compileRadiusMaskShader')
     from generatedShaderResources
 }
 

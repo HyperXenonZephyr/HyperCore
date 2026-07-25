@@ -19,6 +19,9 @@ public final class AdaptiveSpatialComputeBackend implements SpatialComputeBacken
     private final AtomicLong cpuBatches = new AtomicLong();
     private final AtomicLong gpuBatches = new AtomicLong();
     private final AtomicLong gpuFailures = new AtomicLong();
+    private final AtomicLong cpuRadiusMaskBatches = new AtomicLong();
+    private final AtomicLong gpuRadiusMaskBatches = new AtomicLong();
+    private final AtomicLong gpuRadiusMaskReadbackBytes = new AtomicLong();
     private final AtomicLong spatialQueries = new AtomicLong();
     private final AtomicLong spatialCandidates = new AtomicLong();
     private final AtomicLong spatialMatches = new AtomicLong();
@@ -122,6 +125,55 @@ public final class AdaptiveSpatialComputeBackend implements SpatialComputeBacken
         cpuBatches.incrementAndGet();
     }
 
+    @Override
+    public void radiusMask(
+        float originX,
+        float originY,
+        float originZ,
+        float squaredRadius,
+        float[] positionsX,
+        float[] positionsY,
+        float[] positionsZ,
+        int[] outputWords
+    ) {
+        int size = validateMask(positionsX, positionsY, positionsZ, outputWords);
+        if (Float.isNaN(squaredRadius) || squaredRadius < 0.0f) {
+            throw new IllegalArgumentException("squaredRadius must be non-negative");
+        }
+        ManagedSpatialComputeBackend currentGpu = gpu;
+        GpuOffloadPolicy.Decision decision = policy.evaluate(size, currentGpu != null, currentGpu != null);
+        if (decision.offload()) {
+            try {
+                synchronized (this) {
+                    if (closed || gpu != currentGpu) {
+                        throw new IllegalStateException("Vulkan compute backend is closing");
+                    }
+                    currentGpu.radiusMask(
+                        originX, originY, originZ, squaredRadius,
+                        positionsX, positionsY, positionsZ, outputWords
+                    );
+                }
+                gpuBatches.incrementAndGet();
+                gpuRadiusMaskBatches.incrementAndGet();
+                gpuRadiusMaskReadbackBytes.addAndGet(
+                    (long) SpatialComputeBackend.maskWordCount(size) * Integer.BYTES
+                );
+                return;
+            } catch (VulkanSpatialComputeBackend.BatchNotSupportedException unsupported) {
+                // This batch can still run correctly on the scalar fallback.
+            } catch (RuntimeException | LinkageError error) {
+                disableGpu(currentGpu, error);
+            }
+        }
+
+        cpu.radiusMask(
+            originX, originY, originZ, squaredRadius,
+            positionsX, positionsY, positionsZ, outputWords
+        );
+        cpuBatches.incrementAndGet();
+        cpuRadiusMaskBatches.incrementAndGet();
+    }
+
     void recordSpatialQuery(int candidateCount, int matchCount) {
         spatialQueries.incrementAndGet();
         spatialCandidates.addAndGet(candidateCount);
@@ -141,6 +193,9 @@ public final class AdaptiveSpatialComputeBackend implements SpatialComputeBacken
             cpuBatches.get(),
             gpuBatches.get(),
             gpuFailures.get(),
+            cpuRadiusMaskBatches.get(),
+            gpuRadiusMaskBatches.get(),
+            gpuRadiusMaskReadbackBytes.get(),
             spatialQueries.get(),
             spatialCandidates.get(),
             spatialMatches.get(),
@@ -266,6 +321,23 @@ public final class AdaptiveSpatialComputeBackend implements SpatialComputeBacken
                 );
             }
         }
+
+        int wordCount = SpatialComputeBackend.maskWordCount(size);
+        int[] expectedMask = new int[wordCount];
+        int[] actualMask = new int[wordCount];
+        new ScalarSpatialComputeBackend().radiusMask(
+            1.25f, -2.5f, 4.0f, 4_096.0f, x, y, z, expectedMask
+        );
+        gpu.radiusMask(1.25f, -2.5f, 4.0f, 4_096.0f, x, y, z, actualMask);
+        for (int word = 0; word < wordCount; word++) {
+            if (expectedMask[word] != actualMask[word]) {
+                throw new IllegalStateException(
+                    "Vulkan radius-mask self-test mismatch at word " + word
+                        + ": expected=" + Integer.toUnsignedString(expectedMask[word])
+                        + ", actual=" + Integer.toUnsignedString(actualMask[word])
+                );
+            }
+        }
     }
 
     private static String normalize(String message) {
@@ -280,6 +352,18 @@ public final class AdaptiveSpatialComputeBackend implements SpatialComputeBacken
         int size = x.length;
         if (y.length != size || z.length != size || output.length < size) {
             throw new IllegalArgumentException("Position arrays must have equal lengths and fit in output");
+        }
+        return size;
+    }
+
+    private static int validateMask(float[] x, float[] y, float[] z, int[] output) {
+        Objects.requireNonNull(x, "positionsX");
+        Objects.requireNonNull(y, "positionsY");
+        Objects.requireNonNull(z, "positionsZ");
+        Objects.requireNonNull(output, "outputWords");
+        int size = x.length;
+        if (y.length != size || z.length != size || output.length < SpatialComputeBackend.maskWordCount(size)) {
+            throw new IllegalArgumentException("Position arrays must have equal lengths and fit in output mask");
         }
         return size;
     }
@@ -305,6 +389,9 @@ public final class AdaptiveSpatialComputeBackend implements SpatialComputeBacken
         long cpuBatches,
         long gpuBatches,
         long gpuFailures,
+        long cpuRadiusMaskBatches,
+        long gpuRadiusMaskBatches,
+        long gpuRadiusMaskReadbackBytes,
         long spatialQueries,
         long spatialCandidates,
         long spatialMatches,
