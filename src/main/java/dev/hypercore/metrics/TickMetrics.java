@@ -3,12 +3,25 @@ package dev.hypercore.metrics;
 import java.util.Arrays;
 
 public final class TickMetrics {
-    private static final int WINDOW_SIZE = 200;
-
-    private final long[] samples = new long[WINDOW_SIZE];
+    private final long[] samples;
     private long tickStartedAt;
     private int cursor;
     private int sampleCount;
+
+    public TickMetrics() {
+        this(200);
+    }
+
+    public TickMetrics(int windowSize) {
+        if (windowSize < 1) {
+            throw new IllegalArgumentException("windowSize must be positive");
+        }
+        this.samples = new long[windowSize];
+    }
+
+    public int windowSize() {
+        return samples.length;
+    }
 
     public synchronized void beginTick() {
         tickStartedAt = System.nanoTime();
@@ -56,4 +69,3 @@ public final class TickMetrics {
     public record Snapshot(int samples, double averageMs, double p95Ms, double maximumMs) {
     }
 }
-

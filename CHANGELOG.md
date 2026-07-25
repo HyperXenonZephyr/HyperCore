@@ -18,7 +18,15 @@ All notable changes to HyperCore are documented in this file. The format is base
 - Replaced the unbounded executor queue with bounded backpressure, rejection metrics, and pending-task cancellation on shutdown.
 - Expanded `/hypercore status` with active worker, queue capacity, and rejection diagnostics.
 - Added an automated Forge GameTest that verifies HyperCore in the dedicated-server environment.
+- Added Forge common configuration for worker threads, task queue capacity, tick sampling, and optional GPU probing.
+- Delayed worker-pool creation until the server lifecycle has loaded configuration.
+- Added structured OS, JVM, CPU, graphics adapter, device ID, and VRAM capability detection through OSHI.
+- Added `/hypercore capabilities` and exposed the active compute backend in `/hypercore status`.
+- Added a `cpu-scalar` structure-of-arrays squared-distance backend as the correctness baseline for future vector and GPU implementations.
+- Added tests for configuration resolution, runtime lifecycle, capability reporting, compute correctness, and custom tick windows.
 
 ### Fixed
 
 - Disabled Gradle configuration cache because ForgeGradle 7 could restore an incomplete merged source set after `clean`, producing a JAR with missing classes.
+- Disabled ForgeGradle's merged source-set output, restoring standard Gradle class directories and preventing clean builds from omitting unchanged classes.
+- Staged development classes and resources into one exploded mod directory so Forge server and GameTest runs load HyperCore correctly with standard Gradle source-set outputs.

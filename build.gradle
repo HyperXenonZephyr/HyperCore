@@ -12,6 +12,18 @@ base {
     archivesName = 'hypercore'
 }
 
+def devModDirectory = layout.buildDirectory.dir('dev-mod/hypercore')
+
+sourceSets {
+    devMod {
+        java.setSrcDirs([])
+        resources.setSrcDirs([])
+        output.dir(devModDirectory)
+    }
+}
+
+sourceSets.main.runtimeClasspath = configurations.runtimeClasspath + files(devModDirectory)
+
 java.toolchain.languageVersion = JavaLanguageVersion.of(21)
 
 minecraft {
@@ -21,6 +33,11 @@ minecraft {
         configureEach {
             workingDir = layout.projectDirectory.dir('run')
             systemProperty 'forge.enabledGameTestNamespaces', 'hypercore'
+            mods {
+                hypercore {
+                    source sourceSets.devMod
+                }
+            }
         }
 
         register('server') {
@@ -40,6 +57,7 @@ repositories {
 
 dependencies {
     implementation minecraft.dependency('net.minecraftforge:forge:1.21.1-52.1.16')
+    compileOnly 'com.github.oshi:oshi-core:6.4.10'
     testImplementation platform('org.junit:junit-bom:5.11.4')
     testImplementation 'org.junit.jupiter:junit-jupiter'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
@@ -52,6 +70,17 @@ tasks.withType(JavaCompile).configureEach {
 
 tasks.named('test', Test).configure {
     useJUnitPlatform()
+}
+
+tasks.register('prepareDevMod', Sync) {
+    dependsOn tasks.named('classes')
+    from layout.buildDirectory.dir('classes/java/main')
+    from layout.buildDirectory.dir('resources/main')
+    into devModDirectory
+}
+
+tasks.matching { it.name == 'runServer' || it.name == 'runGameTestServer' }.configureEach {
+    dependsOn tasks.named('prepareDevMod')
 }
 
 jar {
