@@ -1,6 +1,6 @@
 # HyperCore
 
-HyperCore is an experimental high-performance Minecraft Java server project built on Forge. Its long-term goals are simultaneous Forge mod and Fabric mod execution alongside Bukkit/Paper plugin interoperability, safe multi-core execution, optional GPU compute acceleration, and measurable server-side optimization.
+HyperCore is an experimental high-performance Minecraft Java server project targeting multi-loader mod execution. Its long-term goals are simultaneous Forge mod and Fabric mod execution alongside Bukkit/Paper plugin interoperability, safe multi-core execution, optional GPU compute acceleration, and measurable server-side optimization.
 
 > [!IMPORTANT]
 > HyperCore is at an early prototype stage. It is not currently a Bukkit/Paper-compatible production server, and it does not yet move Minecraft world simulation onto the GPU.
