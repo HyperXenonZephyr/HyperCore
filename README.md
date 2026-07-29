@@ -1,9 +1,11 @@
 # HyperCore
 
-HyperCore is an experimental high-performance Minecraft Java server project built on Forge. Its long-term goals are Forge mod and Bukkit/Paper plugin interoperability, safe multi-core execution, optional GPU compute acceleration, and measurable server-side optimization.
+HyperCore is an experimental high-performance Minecraft Java server project built on Forge. Its long-term goals are simultaneous Forge mod and Fabric mod execution alongside Bukkit/Paper plugin interoperability, safe multi-core execution, optional GPU compute acceleration, and measurable server-side optimization.
 
 > [!IMPORTANT]
 > HyperCore is at an early prototype stage. It is not currently a Bukkit/Paper-compatible production server, and it does not yet move Minecraft world simulation onto the GPU.
+>
+> Forge mod and Fabric mod coexistence is a stated future objective. Today the server is built, loaded, and tested only against Forge 1.21.1; Fabric loader support is not implemented, and simultaneous Forge/Fabric mod execution has not been demonstrated.
 
 ## Current status
 
@@ -103,10 +105,11 @@ This is an ownership and messaging foundation, not parallel Minecraft world tick
 ## Architecture direction
 
 1. **Forge foundation**: preserve native Forge lifecycle, registries, events, and mod compatibility.
-2. **Compatibility bridge**: implement a controlled Bukkit-compatible API and event bridge rather than merging unrelated patched server jars.
-3. **Parallel execution**: establish region ownership and tick-boundary message passing before parallel world mutation.
-4. **Compute backends**: benchmark CPU scalar, Java Vector API, and GPU implementations for batch-friendly workloads.
-5. **Validation**: require behavior tests and end-to-end MSPT results for every optimization.
+2. **Mod-loader interoperability**: target simultaneous Forge mod and Fabric mod execution on one server. This is a future objective only; today the runtime is Forge-exclusive and used as the test bed. Coexistence requires reconciling two incompatible transform and mapping pipelines, and no implementation exists yet.
+3. **Compatibility bridge**: implement a controlled Bukkit-compatible API and event bridge rather than merging unrelated patched server jars.
+4. **Parallel execution**: establish region ownership and tick-boundary message passing before parallel world mutation.
+5. **Compute backends**: benchmark CPU scalar, Java Vector API, and GPU implementations for batch-friendly workloads.
+6. **Validation**: require behavior tests and end-to-end MSPT results for every optimization.
 
 ## GPU policy
 
@@ -137,6 +140,7 @@ Forge command registration is bridged into this SPI, but Bukkit/Paper JARs using
 ## Roadmap
 
 - [x] Forge 1.21.1 project foundation
+- [ ] Simultaneous Forge mod and Fabric mod execution (future objective; Forge-only today)
 - [x] Safe background executor and basic tick diagnostics
 - [x] Unit tests for metrics, isolated worker execution, and queue backpressure
 - [x] Automated Forge dedicated-server GameTest
