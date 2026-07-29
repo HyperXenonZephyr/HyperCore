@@ -152,6 +152,7 @@ public final class HyperCoreCommands {
         PluginManager.Status status = runtime.plugins().status();
         source.sendSuccess(() -> Component.literal(
             "Plugins=" + status.enabledPlugins() + "/" + status.registeredPlugins()
+                + " | external=" + status.externalPlugins()
                 + " | failed=" + status.failedPlugins()
                 + " | commands=" + status.registeredCommands()
                 + " | permissions=" + status.registeredPermissions()

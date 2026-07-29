@@ -20,6 +20,23 @@ public final class PluginManager implements AutoCloseable {
     private boolean enabled;
 
     public synchronized void register(PluginDescriptor descriptor, HyperPlugin plugin) {
+        register(descriptor, plugin, false, null);
+    }
+
+    synchronized RegistrationResult registerExternal(
+        PluginDescriptor descriptor,
+        HyperPlugin plugin,
+        ClassLoader callbackClassLoader
+    ) {
+        return register(descriptor, plugin, true, Objects.requireNonNull(callbackClassLoader, "callbackClassLoader"));
+    }
+
+    private RegistrationResult register(
+        PluginDescriptor descriptor,
+        HyperPlugin plugin,
+        boolean external,
+        ClassLoader callbackClassLoader
+    ) {
         Objects.requireNonNull(descriptor, "descriptor");
         Objects.requireNonNull(plugin, "plugin");
         if (plugins.containsKey(descriptor.id())) {
@@ -29,14 +46,19 @@ public final class PluginManager implements AutoCloseable {
         PluginContainer container = new PluginContainer(
             descriptor,
             plugin,
-            new PluginContext(descriptor, commands, permissions, events, scheduler),
-            PluginState.REGISTERED
+            new PluginContext(descriptor, commands, permissions, events, scheduler, callbackClassLoader),
+            PluginState.REGISTERED,
+            external
         );
         plugins.put(descriptor.id(), container);
         load(container);
         if (enabled && container.state() == PluginState.LOADED) {
             enable(container);
         }
+        return new RegistrationResult(
+            container.state() == PluginState.LOADED || container.state() == PluginState.ENABLED,
+            container.state().name().toLowerCase(java.util.Locale.ROOT)
+        );
     }
 
     public synchronized void enableAll() {
@@ -66,9 +88,13 @@ public final class PluginManager implements AutoCloseable {
         long failedPlugins = plugins.values().stream()
             .filter(plugin -> plugin.state() == PluginState.FAILED)
             .count();
+        long externalPlugins = plugins.values().stream()
+            .filter(PluginContainer::external)
+            .count();
         PluginScheduler.Status schedulerStatus = scheduler.status();
         return new Status(
             plugins.size(),
+            (int) externalPlugins,
             (int) enabledPlugins,
             (int) failedPlugins,
             commands.registeredCommands(),
@@ -97,6 +123,20 @@ public final class PluginManager implements AutoCloseable {
         return scheduler;
     }
 
+    public synchronized boolean contains(String pluginId) {
+        return plugins.containsKey(PluginPermissionService.normalizePluginId(pluginId));
+    }
+
+    public synchronized boolean unregister(String pluginId) {
+        String normalizedPluginId = PluginPermissionService.normalizePluginId(pluginId);
+        PluginContainer container = plugins.remove(normalizedPluginId);
+        if (container == null) {
+            return false;
+        }
+        disable(container);
+        return true;
+    }
+
     @Override
     public void close() {
         disableAll();
@@ -105,7 +145,7 @@ public final class PluginManager implements AutoCloseable {
 
     private void load(PluginContainer container) {
         try {
-            container.plugin().onLoad(container.context());
+            container.context().runWithContext(() -> container.plugin().onLoad(container.context()));
             container.state(PluginState.LOADED);
         } catch (RuntimeException error) {
             fail(container, "load", error);
@@ -114,7 +154,7 @@ public final class PluginManager implements AutoCloseable {
 
     private void enable(PluginContainer container) {
         try {
-            container.plugin().onEnable(container.context());
+            container.context().runWithContext(() -> container.plugin().onEnable(container.context()));
             container.state(PluginState.ENABLED);
         } catch (RuntimeException error) {
             fail(container, "enable", error);
@@ -124,7 +164,7 @@ public final class PluginManager implements AutoCloseable {
     private void disable(PluginContainer container) {
         if (container.state() == PluginState.ENABLED) {
             try {
-                container.plugin().onDisable(container.context());
+                container.context().runWithContext(() -> container.plugin().onDisable(container.context()));
             } catch (RuntimeException error) {
                 LOGGER.error("Plugin {} failed during disable", container.descriptor().id(), error);
             }
@@ -160,18 +200,21 @@ public final class PluginManager implements AutoCloseable {
         private final PluginDescriptor descriptor;
         private final HyperPlugin plugin;
         private final PluginContext context;
+        private final boolean external;
         private PluginState state;
 
         private PluginContainer(
             PluginDescriptor descriptor,
             HyperPlugin plugin,
             PluginContext context,
-            PluginState state
+            PluginState state,
+            boolean external
         ) {
             this.descriptor = descriptor;
             this.plugin = plugin;
             this.context = context;
             this.state = state;
+            this.external = external;
         }
 
         private PluginDescriptor descriptor() {
@@ -193,10 +236,15 @@ public final class PluginManager implements AutoCloseable {
         private void state(PluginState state) {
             this.state = state;
         }
+
+        private boolean external() {
+            return external;
+        }
     }
 
     public record Status(
         int registeredPlugins,
+        int externalPlugins,
         int enabledPlugins,
         int failedPlugins,
         int registeredCommands,
@@ -207,5 +255,8 @@ public final class PluginManager implements AutoCloseable {
         long failedScheduledTasks,
         long cancelledScheduledTasks
     ) {
+    }
+
+    record RegistrationResult(boolean successful, String state) {
     }
 }

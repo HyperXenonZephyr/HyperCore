@@ -11,12 +11,19 @@ import dev.hypercore.hardware.VulkanRuntimeProbe;
 import dev.hypercore.metrics.TickMetrics;
 import dev.hypercore.region.RegionTaskCoordinator;
 import dev.hypercore.plugin.PluginManager;
+import dev.hypercore.plugin.ExternalPluginLoader;
+
+import java.nio.file.Path;
 
 public final class HyperCoreRuntime implements AutoCloseable {
     private final PluginManager plugins = new PluginManager();
     private volatile State state;
 
     public synchronized void start(HyperCoreConfig.Settings settings) {
+        start(settings, null);
+    }
+
+    public synchronized void start(HyperCoreConfig.Settings settings, Path pluginDirectory) {
         if (state != null) {
             throw new IllegalStateException("HyperCore runtime is already started");
         }
@@ -36,6 +43,12 @@ public final class HyperCoreRuntime implements AutoCloseable {
         int queueCapacity = settings.resolveQueueCapacity(workers);
         HyperCoreExecutor executor = HyperCoreExecutor.create(workers, queueCapacity);
         plugins.scheduler().attachExecutor(executor);
+        ExternalPluginLoader externalPlugins = pluginDirectory == null
+            ? null
+            : new ExternalPluginLoader(plugins, pluginDirectory);
+        if (externalPlugins != null) {
+            externalPlugins.load();
+        }
         state = new State(
             executor,
             new TickMetrics(settings.tickSampleWindow()),
@@ -44,7 +57,8 @@ public final class HyperCoreRuntime implements AutoCloseable {
             vulkan,
             gpuOffloadPolicy,
             computeBackend,
-            new SpatialQueryEngine(computeBackend)
+            new SpatialQueryEngine(computeBackend),
+            externalPlugins
         );
         plugins.enableAll();
     }
@@ -71,6 +85,10 @@ public final class HyperCoreRuntime implements AutoCloseable {
 
     public PluginManager plugins() {
         return plugins;
+    }
+
+    public ExternalPluginLoader externalPlugins() {
+        return requireState().externalPlugins();
     }
 
     public VulkanRuntimeProbe.Result vulkan() {
@@ -117,6 +135,9 @@ public final class HyperCoreRuntime implements AutoCloseable {
         state = null;
         if (current != null) {
             plugins.disableAll();
+            if (current.externalPlugins() != null) {
+                current.externalPlugins().close();
+            }
             plugins.scheduler().detachExecutor(current.executor());
             current.spatialQueries().close();
             current.computeBackend().close();
@@ -140,7 +161,8 @@ public final class HyperCoreRuntime implements AutoCloseable {
         VulkanRuntimeProbe.Result vulkan,
         GpuOffloadPolicy gpuOffloadPolicy,
         AdaptiveSpatialComputeBackend computeBackend,
-        SpatialQueryEngine spatialQueries
+        SpatialQueryEngine spatialQueries,
+        ExternalPluginLoader externalPlugins
     ) {
     }
 

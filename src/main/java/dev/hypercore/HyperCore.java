@@ -19,6 +19,8 @@ import net.minecraftforge.fml.config.ModConfig;
 import net.minecraftforge.fml.javafmlmod.FMLJavaModLoadingContext;
 import org.slf4j.Logger;
 
+import java.nio.file.Path;
+
 @Mod(HyperCore.MOD_ID)
 public final class HyperCore {
     public static final String MOD_ID = "hypercore";
@@ -35,7 +37,7 @@ public final class HyperCore {
 
     @SubscribeEvent
     public void onServerAboutToStart(ServerAboutToStartEvent event) {
-        runtime.start(HyperCoreConfig.settings());
+        runtime.start(HyperCoreConfig.settings(), Path.of("plugins"));
         LOGGER.info(
             "HyperCore runtime started with {} workers, queue capacity {}, and compute backend {}",
             runtime.executor().parallelism(),

@@ -65,6 +65,10 @@ All notable changes to HyperCore are documented in this file. The format is base
 - Expanded `/hypercore plugins` with scheduled-task and task-failure diagnostics.
 - Added `COMPATIBILITY.md` to distinguish implemented HyperCore SPI behavior from unsupported Bukkit/Paper namespaces, external JAR loading, and world-threading claims.
 - Added unit coverage for one-time snapshot preparation, repeated GPU routing, snapshot diagnostics, and independent resident-crossover reporting.
+- Added external HyperCore SPI plugin discovery from `plugins/` using a versioned `hypercore-plugin.json` descriptor.
+- Added one child-first class loader per external plugin, protected parent-first server/API namespaces, and callback context-class-loader propagation across lifecycle, commands, events, and scheduled tasks.
+- Added deterministic hard and soft dependency ordering, missing-dependency and cycle rejection, failure isolation, reverse-order unload, and class-loader cleanup.
+- Expanded `/hypercore plugins` with the external plugin count and documented that Bukkit/Paper `plugin.yml`, `org.bukkit.*`, and cross-plugin class sharing remain unsupported.
 
 ### Fixed
 

@@ -14,7 +14,10 @@ This matrix describes tested behavior, not aspirational API coverage. `HyperCore
 | Sync delayed and repeating tasks | Implemented | Not supported | Delay and period use server ticks. A zero delay means the next tick. |
 | Async immediate, delayed, and repeating tasks | Implemented | Not supported | Async work uses the bounded HyperCore worker pool and must not mutate world state. |
 | Task ownership and disable cleanup | Implemented | Not supported | Pending tasks are cancelled when their plugin fails or disables. Already-running async work is not interrupted. |
-| `plugin.yml` discovery | Not supported | Not supported | External plugin JAR scanning and class loading are not implemented. |
+| External JAR discovery | Implemented | Not supported | HyperCore SPI JARs are scanned from `plugins/` using `hypercore-plugin.json`; `plugin.yml` is not recognized. |
+| Per-plugin class-loader isolation | Implemented | Not supported | HyperCore SPI plugins use child-first loaders with protected server/API namespaces delegated to the parent. |
+| Hard and soft dependency ordering | Implemented | Not supported | Dependencies currently control lifecycle order only; cross-plugin Java class sharing is not implemented. |
+| `plugin.yml` discovery | Not supported | Not supported | Bukkit/Paper descriptors are reserved for the separately versioned adapter. |
 | `org.bukkit.*` namespace | Not supported | Not supported | A separately versioned adapter is required. |
 | Paper-only API and Folia scheduler API | Not supported | Not supported | No compatibility claim is made. |
 
@@ -32,8 +35,8 @@ This matrix describes tested behavior, not aspirational API coverage. `HyperCore
 
 A Bukkit/Paper adapter will not be marked compatible until it has:
 
-1. A versioned API namespace and descriptor loader.
-2. Class-loader isolation and deterministic dependency ordering.
+1. A versioned Bukkit-facing API namespace and `plugin.yml` descriptor translator.
+2. Bukkit-aware class loading and deterministic dependency ordering beyond the implemented HyperCore SPI loader.
 3. Scheduler, command, permission, and event conformance tests against selected reference plugins.
 4. A per-plugin test matrix covering startup, reload rejection, shutdown cleanup, and Forge mod coexistence.
 5. Dedicated-server GameTests and end-to-end behavior checks without unsupported thread access.
