@@ -1,0 +1,181 @@
+plugins {
+    id 'java'
+}
+
+version = rootProject.findProperty('hypercoreVersion') ?: '0.1.0-SNAPSHOT'
+group = 'dev.hypercore'
+
+base {
+    archivesName = 'hypercore-core'
+}
+
+def lwjglVersion = rootProject.lwjglVersion
+def operatingSystem = System.getProperty('os.name').toLowerCase(Locale.ROOT)
+def architecture = System.getProperty('os.arch').toLowerCase(Locale.ROOT)
+def lwjglNatives = operatingSystem.contains('win')
+    ? (architecture.contains('aarch64') || architecture.contains('arm64') ? 'natives-windows-arm64' : 'natives-windows')
+    : operatingSystem.contains('mac')
+        ? (architecture.contains('aarch64') || architecture.contains('arm64') ? 'natives-macos-arm64' : 'natives-macos')
+        : (architecture.contains('aarch64') || architecture.contains('arm64') ? 'natives-linux-arm64' : 'natives-linux')
+
+sourceSets {
+    shaderCompiler {
+        resources.setSrcDirs([])
+    }
+    vector {
+        // Compiled against the live JDK 21 toolchain with the jdk.incubator.vector
+        // module added explicitly (see compileVectorJava). Intentionally does NOT
+        // use --release, which excludes incubator modules from the symbol image.
+        java.setSrcDirs(['src/vector/java'])
+        resources.setSrcDirs([])
+    }
+}
+
+java.toolchain.languageVersion = JavaLanguageVersion.of(21)
+
+repositories {
+    mavenCentral()
+}
+
+configurations {
+    benchmarkRuntime {
+        canBeConsumed = false
+        canBeResolved = true
+    }
+}
+
+dependencies {
+    // Core logging: plain SLF4J. Forge and Fabric both ship an SLF4J binding at
+    // runtime via Minecraft; for standalone runs (tests, benchmarkCompute) a
+    // binding is provided through testRuntimeOnly/benchmarkRuntime below.
+    implementation 'org.slf4j:slf4j-api:2.0.13'
+
+    // Hardware probing (RuntimeCapabilities/VulkanRuntimeProbe) uses OSHI/JNA.
+    // Compile-only in main; Minecraft provides them at runtime in both loaders.
+    // Tests need them on the test runtime classpath.
+    compileOnly 'com.github.oshi:oshi-core:6.4.10'
+    compileOnly 'net.java.dev.jna:jna:5.13.0'
+    compileOnly 'net.java.dev.jna:jna-platform:5.13.0'
+
+    // LWJGL Vulkan: core compiles against it and the benchmark/test paths link
+    // it directly. Loader subprojects re-package it (jarJar/include).
+    implementation("org.lwjgl:lwjgl-vulkan:${lwjglVersion}") {
+        transitive = false
+    }
+    // LWJGL core (MemoryStack/MemoryUtil/Configuration) and its native are
+    // bundled by Minecraft in both loaders. Core declares them directly so the
+    // pure-Java module compiles and so the benchmark/test paths can link Vulkan.
+    implementation "org.lwjgl:lwjgl:${lwjglVersion}"
+    runtimeOnly "org.lwjgl:lwjgl:${lwjglVersion}:${lwjglNatives}"
+    // Gson is bundled by Minecraft; core's external plugin descriptor parser
+    // uses it to read plugin metadata.
+    implementation 'com.google.code.gson:gson:2.10.1'
+
+    // Shaderc is a build-time tool used only by the shaderCompiler source set.
+    shaderCompilerImplementation "org.lwjgl:lwjgl:${lwjglVersion}"
+    shaderCompilerImplementation "org.lwjgl:lwjgl-shaderc:${lwjglVersion}"
+    shaderCompilerRuntimeOnly "org.lwjgl:lwjgl:${lwjglVersion}:${lwjglNatives}"
+    shaderCompilerRuntimeOnly "org.lwjgl:lwjgl-shaderc:${lwjglVersion}:${lwjglNatives}"
+
+    // The vector backend implements SpatialComputeBackend (main) and the
+    // benchmark/tests reference it directly. Main never references the vector
+    // class at compile time (loaded reflectively), so this is a one-way
+    // dependency and preserves --release 21 on the main source set.
+    vectorImplementation sourceSets.main.output
+    testImplementation sourceSets.vector.output
+
+    testImplementation platform('org.junit:junit-bom:5.11.4')
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+    testImplementation 'com.github.oshi:oshi-core:6.4.10'
+    testRuntimeOnly 'net.java.dev.jna:jna:5.13.0'
+    testRuntimeOnly 'net.java.dev.jna:jna-platform:5.13.0'
+    testRuntimeOnly 'org.slf4j:slf4j-simple:2.0.13'
+
+    // Standalone benchmark/logging binding so benchmarkCompute has an SLF4J
+    // implementation without pulling test sources onto its classpath.
+    benchmarkRuntime 'org.slf4j:slf4j-simple:2.0.13'
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+    if (name != 'compileVectorJava') {
+        options.release = 21
+    }
+}
+
+// The Java Vector API ships as the jdk.incubator.vector incubator module. It is
+// not visible under --release (incubator modules are excluded from the release
+// symbol image), so the vector source set is compiled against the live JDK 21
+// toolchain with the module added explicitly. Main never references the vector
+// class at compile time; it is loaded reflectively, so --release 21 is preserved
+// for every other source set.
+tasks.named('compileVectorJava', JavaCompile).configure {
+    options.compilerArgs.addAll(['--add-modules', 'jdk.incubator.vector'])
+    dependsOn tasks.named('classes')
+}
+
+tasks.named('test', Test).configure {
+    useJUnitPlatform()
+    jvmArgs('--add-modules', 'jdk.incubator.vector')
+}
+
+def generatedShaderResources = layout.buildDirectory.dir('generated-resources/shaders')
+
+tasks.register('compileComputeShaders', JavaExec) {
+    dependsOn tasks.named('shaderCompilerClasses')
+    classpath = sourceSets.shaderCompiler.runtimeClasspath
+    mainClass = 'dev.hypercore.tools.ComputeShaderCompiler'
+    args(
+        layout.projectDirectory.file('src/main/shaders/squared_distances.comp').asFile.absolutePath,
+        generatedShaderResources.get().file('assets/hypercore/shaders/squared_distances.spv').asFile.absolutePath
+    )
+    inputs.file layout.projectDirectory.file('src/main/shaders/squared_distances.comp')
+    outputs.file generatedShaderResources.map {
+        it.file('assets/hypercore/shaders/squared_distances.spv')
+    }
+}
+
+tasks.register('compileRadiusMaskShader', JavaExec) {
+    dependsOn tasks.named('shaderCompilerClasses')
+    classpath = sourceSets.shaderCompiler.runtimeClasspath
+    mainClass = 'dev.hypercore.tools.ComputeShaderCompiler'
+    args(
+        layout.projectDirectory.file('src/main/shaders/radius_mask.comp').asFile.absolutePath,
+        generatedShaderResources.get().file('assets/hypercore/shaders/radius_mask.spv').asFile.absolutePath
+    )
+    inputs.file layout.projectDirectory.file('src/main/shaders/radius_mask.comp')
+    outputs.file generatedShaderResources.map {
+        it.file('assets/hypercore/shaders/radius_mask.spv')
+    }
+}
+
+tasks.named('processResources').configure {
+    dependsOn tasks.named('compileComputeShaders')
+    dependsOn tasks.named('compileRadiusMaskShader')
+    from generatedShaderResources
+}
+
+tasks.register('benchmarkCompute', JavaExec) {
+    dependsOn tasks.named('classes')
+    dependsOn tasks.named('compileVectorJava')
+    classpath = sourceSets.main.output + sourceSets.vector.output + configurations.runtimeClasspath + configurations.benchmarkRuntime
+    mainClass = 'dev.hypercore.compute.ComputeBenchmarkMain'
+    args(layout.buildDirectory.file('reports/hypercore/compute-benchmark.md').get().asFile.absolutePath)
+    jvmArgs('--add-modules', 'jdk.incubator.vector')
+    outputs.upToDateWhen { false }
+}
+
+jar {
+    from sourceSets.vector.output
+    manifest {
+        attributes([
+            'Specification-Title'   : 'HyperCore',
+            'Specification-Vendor'  : 'HyperCore',
+            'Specification-Version' : project.version,
+            'Implementation-Title'  : project.name,
+            'Implementation-Version': project.version,
+            'Implementation-Vendor' : 'HyperCore'
+        ])
+    }
+}
