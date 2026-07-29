@@ -10,6 +10,12 @@ import java.util.Objects;
 public final class SpatialComputeBenchmark {
     private static final double REQUIRED_GPU_ADVANTAGE = 0.95;
     private static final int MULTI_QUERY_COUNT = 8;
+    // The Java Vector API runs interpreted until HotSpot C2 compiles its intrinsic
+    // methods, which needs far more invocations than the per-batch warmup. Prime on
+    // a representative batch before timing so the first batches measure steady-state
+    // throughput instead of interpreter overhead.
+    private static final int CPU_PRIME_BATCH_SIZE = 65_536;
+    private static final int CPU_PRIME_ITERATIONS = 3_000;
     private static volatile int blackhole;
 
     private SpatialComputeBenchmark() {
@@ -47,6 +53,11 @@ public final class SpatialComputeBenchmark {
         }
         if (warmupIterations < 0 || sampleIterations < 1) {
             throw new IllegalArgumentException("Benchmark iteration counts are invalid");
+        }
+
+        primeCpuBackend(cpu);
+        if (vector != null) {
+            primeCpuBackend(vector);
         }
 
         List<BatchResult> results = new ArrayList<>(batchSizes.length);
@@ -284,6 +295,14 @@ public final class SpatialComputeBenchmark {
             positions.z(),
             output
         );
+    }
+
+    private static void primeCpuBackend(SpatialComputeBackend backend) {
+        PositionData positions = PositionData.create(CPU_PRIME_BATCH_SIZE);
+        int[] mask = new int[SpatialComputeBackend.maskWordCount(CPU_PRIME_BATCH_SIZE)];
+        for (int iteration = 0; iteration < CPU_PRIME_ITERATIONS; iteration++) {
+            execute(backend, positions, mask);
+        }
     }
 
     private static void execute(SpatialComputeBackend.PositionSnapshot snapshot, int[] output) {

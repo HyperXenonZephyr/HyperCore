@@ -53,6 +53,10 @@ minecraft {
         configureEach {
             workingDir = layout.projectDirectory.dir('run')
             systemProperty 'forge.enabledGameTestNamespaces', 'hypercore'
+            // Make the jdk.incubator.vector module available so the runtime can
+            // select the cpu-vector backend; if the module is unavailable the
+            // selector falls back to cpu-scalar, so this is safe to set unconditionally.
+            jvmArgs '--add-modules', 'jdk.incubator.vector'
             mods {
                 hypercore {
                     source sourceSets.devMod
@@ -157,8 +161,10 @@ tasks.named('processResources').configure {
 
 tasks.register('prepareDevMod', Sync) {
     dependsOn tasks.named('classes')
+    dependsOn tasks.named('compileVectorJava')
     from layout.buildDirectory.dir('classes/java/main')
     from layout.buildDirectory.dir('resources/main')
+    from sourceSets.vector.output
     into devModDirectory
 }
 
@@ -177,6 +183,7 @@ tasks.register('benchmarkCompute', JavaExec) {
 }
 
 jar {
+    from sourceSets.vector.output
     manifest {
         attributes([
             'Specification-Title'   : 'HyperCore',

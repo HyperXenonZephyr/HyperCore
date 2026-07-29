@@ -19,7 +19,7 @@ class HyperCoreRuntimeTest {
     void appliesSettingsWhenRuntimeStarts() {
         HyperCoreRuntime runtime = new HyperCoreRuntime();
 
-        runtime.start(new HyperCoreConfig.Settings(2, 32, 64, false, false, 8_192));
+        runtime.start(new HyperCoreConfig.Settings(2, 32, 64, false, false, 8_192, "scalar"));
         try {
             assertTrue(runtime.isStarted());
             assertEquals(2, runtime.status().workers());
@@ -45,7 +45,7 @@ class HyperCoreRuntimeTest {
         Path pluginDirectory = temporaryDirectory.resolve("plugins");
 
         runtime.start(
-            new HyperCoreConfig.Settings(2, 32, 64, false, false, 8_192),
+            new HyperCoreConfig.Settings(2, 32, 64, false, false, 8_192, "scalar"),
             pluginDirectory
         );
         try {

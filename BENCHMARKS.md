@@ -2,7 +2,7 @@
 
 This file records the current local calibration runs. They are evidence for backend decisions, not a claim about complete Minecraft tick performance.
 
-Generated: 2026-07-25T13:34:24Z
+Generated: 2026-07-29T14:13:35Z
 
 - GPU: `NVIDIA GeForce RTX 4060 Laptop GPU`
 - GPU transfer mode: `persistent-mapped-host-coherent`
@@ -12,16 +12,22 @@ Generated: 2026-07-25T13:34:24Z
 - Warmups per backend and batch: `20`
 - Timed samples per backend and batch: `15`
 
-The position arrays and output masks were allocated before timing. CPU timings include scalar mask construction. Full GPU timings include three host uploads, compute dispatch, fence wait, and packed-mask readback. Resident GPU timings reuse one prepared position snapshot and include dispatch, fence wait, and packed-mask readback. Snapshot preparation and result-index expansion are excluded.
+The position arrays and output masks are allocated before timing. CPU timings include mask construction. Full GPU timings include three host uploads, compute dispatch, fence wait, and packed-mask readback. Resident GPU timings reuse one prepared position snapshot and include dispatch, fence wait, and packed-mask readback. Snapshot preparation and result-index expansion are excluded.
 
-| Candidates | CPU p50 | CPU p95 | Full GPU p50 | Full GPU p95 | Resident GPU p50 | Resident GPU p95 | Full speedup | Resident speedup | Readback |
-| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| 4,096 | 0.018 ms | 0.040 ms | 0.136 ms | 0.409 ms | 0.106 ms | 0.159 ms | 0.13x | 0.17x | 512 B |
-| 16,384 | 0.028 ms | 0.053 ms | 0.144 ms | 0.444 ms | 0.089 ms | 0.175 ms | 0.20x | 0.32x | 2,048 B |
-| 65,536 | 0.132 ms | 0.170 ms | 0.216 ms | 0.438 ms | 0.182 ms | 0.405 ms | 0.61x | 0.73x | 8,192 B |
-| 262,144 | 0.566 ms | 0.608 ms | 0.741 ms | 1.046 ms | 0.547 ms | 0.811 ms | 0.76x | 1.03x | 32,768 B |
-| 1,048,576 | 2.412 ms | 2.648 ms | 2.555 ms | 2.880 ms | 1.976 ms | 2.402 ms | 0.94x | 1.22x | 131,072 B |
-| 4,194,304 | 16.795 ms | 19.380 ms | 20.842 ms | 25.227 ms | 10.362 ms | 12.103 ms | 0.81x | 1.62x | 524,288 B |
+Before the per-batch loop, each CPU backend is primed with 3,000 iterations on a 65,536-element batch. The Java Vector API runs interpreted — orders of magnitude slower — until HotSpot C2 compiles its intrinsic-bearing methods, which needs far more invocations than the per-batch warmup provides. Without this prime the first measured batches reflect interpreter overhead instead of steady-state throughput; the prime also lets C2 auto-vectorize the scalar baseline before it is timed.
+
+| Candidates | CPU p50 | CPU p95 | Vector CPU p50 | Vector CPU p95 | Vector speedup | Full GPU p50 | Full GPU p95 | Resident GPU p50 | Resident GPU p95 | Full speedup | Resident speedup | Readback |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 4,096 | 0.005 ms | 0.013 ms | 0.004 ms | 0.013 ms | 1.24x | 0.155 ms | 0.201 ms | 0.120 ms | 0.382 ms | 0.03x | 0.04x | 512 B |
+| 16,384 | 0.029 ms | 0.048 ms | 0.014 ms | 0.035 ms | 2.04x | 0.143 ms | 0.265 ms | 0.090 ms | 0.127 ms | 0.20x | 0.32x | 2,048 B |
+| 65,536 | 0.127 ms | 0.176 ms | 0.092 ms | 0.128 ms | 1.38x | 0.247 ms | 0.365 ms | 0.168 ms | 0.190 ms | 0.51x | 0.75x | 8,192 B |
+| 262,144 | 0.498 ms | 0.552 ms | 0.330 ms | 0.394 ms | 1.51x | 0.906 ms | 1.068 ms | 0.863 ms | 1.142 ms | 0.55x | 0.58x | 32,768 B |
+| 1,048,576 | 1.932 ms | 2.071 ms | 1.146 ms | 1.246 ms | 1.69x | 3.434 ms | 4.067 ms | 2.914 ms | 3.472 ms | 0.56x | 0.66x | 131,072 B |
+| 4,194,304 | 12.359 ms | 16.992 ms | 7.366 ms | 8.280 ms | 1.68x | 19.938 ms | 21.936 ms | 11.757 ms | 13.207 ms | 0.62x | 1.05x | 524,288 B |
+
+## CPU Vector Backend
+
+The Java Vector API (`jdk.incubator.vector`) CPU backend vectorizes the same squared-distance and packed radius-mask operations as the scalar baseline with bit-identical results. After JIT priming it is consistently faster than scalar at every tested batch (1.24x–2.04x p50); the scalar baseline is itself C2-auto-vectorized, so this is the explicit vector compare and mask packing winning over the JIT's auto-vectorization, not a scalar-to-vector cliff. Because the win is consistent and correctness is bit-exact, `compute.cpuBackend=auto` (the default) selects the vector backend at runtime when the incubator module is available and falls back to scalar otherwise. The GPU is still not faster than either CPU backend for a single radius mask at any tested batch, so Vulkan offload remains gated behind `compute.gpuMinimumBatchSize` and the resident-snapshot path.
 
 ## Multi-Query Submission
 
@@ -29,16 +35,20 @@ Each row compares repeated resident queries, each with its own queue submission 
 
 | Candidates | Queries | Individual GPU p50 | Individual GPU p95 | Batched GPU p50 | Batched GPU p95 | Submission speedup | Total readback |
 | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| 4,096 | 8 | 0.871 ms | 1.213 ms | 0.151 ms | 0.472 ms | 5.76x | 4,096 B |
-| 16,384 | 8 | 0.929 ms | 1.473 ms | 0.157 ms | 0.391 ms | 5.91x | 16,384 B |
-| 65,536 | 8 | 1.515 ms | 2.264 ms | 0.417 ms | 0.504 ms | 3.63x | 65,536 B |
-| 262,144 | 8 | 4.892 ms | 6.282 ms | 1.423 ms | 1.758 ms | 3.44x | 262,144 B |
-| 1,048,576 | 8 | 16.950 ms | 17.702 ms | 6.631 ms | 10.723 ms | 2.56x | 1,048,576 B |
-| 4,194,304 | 8 | 94.969 ms | 113.532 ms | 99.981 ms | 111.653 ms | 0.95x | 4,194,304 B |
+| 4,096 | 8 | 0.807 ms | 1.172 ms | 0.146 ms | 0.188 ms | 5.55x | 4,096 B |
+| 16,384 | 8 | 0.787 ms | 1.096 ms | 0.152 ms | 0.205 ms | 5.18x | 16,384 B |
+| 65,536 | 8 | 1.414 ms | 1.748 ms | 0.367 ms | 0.438 ms | 3.85x | 65,536 B |
+| 262,144 | 8 | 6.822 ms | 7.284 ms | 1.407 ms | 2.229 ms | 4.85x | 262,144 B |
+| 1,048,576 | 8 | 27.898 ms | 30.858 ms | 9.163 ms | 11.740 ms | 3.04x | 1,048,576 B |
+| 4,194,304 | 8 | 93.940 ms | 111.660 ms | 97.088 ms | 107.362 ms | 0.97x | 4,194,304 B |
+
+Conservative full-call p50 crossover: none in the tested range.
+Conservative resident-snapshot p50 crossover: none in the tested range.
+A crossover requires the relevant GPU p50 to be at least 5% lower at that batch and every larger tested batch.
 
 ## Repeatability
 
-Five independent JVM runs used the same benchmark shape. Resident snapshots consistently removed a substantial part of the full GPU cost at large batches, but the CPU comparison varied enough that the crossover was not repeatable.
+These five runs predate CPU JIT priming and the vector backend; they document GPU crossover process-sensitivity only and are retained as historical evidence. The current (primed) run above also shows no conservative crossover.
 
 | Run | CPU p50 at 1M | Resident GPU p50 at 1M | Speedup | CPU p50 at 4M | Resident GPU p50 at 4M | Speedup | Conservative resident crossover |
 | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |

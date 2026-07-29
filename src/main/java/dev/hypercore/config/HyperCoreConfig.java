@@ -2,6 +2,8 @@ package dev.hypercore.config;
 
 import net.minecraftforge.common.ForgeConfigSpec;
 
+import java.util.List;
+
 public final class HyperCoreConfig {
     private static final ForgeConfigSpec.Builder BUILDER = new ForgeConfigSpec.Builder();
 
@@ -29,6 +31,15 @@ public final class HyperCoreConfig {
         .comment("Minimum element count eligible for Vulkan compute offload.")
         .defineInRange("compute.gpuMinimumBatchSize", 16_384, 256, 16_777_216);
 
+    private static final ForgeConfigSpec.ConfigValue<String> CPU_BACKEND = BUILDER
+        .comment(
+            "CPU spatial compute backend used when work is not offloaded to Vulkan.",
+            "auto selects the Java Vector API backend when jdk.incubator.vector is available",
+            "and falls back to scalar otherwise; scalar and vector force that backend",
+            "(vector falls back to scalar if the incubator module is unavailable)."
+        )
+        .defineInList("compute.cpuBackend", "auto", List.of("auto", "scalar", "vector"));
+
     public static final ForgeConfigSpec SPEC = BUILDER.build();
 
     private HyperCoreConfig() {
@@ -41,7 +52,8 @@ public final class HyperCoreConfig {
             TICK_SAMPLE_WINDOW.get(),
             PROBE_GPU.get(),
             ENABLE_GPU.get(),
-            GPU_MINIMUM_BATCH_SIZE.get()
+            GPU_MINIMUM_BATCH_SIZE.get(),
+            CPU_BACKEND.get()
         );
     }
 
@@ -51,7 +63,8 @@ public final class HyperCoreConfig {
         int tickSampleWindow,
         boolean probeGpu,
         boolean enableGpu,
-        int gpuMinimumBatchSize
+        int gpuMinimumBatchSize,
+        String cpuBackend
     ) {
         public Settings {
             if (workerThreads < 0) {
@@ -65,6 +78,10 @@ public final class HyperCoreConfig {
             }
             if (gpuMinimumBatchSize < 1) {
                 throw new IllegalArgumentException("gpuMinimumBatchSize must be positive");
+            }
+            if (cpuBackend == null
+                || (!cpuBackend.equals("auto") && !cpuBackend.equals("scalar") && !cpuBackend.equals("vector"))) {
+                throw new IllegalArgumentException("cpuBackend must be auto, scalar, or vector");
             }
         }
 

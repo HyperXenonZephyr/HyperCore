@@ -14,7 +14,7 @@ public final class AdaptiveSpatialComputeBackend implements SpatialComputeBacken
     private static final Logger LOGGER = LogUtils.getLogger();
     private static final long INITIALIZER_JOIN_MILLIS = 5_000L;
 
-    private final ScalarSpatialComputeBackend cpu = new ScalarSpatialComputeBackend();
+    private final SpatialComputeBackend cpu;
     private final GpuOffloadPolicy policy;
     private final AtomicLong cpuBatches = new AtomicLong();
     private final AtomicLong gpuBatches = new AtomicLong();
@@ -45,10 +45,12 @@ public final class AdaptiveSpatialComputeBackend implements SpatialComputeBacken
         ManagedSpatialComputeBackend gpu,
         InitializationState state,
         String unavailableReason,
-        GpuBackendFactory gpuFactory
+        GpuBackendFactory gpuFactory,
+        SpatialComputeBackend cpu
     ) {
         this.policy = Objects.requireNonNull(policy, "policy");
         this.gpu = gpu;
+        this.cpu = Objects.requireNonNull(cpu, "cpu");
         this.initializationState = Objects.requireNonNull(state, "state");
         this.unavailableReason = Objects.requireNonNullElse(unavailableReason, "");
         this.gpuFactory = gpuFactory;
@@ -59,11 +61,17 @@ public final class AdaptiveSpatialComputeBackend implements SpatialComputeBacken
 
     /** Starts Vulkan creation off the server lifecycle thread. */
     public static AdaptiveSpatialComputeBackend create(GpuOffloadPolicy policy, boolean enabled) {
+        return create(policy, enabled, new ScalarSpatialComputeBackend());
+    }
+
+    public static AdaptiveSpatialComputeBackend create(
+        GpuOffloadPolicy policy, boolean enabled, SpatialComputeBackend cpu
+    ) {
         if (!enabled) {
-            return unavailable(policy, "disabled by configuration");
+            return unavailable(policy, "disabled by configuration", cpu);
         }
         AdaptiveSpatialComputeBackend backend = new AdaptiveSpatialComputeBackend(
-            policy, null, InitializationState.INITIALIZING, "", VulkanSpatialComputeBackend::create);
+            policy, null, InitializationState.INITIALIZING, "", VulkanSpatialComputeBackend::create, cpu);
         Thread initializer = new Thread(backend::initializeGpu, "HyperCore-Vulkan-Init");
         initializer.setDaemon(true);
         backend.initializer = initializer;
@@ -72,12 +80,25 @@ public final class AdaptiveSpatialComputeBackend implements SpatialComputeBacken
     }
 
     public static AdaptiveSpatialComputeBackend unavailable(GpuOffloadPolicy policy, String reason) {
-        return new AdaptiveSpatialComputeBackend(policy, null, InitializationState.UNAVAILABLE, reason, null);
+        return unavailable(policy, reason, new ScalarSpatialComputeBackend());
+    }
+
+    public static AdaptiveSpatialComputeBackend unavailable(
+        GpuOffloadPolicy policy, String reason, SpatialComputeBackend cpu
+    ) {
+        return new AdaptiveSpatialComputeBackend(policy, null, InitializationState.UNAVAILABLE, reason, null, cpu);
     }
 
     static AdaptiveSpatialComputeBackend createForTesting(GpuOffloadPolicy policy, GpuBackendFactory gpuFactory) {
+        return createForTesting(policy, gpuFactory, new ScalarSpatialComputeBackend());
+    }
+
+    static AdaptiveSpatialComputeBackend createForTesting(
+        GpuOffloadPolicy policy, GpuBackendFactory gpuFactory, SpatialComputeBackend cpu
+    ) {
         AdaptiveSpatialComputeBackend backend = new AdaptiveSpatialComputeBackend(
-            policy, null, InitializationState.INITIALIZING, "", Objects.requireNonNull(gpuFactory, "gpuFactory"));
+            policy, null, InitializationState.INITIALIZING, "",
+            Objects.requireNonNull(gpuFactory, "gpuFactory"), cpu);
         Thread initializer = new Thread(backend::initializeGpu, "HyperCore-Vulkan-Init-Test");
         initializer.setDaemon(true);
         backend.initializer = initializer;
@@ -87,7 +108,7 @@ public final class AdaptiveSpatialComputeBackend implements SpatialComputeBacken
 
     @Override
     public String id() {
-        return gpu == null ? ScalarSpatialComputeBackend.ID : VULKAN_ID;
+        return gpu == null ? cpu.id() : VULKAN_ID;
     }
 
     @Override
@@ -460,7 +481,7 @@ public final class AdaptiveSpatialComputeBackend implements SpatialComputeBacken
                 }
             }
             if (!closed) {
-                LOGGER.warn("Vulkan compute initialization failed; using cpu-scalar: {}", reason);
+                LOGGER.warn("Vulkan compute initialization failed; using {}: {}", cpu.id(), reason);
             }
         } finally {
             initializationComplete.countDown();
@@ -476,7 +497,7 @@ public final class AdaptiveSpatialComputeBackend implements SpatialComputeBacken
         initializationState = InitializationState.UNAVAILABLE;
         gpuFailures.incrementAndGet();
         unavailableReason = error.getClass().getSimpleName() + ": " + normalize(error.getMessage());
-        LOGGER.error("Vulkan compute failed and has been disabled; using cpu-scalar", error);
+        LOGGER.error("Vulkan compute failed and has been disabled; using {}", cpu.id(), error);
         closeGpu(failedGpu);
     }
 
