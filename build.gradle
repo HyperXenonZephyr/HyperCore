@@ -33,6 +33,13 @@ sourceSets {
     shaderCompiler {
         resources.setSrcDirs([])
     }
+    vector {
+        // Compiled against the live JDK 21 toolchain with the jdk.incubator.vector
+        // module added explicitly (see compileVectorJava). Intentionally does NOT
+        // use --release, which excludes incubator modules from the symbol image.
+        java.setSrcDirs(['src/vector/java'])
+        resources.setSrcDirs([])
+    }
 }
 
 sourceSets.main.runtimeClasspath = configurations.runtimeClasspath + files(devModDirectory)
@@ -80,6 +87,12 @@ dependencies {
     shaderCompilerImplementation "org.lwjgl:lwjgl-shaderc:${lwjglVersion}"
     shaderCompilerRuntimeOnly "org.lwjgl:lwjgl:${lwjglVersion}:${lwjglNatives}"
     shaderCompilerRuntimeOnly "org.lwjgl:lwjgl-shaderc:${lwjglVersion}:${lwjglNatives}"
+    // The vector backend implements SpatialComputeBackend (main) and the benchmark
+    // and tests reference it directly. Main itself never references the vector class
+    // at compile time (it is loaded reflectively), so this stays a one-way dependency
+    // and preserves --release 21 on the main source set.
+    vectorImplementation sourceSets.main.output
+    testImplementation sourceSets.vector.output
     testImplementation platform('org.junit:junit-bom:5.11.4')
     testImplementation 'org.junit.jupiter:junit-jupiter'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
@@ -87,11 +100,25 @@ dependencies {
 
 tasks.withType(JavaCompile).configureEach {
     options.encoding = 'UTF-8'
-    options.release = 21
+    if (name != 'compileVectorJava') {
+        options.release = 21
+    }
+}
+
+// The Java Vector API ships as the jdk.incubator.vector incubator module. It is
+// not visible under --release (incubator modules are excluded from the release
+// symbol image), so the vector source set is compiled against the live JDK 21
+// toolchain with the module added explicitly. Main never references the vector
+// class at compile time; it is loaded reflectively, so --release 21 is preserved
+// for every other source set.
+tasks.named('compileVectorJava', JavaCompile).configure {
+    options.compilerArgs.addAll(['--add-modules', 'jdk.incubator.vector'])
+    dependsOn tasks.named('classes')
 }
 
 tasks.named('test', Test).configure {
     useJUnitPlatform()
+    jvmArgs('--add-modules', 'jdk.incubator.vector')
 }
 
 tasks.register('compileComputeShaders', JavaExec) {
@@ -141,9 +168,11 @@ tasks.matching { it.name == 'runServer' || it.name == 'runGameTestServer' }.conf
 
 tasks.register('benchmarkCompute', JavaExec) {
     dependsOn tasks.named('classes')
-    classpath = sourceSets.main.output + configurations.runtimeClasspath
+    dependsOn tasks.named('compileVectorJava')
+    classpath = sourceSets.main.output + sourceSets.vector.output + configurations.runtimeClasspath
     mainClass = 'dev.hypercore.compute.ComputeBenchmarkMain'
     args(layout.buildDirectory.file('reports/hypercore/compute-benchmark.md').get().asFile.absolutePath)
+    jvmArgs('--add-modules', 'jdk.incubator.vector')
     outputs.upToDateWhen { false }
 }
 

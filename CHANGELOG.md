@@ -69,6 +69,10 @@ All notable changes to HyperCore are documented in this file. The format is base
 - Added one child-first class loader per external plugin, protected parent-first server/API namespaces, and callback context-class-loader propagation across lifecycle, commands, events, and scheduled tasks.
 - Added deterministic hard and soft dependency ordering, missing-dependency and cycle rejection, failure isolation, reverse-order unload, and class-loader cleanup.
 - Expanded `/hypercore plugins` with the external plugin count and documented that Bukkit/Paper `plugin.yml`, `org.bukkit.*`, and cross-plugin class sharing remain unsupported.
+- Added a Java Vector API (`jdk.incubator.vector`) CPU spatial compute backend (`cpu-vector`) that vectorizes the squared-distance and packed radius-mask operations with bit-identical results to the scalar baseline.
+- Added a `vector` Gradle source set compiled against the live JDK 21 toolchain with the incubator module added explicitly, preserving `--release 21` on the main source set; main code loads the backend reflectively so the incubator module is only required when the vector path is exercised.
+- Extended `SpatialComputeBenchmark` and the `benchmarkCompute` task with an optional CPU vector tier and report columns. The vector backend is a benchmark baseline only and is not yet wired into the adaptive router; the scalar backend remains the runtime CPU fallback pending repeatable measurements.
+- Added unit coverage asserting the vector backend matches the scalar baseline across vector-loop, word-boundary, and tail sizes, plus validation, inclusive-boundary, and snapshot paths.
 
 ### Fixed
 

@@ -17,9 +17,11 @@ public final class ComputeBenchmarkMain {
             throw new IllegalArgumentException("Expected the Markdown report output path");
         }
         Path output = Path.of(arguments[0]);
+        SpatialComputeBackend vector = VectorBackendFactory.tryLoad().orElse(null);
         try (VulkanSpatialComputeBackend gpu = VulkanSpatialComputeBackend.create()) {
             SpatialComputeBenchmark.Report report = SpatialComputeBenchmark.run(
                 new ScalarSpatialComputeBackend(),
+                vector,
                 gpu,
                 gpu.deviceName(),
                 gpu.transferMode(),

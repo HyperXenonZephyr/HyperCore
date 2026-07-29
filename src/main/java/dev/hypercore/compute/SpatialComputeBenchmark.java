@@ -24,6 +24,19 @@ public final class SpatialComputeBenchmark {
         int warmupIterations,
         int sampleIterations
     ) {
+        return run(cpu, null, gpu, gpuDevice, gpuTransferMode, batchSizes, warmupIterations, sampleIterations);
+    }
+
+    public static Report run(
+        SpatialComputeBackend cpu,
+        SpatialComputeBackend vector,
+        SpatialComputeBackend gpu,
+        String gpuDevice,
+        String gpuTransferMode,
+        int[] batchSizes,
+        int warmupIterations,
+        int sampleIterations
+    ) {
         Objects.requireNonNull(cpu, "cpu");
         Objects.requireNonNull(gpu, "gpu");
         Objects.requireNonNull(gpuDevice, "gpuDevice");
@@ -44,6 +57,7 @@ public final class SpatialComputeBenchmark {
             PositionData positions = PositionData.create(batchSize);
             int[] cpuMask = new int[SpatialComputeBackend.maskWordCount(batchSize)];
             int[] gpuMask = new int[cpuMask.length];
+            int[] vectorMask = new int[cpuMask.length];
             int[] residentMask = new int[cpuMask.length];
             SpatialComputeBackend.RadiusMaskQuery[] multiQueries = createQueries(MULTI_QUERY_COUNT);
             int[] individualMultiMask = new int[cpuMask.length * MULTI_QUERY_COUNT];
@@ -53,16 +67,29 @@ public final class SpatialComputeBenchmark {
             for (int iteration = 0; iteration < warmupIterations; iteration++) {
                 execute(cpu, positions, cpuMask);
                 execute(gpu, positions, gpuMask);
+                if (vector != null) {
+                    execute(vector, positions, vectorMask);
+                }
             }
             verifyMasks(cpu, gpu, positions, cpuMask, gpuMask);
+            if (vector != null) {
+                verifyMasks(cpu, vector, positions, cpuMask, vectorMask);
+            }
 
             long[] cpuSamples = new long[sampleIterations];
             long[] gpuSamples = new long[sampleIterations];
+            long[] vectorSamples = new long[sampleIterations];
             for (int sample = 0; sample < sampleIterations; sample++) {
                 if ((sample & 1) == 0) {
                     cpuSamples[sample] = measure(cpu, positions, cpuMask);
                     gpuSamples[sample] = measure(gpu, positions, gpuMask);
+                    if (vector != null) {
+                        vectorSamples[sample] = measure(vector, positions, vectorMask);
+                    }
                 } else {
+                    if (vector != null) {
+                        vectorSamples[sample] = measure(vector, positions, vectorMask);
+                    }
                     gpuSamples[sample] = measure(gpu, positions, gpuMask);
                     cpuSamples[sample] = measure(cpu, positions, cpuMask);
                 }
@@ -120,7 +147,9 @@ public final class SpatialComputeBenchmark {
                 percentile(individualMultiSamples, 0.50),
                 percentile(individualMultiSamples, 0.95),
                 percentile(batchedMultiSamples, 0.50),
-                percentile(batchedMultiSamples, 0.95)
+                percentile(batchedMultiSamples, 0.95),
+                vector == null ? 0L : percentile(vectorSamples, 0.50),
+                vector == null ? 0L : percentile(vectorSamples, 0.95)
             ));
         }
         return new Report(gpuDevice, gpuTransferMode, warmupIterations, sampleIterations, List.copyOf(results));
@@ -306,8 +335,44 @@ public final class SpatialComputeBenchmark {
         long individualMultiGpuP50Nanos,
         long individualMultiGpuP95Nanos,
         long batchedMultiGpuP50Nanos,
-        long batchedMultiGpuP95Nanos
+        long batchedMultiGpuP95Nanos,
+        long vectorP50Nanos,
+        long vectorP95Nanos
     ) {
+        public BatchResult(
+            int batchSize,
+            long cpuP50Nanos,
+            long cpuP95Nanos,
+            long gpuP50Nanos,
+            long gpuP95Nanos,
+            long residentGpuP50Nanos,
+            long residentGpuP95Nanos,
+            long gpuReadbackBytes,
+            int multiQueryCount,
+            long individualMultiGpuP50Nanos,
+            long individualMultiGpuP95Nanos,
+            long batchedMultiGpuP50Nanos,
+            long batchedMultiGpuP95Nanos
+        ) {
+            this(
+                batchSize,
+                cpuP50Nanos,
+                cpuP95Nanos,
+                gpuP50Nanos,
+                gpuP95Nanos,
+                residentGpuP50Nanos,
+                residentGpuP95Nanos,
+                gpuReadbackBytes,
+                multiQueryCount,
+                individualMultiGpuP50Nanos,
+                individualMultiGpuP95Nanos,
+                batchedMultiGpuP50Nanos,
+                batchedMultiGpuP95Nanos,
+                0L,
+                0L
+            );
+        }
+
         public BatchResult(
             int batchSize,
             long cpuP50Nanos,
@@ -366,6 +431,10 @@ public final class SpatialComputeBenchmark {
         public double multiQuerySpeedup() {
             return (double) individualMultiGpuP50Nanos / batchedMultiGpuP50Nanos;
         }
+
+        public double vectorP50Speedup() {
+            return vectorP50Nanos == 0L ? 0.0 : (double) cpuP50Nanos / vectorP50Nanos;
+        }
     }
 
     public record Report(
@@ -415,6 +484,66 @@ public final class SpatialComputeBenchmark {
             return -1;
         }
 
+        public boolean hasVectorData() {
+            for (BatchResult batch : batches) {
+                if (batch.vectorP50Nanos() > 0L) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        private String mainTableHeader() {
+            return hasVectorData()
+                ? "| Candidates | CPU p50 | CPU p95 | Vector CPU p50 | Vector CPU p95 | Vector speedup | Full GPU p50 | Full GPU p95 | Resident GPU p50 | Resident GPU p95 | Full speedup | Resident speedup | Readback |\n"
+                : "| Candidates | CPU p50 | CPU p95 | Full GPU p50 | Full GPU p95 | Resident GPU p50 | Resident GPU p95 | Full speedup | Resident speedup | Readback |\n";
+        }
+
+        private String mainTableSeparator() {
+            int columns = hasVectorData() ? 13 : 10;
+            StringBuilder separator = new StringBuilder("|");
+            for (int column = 0; column < columns; column++) {
+                separator.append(" ---: |");
+            }
+            return separator.append("\n").toString();
+        }
+
+        private String mainTableRow(BatchResult batch) {
+            if (hasVectorData()) {
+                return String.format(
+                    Locale.ROOT,
+                    "| %,d | %.3f ms | %.3f ms | %.3f ms | %.3f ms | %.2fx | %.3f ms | %.3f ms | %.3f ms | %.3f ms | %.2fx | %.2fx | %,d B |%n",
+                    batch.batchSize(),
+                    nanosToMillis(batch.cpuP50Nanos()),
+                    nanosToMillis(batch.cpuP95Nanos()),
+                    nanosToMillis(batch.vectorP50Nanos()),
+                    nanosToMillis(batch.vectorP95Nanos()),
+                    batch.vectorP50Speedup(),
+                    nanosToMillis(batch.gpuP50Nanos()),
+                    nanosToMillis(batch.gpuP95Nanos()),
+                    nanosToMillis(batch.residentGpuP50Nanos()),
+                    nanosToMillis(batch.residentGpuP95Nanos()),
+                    batch.p50Speedup(),
+                    batch.residentP50Speedup(),
+                    batch.gpuReadbackBytes()
+                );
+            }
+            return String.format(
+                Locale.ROOT,
+                "| %,d | %.3f ms | %.3f ms | %.3f ms | %.3f ms | %.3f ms | %.3f ms | %.2fx | %.2fx | %,d B |%n",
+                batch.batchSize(),
+                nanosToMillis(batch.cpuP50Nanos()),
+                nanosToMillis(batch.cpuP95Nanos()),
+                nanosToMillis(batch.gpuP50Nanos()),
+                nanosToMillis(batch.gpuP95Nanos()),
+                nanosToMillis(batch.residentGpuP50Nanos()),
+                nanosToMillis(batch.residentGpuP95Nanos()),
+                batch.p50Speedup(),
+                batch.residentP50Speedup(),
+                batch.gpuReadbackBytes()
+            );
+        }
+
         public String markdown(String generatedAt) {
             StringBuilder output = new StringBuilder();
             output.append("# HyperCore Compute Benchmark\n\n")
@@ -431,23 +560,10 @@ public final class SpatialComputeBenchmark {
                 .append("construction. Full GPU timings include three host uploads, compute dispatch, fence wait, and packed-mask ")
                 .append("readback. Resident GPU timings reuse one prepared position snapshot and include dispatch, fence wait, and ")
                 .append("packed-mask readback. Snapshot preparation and result-index expansion are excluded.\n\n")
-                .append("| Candidates | CPU p50 | CPU p95 | Full GPU p50 | Full GPU p95 | Resident GPU p50 | Resident GPU p95 | Full speedup | Resident speedup | Readback |\n")
-                .append("| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n");
+                .append(mainTableHeader())
+                .append(mainTableSeparator());
             for (BatchResult batch : batches) {
-                output.append(String.format(
-                    Locale.ROOT,
-                    "| %,d | %.3f ms | %.3f ms | %.3f ms | %.3f ms | %.3f ms | %.3f ms | %.2fx | %.2fx | %,d B |%n",
-                    batch.batchSize(),
-                    nanosToMillis(batch.cpuP50Nanos()),
-                    nanosToMillis(batch.cpuP95Nanos()),
-                    nanosToMillis(batch.gpuP50Nanos()),
-                    nanosToMillis(batch.gpuP95Nanos()),
-                    nanosToMillis(batch.residentGpuP50Nanos()),
-                    nanosToMillis(batch.residentGpuP95Nanos()),
-                    batch.p50Speedup(),
-                    batch.residentP50Speedup(),
-                    batch.gpuReadbackBytes()
-                ));
+                output.append(mainTableRow(batch));
             }
             output.append("\n## Multi-Query Submission\n\n")
                 .append("Each row compares repeated resident queries, each with its own queue submission and fence wait, against ")

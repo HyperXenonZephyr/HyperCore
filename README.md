@@ -82,7 +82,7 @@ Invalid values are rejected by Forge's config specification. GPU loader, device,
 
 ## Compute backends
 
-The scalar backend is the deterministic correctness baseline for structure-of-arrays squared-distance batches. Vulkan device creation and the 1,024-element GPU-vs-CPU self-test run on a dedicated daemon thread, so server startup and compute callers continue on `cpu-scalar` while initialization is in progress. The router switches atomically to `adaptive-vulkan` when ready, sends batches below `compute.gpuMinimumBatchSize` to CPU, and permanently falls back after a runtime GPU failure.
+The scalar backend is the deterministic correctness baseline for structure-of-arrays squared-distance batches. A Java Vector API (`jdk.incubator.vector`) CPU backend vectorizes the same operation with bit-identical results; it is a benchmark baseline only and is not yet wired into the adaptive router, so the scalar backend remains the runtime CPU fallback. Vulkan device creation and the 1,024-element GPU-vs-CPU self-test run on a dedicated daemon thread, so server startup and compute callers continue on `cpu-scalar` while initialization is in progress. The router switches atomically to `adaptive-vulkan` when ready, sends batches below `compute.gpuMinimumBatchSize` to CPU, and permanently falls back after a runtime GPU failure.
 
 `SpatialQueryEngine` accepts an immutable copy of structure-of-arrays positions and returns the ordered indices whose squared distance is within an inclusive radius. Its scalar path packs matches directly, while its Vulkan path processes 32 candidates per invocation and returns one 32-bit mask word. The engine weakly caches one prepared backend snapshot per `PositionBatch`; repeated queries reuse resident XYZ data, while snapshot switching or direct buffer use is detected by a Vulkan data generation and triggers a correct re-upload. `withinRadii` returns query-major results and batches up to 32 Vulkan dispatches into one submission and fence wait. Larger groups are chunked without changing result order. Runtime shutdown closes query snapshots before the compute backend.
 
@@ -148,7 +148,7 @@ Forge command registration is bridged into this SPI, but Bukkit/Paper JARs using
 - [x] Scalar CPU spatial compute baseline
 - [x] Region ownership and cross-region task model prototype
 - [x] Controlled plugin bridge kernel for commands, permissions, lifecycle, and events
-- [ ] CPU vector compute baseline
+- [x] CPU vector compute baseline (benchmark tier; not yet the adaptive CPU fallback)
 - [x] Vulkan compute prototype with SPIR-V shader, self-test, and CPU fallback
 - [x] Asynchronous Vulkan lifecycle and immutable spatial-radius query service
 - [x] Packed GPU radius-mask pipeline with compressed result readback
