@@ -9,15 +9,15 @@ HyperCore is an experimental high-performance Minecraft Java server project targ
 
 ## Current status
 
-Milestones 0 through 13 establish a buildable, dedicated-server-only Forge foundation:
+The project is a multi-loader Gradle build: a loader-agnostic `:core` runtime consumed by `:forge` and `:fabric` adapter subprojects, both producing self-contained server-side mod JARs. The established foundation:
 
-- Minecraft 1.21.1, Forge 52.1.16, and Java 21 are pinned.
-- HyperCore loads as a server-side Forge component.
+- Minecraft 1.21.1 and Java 21 are pinned; Forge 52.1.16 and Fabric Loader 0.16.9 (Fabric API 0.115.1+1.21.1) are the current adapter targets.
+- HyperCore loads as a server-side component under both Forge and Fabric. The two loaders are not yet run in one process; simultaneous execution is a future objective.
 - A bounded worker pool reserves one logical CPU for the main server thread and rejects excess work instead of growing an unbounded queue.
 - A 200-tick latency window reports average, p95, and maximum tick duration.
 - Operator diagnostics are available through `/hypercore status`, `/hypercore timings`, `/hypercore capabilities`, and `/hypercore regions`.
-- A Forge GameTest verifies that HyperCore loads in a real dedicated-server environment.
-- Forge configuration controls worker count, queue capacity, tick sampling, GPU probing, and the default-on GPU compute path.
+- A Forge GameTest verifies that HyperCore loads in a real dedicated-server environment; Forge remains the primary test bed.
+- Configuration controls worker count, queue capacity, tick sampling, GPU probing, the default-on GPU compute path, and CPU backend selection; Forge reads `config/hypercore-common.toml` and Fabric reads `config/hypercore.properties` with the same keys.
 - OS, JVM, logical CPU, and graphics adapter capabilities are reported; Vulkan compute initializes by default on a dedicated daemon thread and falls back safely when unavailable.
 - A scalar CPU spatial batch backend and a Vulkan compute backend implement the same squared-distance operation for correctness comparisons.
 - A logical region-owner model provides deterministic ownership, per-target FIFO mailboxes, tick-boundary dispatch, and cross-region message accounting.
@@ -25,7 +25,6 @@ Milestones 0 through 13 establish a buildable, dedicated-server-only Forge found
 - GPU support now includes Vulkan loader/API detection, device selection, two compiled SPIR-V compute pipelines, device-local position buffers with host-visible staging, direct, resident-snapshot, and 33-query chunking correctness self-tests, and a configurable batch-size offload policy. Runtime execution uses `cpu-scalar` while Vulkan initializes, switches atomically to `adaptive-vulkan` when ready, and falls back to CPU after a later dispatch failure.
 - An immutable structure-of-arrays position snapshot and radius-query service now uses a GPU-generated packed match mask instead of reading every distance back to CPU. Repeated queries over the same `PositionBatch` retain one Vulkan position upload, while `withinRadii` records up to 32 radius dispatches in one command buffer and one fence wait before transparently chunking larger groups. Query, candidate, match, snapshot, multi-query batch, mask, readback-byte, initialization, and CPU/GPU counters are exposed through `/hypercore capabilities`.
 - A deterministic `:core:benchmarkCompute` Gradle task measures complete scalar/vector/Vulkan calls, resident snapshot calls, and eight-query individual-versus-batched submission. The current RTX 4060 report is recorded in [BENCHMARKS.md](BENCHMARKS.md); batching improved p50 between `1.33x` and `7.56x` from 4K through 1M candidates in the latest run, while the 4M compute-dominated case measured `1.19x`.
-- The project is now a multi-loader Gradle build: a loader-agnostic `:core` runtime consumed by `:forge` and `:fabric` adapter subprojects. Both adapters produce self-contained mod JARs that bundle `:core` (main + vector output), the compiled SPIR-V shaders, and the LWJGL Vulkan binding. The Fabric adapter builds but does not yet run alongside Forge.
 
 ## Build
 
