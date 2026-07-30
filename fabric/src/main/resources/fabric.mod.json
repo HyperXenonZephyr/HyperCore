@@ -16,6 +16,9 @@
   "entrypoints": {
     "server": [
       "dev.hypercore.HyperCoreFabric"
+    ],
+    "fabric-gametest": [
+      "dev.hypercore.gametest.HyperCoreFabricGameTests"
     ]
   },
   "depends": {

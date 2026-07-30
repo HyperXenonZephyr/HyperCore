@@ -1,5 +1,8 @@
 package dev.hypercore.plugin;
 
+import dev.hypercore.bukkit.BukkitPluginAdapter;
+import dev.hypercore.plugin.compat.BukkitPluginYmlParser;
+import org.bukkit.plugin.java.JavaPlugin;
 import org.slf4j.LoggerFactory;
 import org.slf4j.Logger;
 
@@ -66,10 +69,20 @@ public final class ExternalPluginLoader implements AutoCloseable {
                     ExternalPluginLoader.class.getClassLoader()
                 );
                 Class<?> mainClass = Class.forName(candidate.descriptor.mainClass(), true, classLoader);
-                if (!HyperPlugin.class.isAssignableFrom(mainClass)) {
-                    throw new IllegalArgumentException("Main class does not implement HyperPlugin");
+                HyperPlugin plugin;
+                if (HyperPlugin.class.isAssignableFrom(mainClass)) {
+                    plugin = (HyperPlugin) mainClass.getDeclaredConstructor().newInstance();
+                } else if (JavaPlugin.class.isAssignableFrom(mainClass)) {
+                    JavaPlugin javaPlugin = (JavaPlugin) mainClass.getDeclaredConstructor().newInstance();
+                    plugin = new BukkitPluginAdapter(
+                        javaPlugin,
+                        candidate.descriptor.plugin().name(),
+                        candidate.bukkitCommands()
+                    );
+                } else {
+                    throw new IllegalArgumentException(
+                        "Main class implements neither HyperPlugin nor JavaPlugin");
                 }
-                HyperPlugin plugin = (HyperPlugin) mainClass.getDeclaredConstructor().newInstance();
                 PluginManager.RegistrationResult result = plugins.registerExternal(
                     candidate.descriptor.plugin(),
                     plugin,
@@ -141,20 +154,17 @@ public final class ExternalPluginLoader implements AutoCloseable {
         Set<String> duplicateIds = new HashSet<>();
         for (Path jar : jars) {
             try (JarFile archive = new JarFile(jar.toFile())) {
-                var entry = archive.getJarEntry(DESCRIPTOR_ENTRY);
-                if (entry == null) {
+                ParsedDescriptor parsed = readDescriptor(archive);
+                if (parsed == null) {
                     continue;
                 }
-                ExternalPluginDescriptor descriptor;
-                try (Reader reader = new java.io.InputStreamReader(archive.getInputStream(entry), java.nio.charset.StandardCharsets.UTF_8)) {
-                    descriptor = ExternalPluginDescriptor.parse(reader);
-                }
+                ExternalPluginDescriptor descriptor = parsed.descriptor();
                 String id = descriptor.plugin().id();
                 if (plugins.contains(id) || duplicateIds.contains(id)) {
                     errors.add(id + ": duplicate plugin id");
                     continue;
                 }
-                if (candidates.putIfAbsent(id, new Candidate(jar, descriptor)) != null) {
+                if (candidates.putIfAbsent(id, new Candidate(jar, descriptor, parsed.bukkitCommands())) != null) {
                     candidates.remove(id);
                     duplicateIds.add(id);
                     errors.add(id + ": duplicate plugin id");
@@ -164,6 +174,45 @@ public final class ExternalPluginLoader implements AutoCloseable {
             }
         }
         return candidates;
+    }
+
+    /**
+     * Reads the first available descriptor from a plugin JAR. Tries the native
+     * {@code hypercore-plugin.json} first, then falls back to the Bukkit
+     * {@code plugin.yml} format via {@link BukkitPluginYmlParser}.
+     *
+     * @return the parsed descriptor with optional Bukkit commands map, or
+     *         {@code null} if neither entry is present
+     */
+    private static ParsedDescriptor readDescriptor(JarFile archive) throws IOException {
+        var jsonEntry = archive.getJarEntry(DESCRIPTOR_ENTRY);
+        if (jsonEntry != null) {
+            try (Reader reader = new java.io.InputStreamReader(archive.getInputStream(jsonEntry), java.nio.charset.StandardCharsets.UTF_8)) {
+                return ParsedDescriptor.native0(ExternalPluginDescriptor.parse(reader));
+            }
+        }
+        var ymlEntry = archive.getJarEntry(BukkitPluginYmlParser.DESCRIPTOR_ENTRY);
+        if (ymlEntry != null) {
+            try (Reader reader = new java.io.InputStreamReader(archive.getInputStream(ymlEntry), java.nio.charset.StandardCharsets.UTF_8)) {
+                BukkitPluginYmlParser.ParsedPluginYml parsed = BukkitPluginYmlParser.parseWithCommands(reader);
+                return new ParsedDescriptor(parsed.descriptor(), parsed.commands());
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Wrapper for a parsed descriptor plus the optional Bukkit commands map
+     * extracted from plugin.yml. For hypercore-plugin.json descriptors the
+     * commands map is always empty.
+     */
+    record ParsedDescriptor(
+        ExternalPluginDescriptor descriptor,
+        Map<String, Map<String, Object>> bukkitCommands
+    ) {
+        static ParsedDescriptor native0(ExternalPluginDescriptor descriptor) {
+            return new ParsedDescriptor(descriptor, Map.of());
+        }
     }
 
     private List<Candidate> orderCandidates(Map<String, Candidate> candidates, List<String> errors) {
@@ -297,7 +346,11 @@ public final class ExternalPluginLoader implements AutoCloseable {
         }
     }
 
-    private record Candidate(Path jar, ExternalPluginDescriptor descriptor) {
+    private record Candidate(
+        Path jar,
+        ExternalPluginDescriptor descriptor,
+        Map<String, Map<String, Object>> bukkitCommands
+    ) {
     }
 
     private record LoadedPlugin(String id, ExternalPluginClassLoader classLoader) {

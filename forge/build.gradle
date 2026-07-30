@@ -97,6 +97,9 @@ dependencies {
     implementation(jarJar("org.lwjgl:lwjgl-vulkan:${lwjglVersion}")) {
         transitive = false
     }
+    // SnakeYAML: bundled via Jar-in-Jar so the Bukkit plugin.yml parser works
+    // at runtime without a separate install.
+    implementation(jarJar("org.yaml:snakeyaml:2.3"))
     // OSHI/JNA are compile-only here; Minecraft ships them at runtime in both
     // loaders. :core also declares them compileOnly, so this mirrors core.
     compileOnly 'com.github.oshi:oshi-core:6.4.10'

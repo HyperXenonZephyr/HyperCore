@@ -71,6 +71,10 @@ dependencies {
     // uses it to read plugin metadata.
     implementation 'com.google.code.gson:gson:2.10.1'
 
+    // SnakeYAML parses Bukkit plugin.yml descriptors. Minecraft does not ship
+    // it, so both loader adapters bundle it (Forge Jar-in-Jar / Fabric include).
+    implementation 'org.yaml:snakeyaml:2.3'
+
     // Shaderc is a build-time tool used only by the shaderCompiler source set.
     shaderCompilerImplementation "org.lwjgl:lwjgl:${lwjglVersion}"
     shaderCompilerImplementation "org.lwjgl:lwjgl-shaderc:${lwjglVersion}"

@@ -49,6 +49,11 @@ dependencies {
     implementation "org.lwjgl:lwjgl-vulkan:${lwjglVersion}"
     include "org.lwjgl:lwjgl-vulkan:${lwjglVersion}"
 
+    // SnakeYAML: bundled via Loom include so the Bukkit plugin.yml parser works
+    // at runtime without a separate install.
+    implementation "org.yaml:snakeyaml:2.3"
+    include "org.yaml:snakeyaml:2.3"
+
     // The vector backend (core's vector source set) is loaded reflectively and is
     // not part of :core's runtimeElements, so add it to the dev-run classpath
     // explicitly. The production jar picks it up via the `jar { from ... }` below.
