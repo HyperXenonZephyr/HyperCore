@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "id": "hypercore",
+  "version": "${version}",
+  "name": "HyperCore",
+  "description": "Experimental high-performance Minecraft server infrastructure for multi-loader mod execution, safe multicore region execution, and optional GPU spatial compute.",
+  "authors": [
+    "HyperXenonZephyr"
+  ],
+  "contact": {
+    "homepage": "https://github.com/HyperXenonZephyr/HyperCore",
+    "sources": "https://github.com/HyperXenonZephyr/HyperCore"
+  },
+  "license": "Apache-2.0",
+  "environment": "server",
+  "entrypoints": {
+    "server": [
+      "dev.hypercore.HyperCoreFabric"
+    ]
+  },
+  "depends": {
+    "fabricloader": ">=0.16.9",
+    "minecraft": "~1.21.1",
+    "fabric-api": "*",
+    "java": ">=21"
+  }
+}

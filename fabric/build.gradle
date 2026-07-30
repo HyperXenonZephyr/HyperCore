@@ -1,0 +1,121 @@
+// HyperCore Fabric adapter.
+//
+// fabric-loom 1.15 builds the loader-specific mod JAR. The loader-agnostic
+// runtime lives in :core and is consumed as a plain Java library
+// (`implementation project(':core')`) — core has no Minecraft references, so it
+// needs no remapping and no `namedElements`. The production mod JAR bundles
+// :core's main + vector output directly (like the Forge subproject) so the
+// single jar is self-contained; lwjgl-vulkan is bundled the same way instead of
+// jar-in-jar to match the Forge packaging.
+
+plugins {
+    id 'java'
+    id 'fabric-loom' version "${fabricLoomVersion}"
+}
+
+version = rootProject.findProperty('hypercoreVersion') ?: '0.1.0-SNAPSHOT'
+group = 'dev.hypercore'
+
+base {
+    archivesName = 'hypercore-fabric'
+}
+
+def lwjglVersion = rootProject.lwjglVersion
+
+java.toolchain.languageVersion = JavaLanguageVersion.of(21)
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    minecraft "com.mojang:minecraft:${rootProject.minecraftVersion}"
+    mappings loom.officialMojangMappings()
+    modImplementation "net.fabricmc:fabric-loader:${rootProject.fabricLoaderVersion}"
+    modImplementation "net.fabricmc.fabric-api:fabric-api:${rootProject.fabricApiVersion}"
+
+    // core is a plain Java library (no Minecraft, no remap). Plain implementation
+    // is correct — do NOT use namedElements, core has no mappings to remap.
+    implementation project(':core')
+
+    // OSHI/JNA are compile-only; Minecraft ships them at runtime. :core also
+    // declares them compileOnly, so this mirrors core.
+    compileOnly 'com.github.oshi:oshi-core:6.4.10'
+    compileOnly 'net.java.dev.jna:jna:5.13.0'
+    compileOnly 'net.java.dev.jna:jna-platform:5.13.0'
+
+    // LWJGL Vulkan: compile against it, bundle the native into the mod jar so a
+    // server without a Vulkan SDK can still load the compute backend.
+    implementation "org.lwjgl:lwjgl-vulkan:${lwjglVersion}"
+    include "org.lwjgl:lwjgl-vulkan:${lwjglVersion}"
+
+    // The vector backend (core's vector source set) is loaded reflectively and is
+    // not part of :core's runtimeElements, so add it to the dev-run classpath
+    // explicitly. The production jar picks it up via the `jar { from ... }` below.
+    runtimeOnly files(project(':core').sourceSets.vector.output)
+
+    testImplementation platform('org.junit:junit-bom:5.11.4')
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+loom {
+    runs {
+        server {
+            runDir = "run"
+            // Make the jdk.incubator.vector module available so the runtime can
+            // select the cpu-vector backend; if it is unavailable the selector
+            // falls back to cpu-scalar, so this is safe to set unconditionally.
+            vmArg "--add-modules"
+            vmArg "jdk.incubator.vector"
+        }
+        gameTestServer {
+            runDir = "run"
+            vmArg "--add-modules"
+            vmArg "jdk.incubator.vector"
+        }
+    }
+
+    mods {
+        hypercore {
+            sourceSet sourceSets.main
+        }
+    }
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+    options.release = 21
+}
+
+tasks.named('test', Test).configure {
+    useJUnitPlatform()
+}
+
+// Expand the mod version into fabric.mod.json.
+processResources {
+    inputs.property 'version', project.version
+    filesMatching('fabric.mod.json') {
+        expand 'version': project.version
+    }
+}
+
+// Production mod JAR: bundle :core's main + vector output alongside fabric main
+// so the single mod JAR is self-contained. :core is pure Java with no Minecraft
+// references, so its classes pass through loom's remap step unchanged. The .spv
+// shaders ride along in :core's main resources.
+jar {
+    from sourceSets.main.output
+    from project(':core').sourceSets.main.output
+    from project(':core').sourceSets.vector.output
+    manifest {
+        attributes([
+            'Specification-Title'   : 'HyperCore',
+            'Specification-Vendor'  : 'HyperCore',
+            'Specification-Version' : project.version,
+            'Implementation-Title'  : project.name,
+            'Implementation-Version': project.version,
+            'Implementation-Vendor' : 'HyperCore'
+        ])
+    }
+}

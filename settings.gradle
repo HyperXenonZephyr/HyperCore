@@ -2,7 +2,7 @@ pluginManagement {
     repositories {
         gradlePluginPortal()
         maven { url = 'https://maven.minecraftforge.net/' }
-        maven { url = 'https://m.fabricmc.net/' }
+        maven { url = 'https://maven.fabricmc.net/' }
     }
 }
 
@@ -14,4 +14,4 @@ rootProject.name = 'HyperCore'
 
 include ':core'
 include ':forge'
-// :fabric is added once its build.gradle lands.
+include ':fabric'
