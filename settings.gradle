@@ -12,5 +12,6 @@ plugins {
 
 rootProject.name = 'HyperCore'
 
-// :forge and :fabric are added once their build.gradle files land.
 include ':core'
+include ':forge'
+// :fabric is added once its build.gradle lands.

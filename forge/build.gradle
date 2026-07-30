@@ -1,0 +1,161 @@
+// HyperCore Forge adapter.
+//
+// ForgeGradle 7 builds the loader-specific mod JAR. The loader-agnostic runtime
+// lives in :core and is consumed two ways:
+//   * compile symbols via `implementation project(':core')`;
+//   * dev-run mod content via prepareDevMod, which merges :core's main classes,
+//     main resources (the compiled .spv shaders), and vector source-set output
+//     with this project's main classes/resources into one dev-mod directory.
+//
+// The devMod merge is the error-prone step: ForgeGradle loads the mod from the
+// devMod source set, so it must carry every class and resource the runtime
+// touches (VulkanSpatialComputeBackend, VectorSpatialComputeBackend, the .spv).
+// :core's vector source set is not part of :core's runtimeElements, so it has
+// to be added explicitly here.
+
+plugins {
+    id 'java'
+    id 'idea'
+    id 'eclipse'
+    id 'net.minecraftforge.gradle' version "${forgegradlePluginVersion}"
+    id 'net.minecraftforge.jarjar' version '0.2.3'
+}
+
+version = rootProject.findProperty('hypercoreVersion') ?: '0.1.0-SNAPSHOT'
+group = 'dev.hypercore'
+
+base {
+    archivesName = 'hypercore-forge'
+}
+
+def devModDirectory = layout.buildDirectory.dir('dev-mod/hypercore')
+def lwjglVersion = rootProject.lwjglVersion
+def operatingSystem = System.getProperty('os.name').toLowerCase(Locale.ROOT)
+def architecture = System.getProperty('os.arch').toLowerCase(Locale.ROOT)
+def lwjglNatives = operatingSystem.contains('win')
+    ? (architecture.contains('aarch64') || architecture.contains('arm64') ? 'natives-windows-arm64' : 'natives-windows')
+    : operatingSystem.contains('mac')
+        ? (architecture.contains('aarch64') || architecture.contains('arm64') ? 'natives-macos-arm64' : 'natives-macos')
+        : (architecture.contains('aarch64') || architecture.contains('arm64') ? 'natives-linux-arm64' : 'natives-linux')
+
+sourceSets {
+    // Aggregated mod content for dev runs. ForgeGradle loads `hypercore` from
+    // this source set; prepareDevMod populates it by syncing :core + forge main.
+    devMod {
+        java.setSrcDirs([])
+        resources.setSrcDirs([])
+        output.dir(devModDirectory)
+    }
+}
+
+// The dev-mod directory must be on the run classpath so ForgeGradle's run
+// configurations resolve the merged classes/resources. configurations.runtimeClasspath
+// already carries :core (via implementation project(':core')) and Minecraft; the
+// dev-mod directory adds the merged mod bundle on top.
+sourceSets.main.runtimeClasspath = configurations.runtimeClasspath + files(devModDirectory)
+
+java.toolchain.languageVersion = JavaLanguageVersion.of(21)
+
+minecraft {
+    mappings channel: 'official', version: rootProject.minecraftVersion
+
+    runs {
+        configureEach {
+            workingDir = layout.projectDirectory.dir('run')
+            systemProperty 'forge.enabledGameTestNamespaces', 'hypercore'
+            // Make the jdk.incubator.vector module available so the runtime can
+            // select the cpu-vector backend; if the module is unavailable the
+            // selector falls back to cpu-scalar, so this is safe to set unconditionally.
+            jvmArgs '--add-modules', 'jdk.incubator.vector'
+            mods {
+                hypercore {
+                    source sourceSets.devMod
+                }
+            }
+        }
+
+        register('server') {
+            args '--nogui'
+        }
+
+        register('gameTestServer')
+    }
+}
+
+repositories {
+    minecraft.mavenizer(it)
+    maven fg.forgeMaven
+    maven fg.minecraftLibsMaven
+    mavenCentral()
+}
+
+jarJar.register()
+
+dependencies {
+    implementation project(':core')
+    implementation minecraft.dependency("net.minecraftforge:forge:${rootProject.minecraftVersion}-${rootProject.forgeVersion}")
+    implementation(jarJar("org.lwjgl:lwjgl-vulkan:${lwjglVersion}")) {
+        transitive = false
+    }
+    // OSHI/JNA are compile-only here; Minecraft ships them at runtime in both
+    // loaders. :core also declares them compileOnly, so this mirrors core.
+    compileOnly 'com.github.oshi:oshi-core:6.4.10'
+    compileOnly 'net.java.dev.jna:jna:5.13.0'
+    compileOnly 'net.java.dev.jna:jna-platform:5.13.0'
+
+    testImplementation platform('org.junit:junit-bom:5.11.4')
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+    options.release = 21
+}
+
+tasks.named('test', Test).configure {
+    useJUnitPlatform()
+}
+
+// Merges :core (main classes + main resources incl. compiled .spv + vector
+// output) with this project's main classes/resources into the dev-mod directory
+// ForgeGradle loads as the `hypercore` mod. Every class/resource the runtime
+// reaches at dev time must land here, otherwise runServer fails with
+// ClassNotFoundException / missing shader.
+tasks.register('prepareDevMod', Sync) {
+    dependsOn project(':core').tasks.named('classes')
+    dependsOn project(':core').tasks.named('processResources')
+    dependsOn project(':core').tasks.named('compileVectorJava')
+    dependsOn tasks.named('classes')
+    dependsOn tasks.named('processResources')
+
+    from project(':core').layout.buildDirectory.dir('classes/java/main')
+    from project(':core').layout.buildDirectory.dir('resources/main')
+    from project(':core').sourceSets.vector.output
+    from layout.buildDirectory.dir('classes/java/main')
+    from layout.buildDirectory.dir('resources/main')
+    into devModDirectory
+}
+
+tasks.matching { it.name == 'runServer' || it.name == 'runGameTestServer' }.configureEach {
+    dependsOn tasks.named('prepareDevMod')
+}
+
+// Production mod JAR: bundle :core's main + vector output alongside forge main
+// so the single mod JAR is self-contained. :core is pure Java with no Minecraft
+// references, so its classes pass through reobfuscation unchanged.
+jar {
+    from sourceSets.main.output
+    from project(':core').sourceSets.main.output
+    from project(':core').sourceSets.vector.output
+    manifest {
+        attributes([
+            'Specification-Title'   : 'HyperCore',
+            'Specification-Vendor'  : 'HyperCore',
+            'Specification-Version' : project.version,
+            'Implementation-Title'  : project.name,
+            'Implementation-Version': project.version,
+            'Implementation-Vendor' : 'HyperCore'
+        ])
+    }
+}

@@ -1,9 +1,18 @@
 package dev.hypercore.config;
 
+import dev.hypercore.config.HyperCoreSettings;
 import net.minecraftforge.common.ForgeConfigSpec;
 
 import java.util.List;
 
+/**
+ * Forge-side configuration adapter.
+ *
+ * <p>Binds the loader-agnostic {@link HyperCoreSettings} to a ForgeConfigSpec so
+ * server operators configure HyperCore through the standard Forge config file.
+ * The validation and resolution logic lives on {@code HyperCoreSettings} in
+ * core; this class only reads the Forge config values and assembles the record.
+ */
 public final class HyperCoreConfig {
     private static final ForgeConfigSpec.Builder BUILDER = new ForgeConfigSpec.Builder();
 
@@ -45,8 +54,8 @@ public final class HyperCoreConfig {
     private HyperCoreConfig() {
     }
 
-    public static Settings settings() {
-        return new Settings(
+    public static HyperCoreSettings settings() {
+        return new HyperCoreSettings(
             WORKER_THREADS.get(),
             QUEUE_CAPACITY.get(),
             TICK_SAMPLE_WINDOW.get(),
@@ -55,48 +64,5 @@ public final class HyperCoreConfig {
             GPU_MINIMUM_BATCH_SIZE.get(),
             CPU_BACKEND.get()
         );
-    }
-
-    public record Settings(
-        int workerThreads,
-        int queueCapacity,
-        int tickSampleWindow,
-        boolean probeGpu,
-        boolean enableGpu,
-        int gpuMinimumBatchSize,
-        String cpuBackend
-    ) {
-        public Settings {
-            if (workerThreads < 0) {
-                throw new IllegalArgumentException("workerThreads cannot be negative");
-            }
-            if (queueCapacity < 0) {
-                throw new IllegalArgumentException("queueCapacity cannot be negative");
-            }
-            if (tickSampleWindow < 1) {
-                throw new IllegalArgumentException("tickSampleWindow must be positive");
-            }
-            if (gpuMinimumBatchSize < 1) {
-                throw new IllegalArgumentException("gpuMinimumBatchSize must be positive");
-            }
-            if (cpuBackend == null
-                || (!cpuBackend.equals("auto") && !cpuBackend.equals("scalar") && !cpuBackend.equals("vector"))) {
-                throw new IllegalArgumentException("cpuBackend must be auto, scalar, or vector");
-            }
-        }
-
-        public int resolveWorkerThreads(int logicalProcessors) {
-            if (logicalProcessors < 1) {
-                throw new IllegalArgumentException("logicalProcessors must be positive");
-            }
-            return workerThreads == 0 ? Math.max(1, logicalProcessors - 1) : workerThreads;
-        }
-
-        public int resolveQueueCapacity(int resolvedWorkerThreads) {
-            if (resolvedWorkerThreads < 1) {
-                throw new IllegalArgumentException("resolvedWorkerThreads must be positive");
-            }
-            return queueCapacity == 0 ? Math.max(256, resolvedWorkerThreads * 64) : queueCapacity;
-        }
     }
 }
