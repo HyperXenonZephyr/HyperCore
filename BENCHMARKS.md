@@ -40,7 +40,7 @@ Comparing the previous `persistent-mapped-host-coherent` run (2026-07-29) agains
 | 1,048,576 | 2.914 ms | 0.589 ms | 4.95x | 4.26x |
 | 4,194,304 | 11.757 ms | 5.782 ms | 2.03x | 2.44x |
 
-Below 262K candidates the resident path is within run-to-run noise — at those sizes the dispatch/fence overhead dominates and there is no PCIe traversal to remove, and the resident path already skips the staging copy. From 262K upward the win is structural: the GPU no longer crosses PCIe on every dispatch, so the resident path is 2.44x–4.26x faster than CPU and the conservative resident-snapshot crossover now lands at 262,144 candidates (previously none in the tested range). The full-call path still includes the staging→device-local copy and does not cross over; it improved modestly at the largest batches where the copy is amortized. Small-batch full-call p50 rose slightly because the copy+barrier is now in the timed path, which is expected and is not the path the optimization targets.
+Below 262K candidates the resident path is within run-to-run noise — at those sizes the dispatch/fence overhead dominates and there is no PCIe traversal to remove, and the resident path already skips the staging copy. From 262K upward the win is structural: the GPU no longer crosses PCIe on every dispatch, so the resident path is 2.44x–4.26x faster than CPU and the conservative resident-snapshot crossover now consistently lands in the 65,536–262,144 range across runs (previously none in the tested range). The full-call path still includes the staging→device-local copy and does not cross over; it improved modestly at the largest batches where the copy is amortized. Small-batch full-call p50 rose slightly because the copy+barrier is now in the timed path, which is expected and is not the path the optimization targets.
 
 The high p95 at 4M (CPU 97.6 ms, full GPU 110.2 ms) reflects outlier samples under background load on this laptop during that batch; p50 is the stable comparison metric and is consistent with the surrounding batches.
 
@@ -67,7 +67,7 @@ A crossover requires the relevant GPU p50 to be at least 5% lower at that batch 
 
 ## Repeatability
 
-These five runs predate CPU JIT priming, the vector backend, and device-local snapshot storage; they document GPU crossover process-sensitivity under the original `persistent-mapped-host-coherent` transfer mode and are retained as historical evidence. The current (device-local) run above shows a stable resident crossover at 262,144.
+These five runs predate CPU JIT priming, the vector backend, and device-local snapshot storage; they document GPU crossover process-sensitivity under the original `persistent-mapped-host-coherent` transfer mode and are retained as historical evidence. Two device-local runs (the table above, plus a post-core-extraction re-run on 2026-07-30) both produce a resident crossover, landing at 262,144 and 65,536 respectively — the crossover is consistently present, while the exact threshold remains sensitive to small-batch dispatch/fence noise.
 
 | Run | CPU p50 at 1M | Resident GPU p50 at 1M | Speedup | CPU p50 at 4M | Resident GPU p50 at 4M | Speedup | Conservative resident crossover |
 | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -77,4 +77,4 @@ These five runs predate CPU JIT priming, the vector backend, and device-local sn
 | 4 | 3.203 ms | 3.595 ms | 0.89x | 22.157 ms | 14.815 ms | 1.50x | 4,194,304 |
 | 5 | 2.412 ms | 1.976 ms | 1.22x | 16.795 ms | 10.362 ms | 1.62x | 1,048,576 |
 
-Under the previous transfer mode, full-transfer calls had no crossover in any run and resident crossover appeared in three of five runs at different thresholds, so it remained process-sensitive and was not stable enough to tune `compute.gpuMinimumBatchSize`. Device-local storage removes the PCIe traversal from the resident dispatch, which is what makes the 262,144 crossover repeatable. The default `compute.gpuMinimumBatchSize` now has calibrated evidence for a resident-snapshot threshold; the full-call path still does not cross over and remains gated.
+Under the previous transfer mode, full-transfer calls had no crossover in any run and resident crossover appeared in three of five runs at different thresholds, so it remained process-sensitive and was not stable enough to tune `compute.gpuMinimumBatchSize`. Device-local storage removes the PCIe traversal from the resident dispatch, which is what makes the resident crossover repeatable across runs (65,536–262,144). The default `compute.gpuMinimumBatchSize` now has calibrated evidence for a resident-snapshot threshold; the full-call path still does not cross over and remains gated.

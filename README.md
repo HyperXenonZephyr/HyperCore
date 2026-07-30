@@ -105,7 +105,7 @@ The scalar backend is the deterministic correctness baseline for structure-of-ar
 
 `SpatialQueryEngine` accepts an immutable copy of structure-of-arrays positions and returns the ordered indices whose squared distance is within an inclusive radius. Its scalar path packs matches directly, while its Vulkan path processes 32 candidates per invocation and returns one 32-bit mask word. The engine weakly caches one prepared backend snapshot per `PositionBatch`; repeated queries reuse resident XYZ data, while snapshot switching or direct buffer use is detected by a Vulkan data generation and triggers a correct re-upload. `withinRadii` returns query-major results and batches up to 32 Vulkan dispatches into one submission and fence wait. Larger groups are chunked without changing result order. Runtime shutdown closes query snapshots before the compute backend.
 
-The packed mask, resident snapshot, and multi-query submission are exact transfer and synchronization reductions, not end-to-end server performance claims. In the latest RTX 4060 run, eight batched queries were `7.56x`, `4.94x`, `3.10x`, `1.70x`, and `1.33x` faster than eight individual GPU submissions from 4K through 1M candidates. At 4M, compute cost dominated and the batch measured `1.19x`, so batching is not treated as universally faster. With positions held in device-local memory, the resident-snapshot path no longer crosses PCIe on every dispatch and now reaches a stable CPU crossover at 262,144 candidates; the full-call path (which still includes the staging→device-local copy) does not cross over. Entity, chunk, and block simulation remain outside the GPU path, and the default offload threshold stays unchanged until repeatable end-to-end query or tick gains are established.
+The packed mask, resident snapshot, and multi-query submission are exact transfer and synchronization reductions, not end-to-end server performance claims. In the latest RTX 4060 run, eight batched queries were `7.56x`, `4.94x`, `3.10x`, `1.70x`, and `1.33x` faster than eight individual GPU submissions from 4K through 1M candidates. At 4M, compute cost dominated and the batch measured `1.19x`, so batching is not treated as universally faster. With positions held in device-local memory, the resident-snapshot path no longer crosses PCIe on every dispatch and now reaches a repeatable CPU crossover (65,536–262,144 candidates across runs); the full-call path (which still includes the staging→device-local copy) does not cross over. Entity, chunk, and block simulation remain outside the GPU path, and the default offload threshold stays unchanged until repeatable end-to-end query or tick gains are established.
 
 ## Region execution model
 
@@ -176,7 +176,7 @@ Forge command registration is bridged into this SPI, but Bukkit/Paper JARs using
 - [x] Persistent mapped host-coherent Vulkan buffers
 - [x] Resident snapshot reuse across multiple spatial queries
 - [x] Multi-query Vulkan command batching with bounded chunking
-- [x] Device-local snapshot storage with repeatable resident GPU crossover at 262,144 candidates
+- [x] Device-local snapshot storage with a repeatable resident GPU crossover (65,536–262,144 candidates)
 - [x] Plugin-owned tick scheduler and initial compatibility matrix
 - [x] External HyperCore SPI plugin discovery, isolation, and dependency ordering
 - [ ] Bukkit/Paper descriptor and namespace adapter
