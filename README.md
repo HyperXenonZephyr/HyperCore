@@ -5,14 +5,14 @@ HyperCore is an experimental high-performance Minecraft Java server project targ
 > [!IMPORTANT]
 > HyperCore is at an early prototype stage. It is not currently a Bukkit/Paper-compatible production server, and it does not yet move Minecraft world simulation onto the GPU.
 >
-> Forge mod and Fabric mod coexistence is a stated future objective. The runtime is split into a loader-agnostic `:core` consumed by separate `:forge` and `:fabric` adapter subprojects, and the Fabric adapter is now buildable. Simultaneous Forge and Fabric mod execution in one runtime is not implemented and has not been demonstrated.
+> The runtime is split into a loader-agnostic `:core` consumed by separate `:forge` and `:fabric` adapter subprojects, both of which build self-contained server-side mod JARs. HyperCore loads under either loader; running Forge and Fabric mods simultaneously in one process is a future objective and is not yet implemented.
 
 ## Current status
 
 The project is a multi-loader Gradle build: a loader-agnostic `:core` runtime consumed by `:forge` and `:fabric` adapter subprojects, both producing self-contained server-side mod JARs. The established foundation:
 
 - Minecraft 1.21.1 and Java 21 are pinned; Forge 52.1.16 and Fabric Loader 0.16.9 (Fabric API 0.115.1+1.21.1) are the current adapter targets.
-- HyperCore loads as a server-side component under both Forge and Fabric. The two loaders are not yet run in one process; simultaneous execution is a future objective.
+- HyperCore loads as a server-side component under Forge or under Fabric, each as a separate build (see the note above on simultaneous execution).
 - A bounded worker pool reserves one logical CPU for the main server thread and rejects excess work instead of growing an unbounded queue.
 - A 200-tick latency window reports average, p95, and maximum tick duration.
 - Operator diagnostics are available through `/hypercore status`, `/hypercore timings`, `/hypercore capabilities`, and `/hypercore regions`.
@@ -118,12 +118,12 @@ Within a dispatched tick:
 - Messages submitted while a tick is in flight are deferred to the next tick.
 - Executor backpressure requeues an owner batch instead of dropping its messages.
 
-This is an ownership and messaging foundation, not parallel Minecraft world ticking. Vanilla and Forge entity, block entity, chunk, and capability mutations remain on their existing threads until explicit isolation and compatibility tests prove that a workload can move safely.
+This is an ownership and messaging foundation, not parallel Minecraft world ticking. Vanilla, Forge, and Fabric entity, block entity, and chunk mutations remain on their existing threads until explicit isolation and compatibility tests prove that a workload can move safely.
 
 ## Architecture direction
 
 1. **Forge foundation**: preserve native Forge lifecycle, registries, events, and mod compatibility.
-2. **Mod-loader interoperability**: target simultaneous Forge mod and Fabric mod execution on one server. The runtime is now split into a loader-agnostic `:core` with separate `:forge` and `:fabric` adapters, and the Fabric adapter is buildable, but the two loaders are not yet run in one process. Coexistence requires reconciling two incompatible transform and mapping pipelines and remains a future objective.
+2. **Mod-loader interoperability**: target simultaneous Forge mod and Fabric mod execution on one server. The runtime is split into a loader-agnostic `:core` with separate `:forge` and `:fabric` adapters, both buildable. Running both loaders in one process requires reconciling their incompatible transform and mapping pipelines; this is the open work behind the future-objective roadmap entry.
 3. **Compatibility bridge**: implement a controlled Bukkit-compatible API and event bridge rather than merging unrelated patched server jars.
 4. **Parallel execution**: establish region ownership and tick-boundary message passing before parallel world mutation.
 5. **Compute backends**: benchmark CPU scalar, Java Vector API, and GPU implementations for batch-friendly workloads.
@@ -151,7 +151,7 @@ External HyperCore plugins are loaded from JARs in the server's `plugins/` direc
 }
 ```
 
-The main class must implement `dev.hypercore.plugin.HyperPlugin` and have an accessible no-argument constructor. Hard dependencies determine lifecycle order and block dependents when unavailable. Soft dependencies affect order only when present and when doing so does not create a cycle. Every plugin receives a child-first class loader with server, Forge, Minecraft, logging, Gson, and HyperCore API namespaces delegated to the parent. Callback context class loaders are installed for lifecycle, command, event, and scheduled execution. Class sharing between plugin class loaders is not implemented, so dependencies currently express lifecycle order rather than a Java linkage contract.
+The main class must implement `dev.hypercore.plugin.HyperPlugin` and have an accessible no-argument constructor. Hard dependencies determine lifecycle order and block dependents when unavailable. Soft dependencies affect order only when present and when doing so does not create a cycle. Every plugin receives a child-first class loader with server, Minecraft, logging, Gson, and HyperCore API namespaces delegated to the parent. Callback context class loaders are installed for lifecycle, command, event, and scheduled execution. Class sharing between plugin class loaders is not implemented, so dependencies currently express lifecycle order rather than a Java linkage contract.
 
 Forge command registration is bridged into this SPI, but Bukkit/Paper JARs using `plugin.yml`, the `org.bukkit.*` namespace, exact Bukkit scheduler conformance, and complete Bukkit/Paper event coverage are not implemented yet. Those require a separately versioned adapter. See [COMPATIBILITY.md](COMPATIBILITY.md) for the current behavior matrix and explicit unsupported areas.
 
