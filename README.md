@@ -5,7 +5,7 @@ HyperCore is an experimental high-performance Minecraft Java server project targ
 > [!IMPORTANT]
 > HyperCore is at an early prototype stage. It is not currently a Bukkit/Paper-compatible production server, and it does not yet move Minecraft world simulation onto the GPU.
 >
-> Forge mod and Fabric mod coexistence is a stated future objective. Today the server is built, loaded, and tested only against Forge 1.21.1; Fabric loader support is not implemented, and simultaneous Forge/Fabric mod execution has not been demonstrated.
+> Forge mod and Fabric mod coexistence is a stated future objective. The runtime is split into a loader-agnostic `:core` consumed by separate `:forge` and `:fabric` adapter subprojects, and the Fabric adapter is now buildable. Simultaneous Forge and Fabric mod execution in one runtime is not implemented and has not been demonstrated.
 
 ## Current status
 
@@ -22,52 +22,70 @@ Milestones 0 through 13 establish a buildable, dedicated-server-only Forge found
 - A scalar CPU spatial batch backend and a Vulkan compute backend implement the same squared-distance operation for correctness comparisons.
 - A logical region-owner model provides deterministic ownership, per-target FIFO mailboxes, tick-boundary dispatch, and cross-region message accounting.
 - A controlled plugin bridge kernel provides lifecycle callbacks, plugin-owned commands, permissions, cancellable prioritized events, and plugin-owned sync/async tick scheduling. External HyperCore SPI plugin JARs are discovered from `plugins/` with isolated class loaders and deterministic dependency ordering. The Forge command bridge exposes registered commands and `/hypercore plugins` reports bridge and scheduler health.
-- GPU support now includes Vulkan loader/API detection, device selection, two compiled SPIR-V compute pipelines, persistently mapped host-coherent storage buffers, direct, resident-snapshot, and 33-query chunking correctness self-tests, and a configurable batch-size offload policy. Runtime execution uses `cpu-scalar` while Vulkan initializes, switches atomically to `adaptive-vulkan` when ready, and falls back to CPU after a later dispatch failure.
+- GPU support now includes Vulkan loader/API detection, device selection, two compiled SPIR-V compute pipelines, device-local position buffers with host-visible staging, direct, resident-snapshot, and 33-query chunking correctness self-tests, and a configurable batch-size offload policy. Runtime execution uses `cpu-scalar` while Vulkan initializes, switches atomically to `adaptive-vulkan` when ready, and falls back to CPU after a later dispatch failure.
 - An immutable structure-of-arrays position snapshot and radius-query service now uses a GPU-generated packed match mask instead of reading every distance back to CPU. Repeated queries over the same `PositionBatch` retain one Vulkan position upload, while `withinRadii` records up to 32 radius dispatches in one command buffer and one fence wait before transparently chunking larger groups. Query, candidate, match, snapshot, multi-query batch, mask, readback-byte, initialization, and CPU/GPU counters are exposed through `/hypercore capabilities`.
-- A deterministic `benchmarkCompute` Gradle task measures complete scalar/Vulkan calls, resident snapshot calls, and eight-query individual-versus-batched submission. The current RTX 4060 report is recorded in [BENCHMARKS.md](BENCHMARKS.md); batching improved p50 by `2.56x` to `5.91x` from 4K through 1M candidates in the latest run, while the 4M compute-dominated case measured `0.95x`.
+- A deterministic `:core:benchmarkCompute` Gradle task measures complete scalar/vector/Vulkan calls, resident snapshot calls, and eight-query individual-versus-batched submission. The current RTX 4060 report is recorded in [BENCHMARKS.md](BENCHMARKS.md); batching improved p50 between `1.33x` and `7.56x` from 4K through 1M candidates in the latest run, while the 4M compute-dominated case measured `1.19x`.
+- The project is now a multi-loader Gradle build: a loader-agnostic `:core` runtime consumed by `:forge` and `:fabric` adapter subprojects. Both adapters produce self-contained mod JARs that bundle `:core` (main + vector output), the compiled SPIR-V shaders, and the LWJGL Vulkan binding. The Fabric adapter builds but does not yet run alongside Forge.
 
 ## Build
+
+HyperCore is a multi-loader Gradle build with three subprojects:
+
+- **`:core`** — the loader-agnostic runtime (compute backends, region model, plugin bridge, configuration). A plain Java 21 library with no Minecraft references.
+- **`:forge`** — the Forge 1.21.1 adapter. Produces the deployable mod JAR.
+- **`:fabric`** — the Fabric 1.21.1 adapter. Produces a self-contained mod JAR.
 
 Requirements:
 
 - A Java 21 JDK
 - Network access for the first Gradle dependency download
 
-On Windows:
+Build every subproject:
 
 ```powershell
 ./gradlew.bat build
 ```
 
-Deploy `build/libs/hypercore-0.1.0-SNAPSHOT-all.jar`. The `-all.jar` artifact contains the Jar-in-Jar Vulkan binding; the plain JAR is intended for development and dependency-aware tooling.
+Deployable artifacts:
 
-The development server can be launched with:
+| Loader | Artifact | Notes |
+| --- | --- | --- |
+| Forge | `forge/build/libs/hypercore-forge-0.1.0-SNAPSHOT-all.jar` | Carries the Vulkan binding through Forge Jar-in-Jar. |
+| Fabric | `fabric/build/libs/hypercore-fabric-0.1.0-SNAPSHOT.jar` | Bundles `:core` main + vector output and `lwjgl-vulkan` directly. |
 
-```powershell
-./gradlew.bat runServer
-```
+The Forge `-all.jar` is the production artifact; the plain `hypercore-forge-...jar` is for development and dependency-aware tooling. `:core` builds a library JAR (`hypercore-core-...jar`) that is not meant to be deployed on its own.
 
-On first launch, set `eula=true` in `run/eula.txt` only after reviewing the Minecraft EULA.
-
-Automated dedicated-server validation does not require accepting the normal server EULA:
-
-```powershell
-./gradlew.bat runGameTestServer
-```
-
-Run the local CPU/GPU calibration with:
+### Forge development server
 
 ```powershell
-./gradlew.bat benchmarkCompute
+./gradlew.bat :forge:runServer
 ```
 
-The generated report is written to `build/reports/hypercore/compute-benchmark.md`. It is a microbenchmark of the spatial mask backend, not an MSPT or world-simulation benchmark.
+On first launch, set `eula=true` in `forge/run/eula.txt` only after reviewing the Minecraft EULA. Automated dedicated-server validation does not require accepting the normal server EULA:
 
-The development run tasks automatically stage compiled classes and resources into a single mod directory under `build/dev-mod`. This keeps normal Gradle build outputs reproducible while giving Forge one complete exploded mod root.
+```powershell
+./gradlew.bat :forge:runGameTestServer
+```
+
+### Fabric development server
+
+```powershell
+./gradlew.bat :fabric:runServer
+```
+
+### Compute benchmark
+
+```powershell
+./gradlew.bat :core:benchmarkCompute
+```
+
+The generated report is written to `core/build/reports/hypercore/compute-benchmark.md`. It is a microbenchmark of the spatial mask backend, not an MSPT or world-simulation benchmark.
+
+The Forge development run tasks automatically stage `:core` and `:forge` classes and resources — including the compiled `.spv` shaders and the vector source-set output — into a single mod directory under `forge/build/dev-mod` via the `prepareDevMod` task. This keeps normal Gradle build outputs reproducible while giving Forge one complete exploded mod root.
 
 ## Configuration
 
-Forge creates `config/hypercore-common.toml` on first launch.
+Configuration keys are shared across loaders. Forge reads `config/hypercore-common.toml`; the Fabric adapter reads the same keys from `config/hypercore.properties` (a plain Java properties file). Missing keys fall back to the defaults below.
 
 | Key | Default | Purpose |
 | --- | ---: | --- |
@@ -77,8 +95,9 @@ Forge creates `config/hypercore-common.toml` on first launch.
 | `compute.probeGpu` | `true` | Enables best-effort graphics adapter enumeration during startup. |
 | `compute.enableGpu` | `true` | Enables Vulkan compute initialization and the CPU fallback router. |
 | `compute.gpuMinimumBatchSize` | `16384` | Minimum batch size eligible for Vulkan offload. |
+| `compute.cpuBackend` | `auto` | Selects the CPU backend: `auto` uses the Vector API backend when available and falls back to `scalar`. |
 
-Invalid values are rejected by Forge's config specification. GPU loader, device, allocation, and dispatch failures are reported and fall back to CPU-only operation without stopping the server.
+Invalid values are rejected by Forge's config specification, or fall back to the default with a logged warning under Fabric. GPU loader, device, allocation, and dispatch failures are reported and fall back to CPU-only operation without stopping the server.
 
 ## Compute backends
 
@@ -86,7 +105,7 @@ The scalar backend is the deterministic correctness baseline for structure-of-ar
 
 `SpatialQueryEngine` accepts an immutable copy of structure-of-arrays positions and returns the ordered indices whose squared distance is within an inclusive radius. Its scalar path packs matches directly, while its Vulkan path processes 32 candidates per invocation and returns one 32-bit mask word. The engine weakly caches one prepared backend snapshot per `PositionBatch`; repeated queries reuse resident XYZ data, while snapshot switching or direct buffer use is detected by a Vulkan data generation and triggers a correct re-upload. `withinRadii` returns query-major results and batches up to 32 Vulkan dispatches into one submission and fence wait. Larger groups are chunked without changing result order. Runtime shutdown closes query snapshots before the compute backend.
 
-The packed mask, resident snapshot, and multi-query submission are exact transfer and synchronization reductions, not end-to-end server performance claims. In the latest RTX 4060 run, eight batched queries were `5.55x`, `5.18x`, `3.85x`, `4.85x`, and `3.04x` faster than eight individual GPU submissions from 4K through 1M candidates. At 4M, compute cost dominated and the batch measured `0.97x`, so batching is not treated as universally faster. Resident CPU crossover also remains process-sensitive. Entity, chunk, and block simulation remain outside the GPU path, and the default offload threshold stays unchanged until repeatable end-to-end query or tick gains are established.
+The packed mask, resident snapshot, and multi-query submission are exact transfer and synchronization reductions, not end-to-end server performance claims. In the latest RTX 4060 run, eight batched queries were `7.56x`, `4.94x`, `3.10x`, `1.70x`, and `1.33x` faster than eight individual GPU submissions from 4K through 1M candidates. At 4M, compute cost dominated and the batch measured `1.19x`, so batching is not treated as universally faster. With positions held in device-local memory, the resident-snapshot path no longer crosses PCIe on every dispatch and now reaches a stable CPU crossover at 262,144 candidates; the full-call path (which still includes the staging→device-local copy) does not cross over. Entity, chunk, and block simulation remain outside the GPU path, and the default offload threshold stays unchanged until repeatable end-to-end query or tick gains are established.
 
 ## Region execution model
 
@@ -105,7 +124,7 @@ This is an ownership and messaging foundation, not parallel Minecraft world tick
 ## Architecture direction
 
 1. **Forge foundation**: preserve native Forge lifecycle, registries, events, and mod compatibility.
-2. **Mod-loader interoperability**: target simultaneous Forge mod and Fabric mod execution on one server. This is a future objective only; today the runtime is Forge-exclusive and used as the test bed. Coexistence requires reconciling two incompatible transform and mapping pipelines, and no implementation exists yet.
+2. **Mod-loader interoperability**: target simultaneous Forge mod and Fabric mod execution on one server. The runtime is now split into a loader-agnostic `:core` with separate `:forge` and `:fabric` adapters, and the Fabric adapter is buildable, but the two loaders are not yet run in one process. Coexistence requires reconciling two incompatible transform and mapping pipelines and remains a future objective.
 3. **Compatibility bridge**: implement a controlled Bukkit-compatible API and event bridge rather than merging unrelated patched server jars.
 4. **Parallel execution**: establish region ownership and tick-boundary message passing before parallel world mutation.
 5. **Compute backends**: benchmark CPU scalar, Java Vector API, and GPU implementations for batch-friendly workloads.
@@ -113,7 +132,7 @@ This is an ownership and messaging foundation, not parallel Minecraft world tick
 
 ## GPU policy
 
-GPU support is enabled by default and always has a CPU fallback. HyperCore enumerates graphics adapters and VRAM through OSHI, probes the Vulkan loader and API version through JNA, selects a compute-capable physical device, and submits compiled squared-distance and packed-radius-mask SPIR-V kernels through persistently mapped host-coherent storage buffers. Prepared position snapshots retain uploaded XYZ data across repeated queries and report upload/reuse counts. Vulkan creation and both correctness self-tests are asynchronous; shutdown interrupts and bounded-joins initialization, and a backend that finishes after shutdown closes its native resources instead of becoming active. GPU use is gated by batch size and correctness verification; device limits or dispatch failures disable only the GPU path. Candidate workloads include batch terrain density generation, spatial broad-phase queries, and other data-oriented jobs. A GPU path will only be retained for a workload when it improves complete server tick or generation latency after upload, synchronization, and readback costs.
+GPU support is enabled by default and always has a CPU fallback. HyperCore enumerates graphics adapters and VRAM through OSHI, probes the Vulkan loader and API version through JNA, selects a compute-capable physical device, and submits compiled squared-distance and packed-radius-mask SPIR-V kernels against device-local position buffers (fed by host-visible staging with a transfer→compute pipeline barrier) plus a host-visible packed-mask output buffer. Prepared position snapshots retain uploaded XYZ data across repeated queries and report upload/reuse counts. Vulkan creation and both correctness self-tests are asynchronous; shutdown interrupts and bounded-joins initialization, and a backend that finishes after shutdown closes its native resources instead of becoming active. GPU use is gated by batch size and correctness verification; device limits or dispatch failures disable only the GPU path. Candidate workloads include batch terrain density generation, spatial broad-phase queries, and other data-oriented jobs. A GPU path will only be retained for a workload when it improves complete server tick or generation latency after upload, synchronization, and readback costs.
 
 ## Plugin bridge kernel
 
@@ -140,7 +159,8 @@ Forge command registration is bridged into this SPI, but Bukkit/Paper JARs using
 ## Roadmap
 
 - [x] Forge 1.21.1 project foundation
-- [ ] Simultaneous Forge mod and Fabric mod execution (future objective; Forge-only today)
+- [x] Fabric loader adapter subproject (buildable; not simultaneous with Forge)
+- [ ] Simultaneous Forge mod and Fabric mod execution in one runtime (future objective)
 - [x] Safe background executor and basic tick diagnostics
 - [x] Unit tests for metrics, isolated worker execution, and queue backpressure
 - [x] Automated Forge dedicated-server GameTest
@@ -156,7 +176,7 @@ Forge command registration is bridged into this SPI, but Bukkit/Paper JARs using
 - [x] Persistent mapped host-coherent Vulkan buffers
 - [x] Resident snapshot reuse across multiple spatial queries
 - [x] Multi-query Vulkan command batching with bounded chunking
-- [ ] Device-local snapshot storage and repeatable GPU crossover
+- [x] Device-local snapshot storage with repeatable resident GPU crossover at 262,144 candidates
 - [x] Plugin-owned tick scheduler and initial compatibility matrix
 - [x] External HyperCore SPI plugin discovery, isolation, and dependency ordering
 - [ ] Bukkit/Paper descriptor and namespace adapter

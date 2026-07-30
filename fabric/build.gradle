@@ -1,6 +1,6 @@
 // HyperCore Fabric adapter.
 //
-// fabric-loom 1.15 builds the loader-specific mod JAR. The loader-agnostic
+// fabric-loom 1.12.1 builds the loader-specific mod JAR. The loader-agnostic
 // runtime lives in :core and is consumed as a plain Java library
 // (`implementation project(':core')`) — core has no Minecraft references, so it
 // needs no remapping and no `namedElements`. The production mod JAR bundles
