@@ -4,7 +4,9 @@ import org.lwjgl.PointerBuffer;
 import org.lwjgl.system.Configuration;
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.vulkan.VkApplicationInfo;
+import org.lwjgl.vulkan.VkBufferCopy;
 import org.lwjgl.vulkan.VkBufferCreateInfo;
+import org.lwjgl.vulkan.VkBufferMemoryBarrier;
 import org.lwjgl.vulkan.VkCommandBuffer;
 import org.lwjgl.vulkan.VkCommandBufferAllocateInfo;
 import org.lwjgl.vulkan.VkCommandBufferBeginInfo;
@@ -51,22 +53,31 @@ import java.util.Objects;
 import static org.lwjgl.system.MemoryStack.stackPush;
 import static org.lwjgl.system.MemoryUtil.NULL;
 import static org.lwjgl.system.MemoryUtil.memByteBuffer;
+import static org.lwjgl.vulkan.VK10.VK_ACCESS_SHADER_READ_BIT;
+import static org.lwjgl.vulkan.VK10.VK_ACCESS_TRANSFER_WRITE_BIT;
 import static org.lwjgl.vulkan.VK10.VK_API_VERSION_1_0;
 import static org.lwjgl.vulkan.VK10.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
+import static org.lwjgl.vulkan.VK10.VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+import static org.lwjgl.vulkan.VK10.VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
 import static org.lwjgl.vulkan.VK10.VK_COMMAND_BUFFER_LEVEL_PRIMARY;
 import static org.lwjgl.vulkan.VK10.VK_COMMAND_BUFFER_RESET_RELEASE_RESOURCES_BIT;
 import static org.lwjgl.vulkan.VK10.VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
 import static org.lwjgl.vulkan.VK10.VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
 import static org.lwjgl.vulkan.VK10.VK_FENCE_CREATE_SIGNALED_BIT;
+import static org.lwjgl.vulkan.VK10.VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
 import static org.lwjgl.vulkan.VK10.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
 import static org.lwjgl.vulkan.VK10.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT;
 import static org.lwjgl.vulkan.VK10.VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU;
 import static org.lwjgl.vulkan.VK10.VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU;
 import static org.lwjgl.vulkan.VK10.VK_PIPELINE_BIND_POINT_COMPUTE;
+import static org.lwjgl.vulkan.VK10.VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
+import static org.lwjgl.vulkan.VK10.VK_PIPELINE_STAGE_TRANSFER_BIT;
 import static org.lwjgl.vulkan.VK10.VK_QUEUE_COMPUTE_BIT;
+import static org.lwjgl.vulkan.VK10.VK_QUEUE_FAMILY_IGNORED;
 import static org.lwjgl.vulkan.VK10.VK_SHADER_STAGE_COMPUTE_BIT;
 import static org.lwjgl.vulkan.VK10.VK_SHARING_MODE_EXCLUSIVE;
 import static org.lwjgl.vulkan.VK10.VK_SUCCESS;
+import static org.lwjgl.vulkan.VK10.VK_WHOLE_SIZE;
 import static org.lwjgl.vulkan.VK10.vkAllocateCommandBuffers;
 import static org.lwjgl.vulkan.VK10.vkAllocateDescriptorSets;
 import static org.lwjgl.vulkan.VK10.vkAllocateMemory;
@@ -74,7 +85,9 @@ import static org.lwjgl.vulkan.VK10.vkBeginCommandBuffer;
 import static org.lwjgl.vulkan.VK10.vkBindBufferMemory;
 import static org.lwjgl.vulkan.VK10.vkCmdBindDescriptorSets;
 import static org.lwjgl.vulkan.VK10.vkCmdBindPipeline;
+import static org.lwjgl.vulkan.VK10.vkCmdCopyBuffer;
 import static org.lwjgl.vulkan.VK10.vkCmdDispatch;
+import static org.lwjgl.vulkan.VK10.vkCmdPipelineBarrier;
 import static org.lwjgl.vulkan.VK10.vkCmdPushConstants;
 import static org.lwjgl.vulkan.VK10.vkCreateBuffer;
 import static org.lwjgl.vulkan.VK10.vkCreateCommandPool;
@@ -144,6 +157,11 @@ public final class VulkanSpatialComputeBackend implements ManagedSpatialComputeB
 
     private BufferSet buffers;
     private long positionDataGeneration;
+    // True when staging buffers hold position data newer than the device-local
+    // buffers. Set by uploadPositions; cleared by the first record* that copies
+    // staging into device-local. Resident queries that skip uploadPositions keep
+    // this false and dispatch reads device-local VRAM directly.
+    private boolean positionsDirty;
     private boolean closed;
 
     private VulkanSpatialComputeBackend() {
@@ -223,7 +241,7 @@ public final class VulkanSpatialComputeBackend implements ManagedSpatialComputeB
 
     @Override
     public String transferMode() {
-        return "persistent-mapped-host-coherent";
+        return "device-local-staged";
     }
 
     @Override
@@ -375,25 +393,28 @@ public final class VulkanSpatialComputeBackend implements ManagedSpatialComputeB
         }
         buffers = replacement;
         positionDataGeneration++;
+        // Fresh device-local buffers hold no valid positions; the next upload
+        // repopulates staging and the next record copies it into device-local.
+        positionsDirty = false;
         if (previous != null) {
             previous.close(device);
         }
     }
 
     private void updateDescriptorSet(BufferSet bufferSet) {
-        GpuBuffer[] gpuBuffers = {
+        GpuResource[] resources = {
             bufferSet.positionsX(),
             bufferSet.positionsY(),
             bufferSet.positionsZ(),
             bufferSet.output()
         };
         try (MemoryStack stack = stackPush()) {
-            for (int binding = 0; binding < gpuBuffers.length; binding++) {
-                GpuBuffer gpuBuffer = gpuBuffers[binding];
+            for (int binding = 0; binding < resources.length; binding++) {
+                GpuResource resource = resources[binding];
                 VkDescriptorBufferInfo.Buffer info = VkDescriptorBufferInfo.calloc(1, stack)
-                    .buffer(gpuBuffer.buffer())
+                    .buffer(resource.buffer())
                     .offset(0)
-                    .range(gpuBuffer.sizeBytes());
+                    .range(resource.sizeBytes());
                 VkWriteDescriptorSet.Buffer write = VkWriteDescriptorSet.calloc(1, stack)
                     .sType$Default()
                     .dstSet(descriptorSet)
@@ -411,6 +432,10 @@ public final class VulkanSpatialComputeBackend implements ManagedSpatialComputeB
         try (MemoryStack stack = stackPush()) {
             VkCommandBufferBeginInfo beginInfo = VkCommandBufferBeginInfo.calloc(stack).sType$Default();
             check(vkBeginCommandBuffer(commandBuffer, beginInfo), "begin command buffer");
+            if (positionsDirty) {
+                recordPositionUpload(stack);
+                positionsDirty = false;
+            }
             vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline);
             vkCmdBindDescriptorSets(
                 commandBuffer,
@@ -441,6 +466,10 @@ public final class VulkanSpatialComputeBackend implements ManagedSpatialComputeB
         try (MemoryStack stack = stackPush()) {
             VkCommandBufferBeginInfo beginInfo = VkCommandBufferBeginInfo.calloc(stack).sType$Default();
             check(vkBeginCommandBuffer(commandBuffer, beginInfo), "begin command buffer");
+            if (positionsDirty) {
+                recordPositionUpload(stack);
+                positionsDirty = false;
+            }
             vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, radiusMaskPipeline);
             vkCmdBindDescriptorSets(
                 commandBuffer,
@@ -476,6 +505,10 @@ public final class VulkanSpatialComputeBackend implements ManagedSpatialComputeB
         try (MemoryStack stack = stackPush()) {
             VkCommandBufferBeginInfo beginInfo = VkCommandBufferBeginInfo.calloc(stack).sType$Default();
             check(vkBeginCommandBuffer(commandBuffer, beginInfo), "begin command buffer");
+            if (positionsDirty) {
+                recordPositionUpload(stack);
+                positionsDirty = false;
+            }
             vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, radiusMaskPipeline);
             vkCmdBindDescriptorSets(
                 commandBuffer,
@@ -501,6 +534,53 @@ public final class VulkanSpatialComputeBackend implements ManagedSpatialComputeB
             }
             check(vkEndCommandBuffer(commandBuffer), "end command buffer");
         }
+    }
+
+    // Copies the three position staging buffers into their device-local
+    // counterparts and inserts a transfer->compute barrier so the subsequent
+    // dispatch reads committed VRAM. Runs inside the caller's command buffer
+    // (after begin, before bind/dispatch); the single-fence submitAndWait that
+    // follows the dispatch covers the copy as well.
+    private void recordPositionUpload(MemoryStack stack) {
+        long sizeBytes = (long) buffers.capacity() * Float.BYTES;
+        long[] sources = {
+            buffers.positionsStagingX().buffer(),
+            buffers.positionsStagingY().buffer(),
+            buffers.positionsStagingZ().buffer()
+        };
+        long[] destinations = {
+            buffers.positionsX().buffer(),
+            buffers.positionsY().buffer(),
+            buffers.positionsZ().buffer()
+        };
+        for (int axis = 0; axis < 3; axis++) {
+            VkBufferCopy.Buffer region = VkBufferCopy.calloc(1, stack)
+                .srcOffset(0)
+                .dstOffset(0)
+                .size(sizeBytes);
+            vkCmdCopyBuffer(commandBuffer, sources[axis], destinations[axis], region);
+        }
+        VkBufferMemoryBarrier.Buffer barriers = VkBufferMemoryBarrier.calloc(3, stack);
+        for (int axis = 0; axis < 3; axis++) {
+            barriers.get(axis)
+                .sType$Default()
+                .srcAccessMask(VK_ACCESS_TRANSFER_WRITE_BIT)
+                .dstAccessMask(VK_ACCESS_SHADER_READ_BIT)
+                .srcQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
+                .dstQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
+                .buffer(destinations[axis])
+                .offset(0)
+                .size(VK_WHOLE_SIZE);
+        }
+        vkCmdPipelineBarrier(
+            commandBuffer,
+            VK_PIPELINE_STAGE_TRANSFER_BIT,
+            VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+            0,
+            null,
+            barriers,
+            null
+        );
     }
 
     private void submitAndWait() {
@@ -623,10 +703,11 @@ public final class VulkanSpatialComputeBackend implements ManagedSpatialComputeB
     }
 
     private void uploadPositions(float[] positionsX, float[] positionsY, float[] positionsZ, int size) {
-        upload(buffers.positionsX(), positionsX, size);
-        upload(buffers.positionsY(), positionsY, size);
-        upload(buffers.positionsZ(), positionsZ, size);
+        upload(buffers.positionsStagingX(), positionsX, size);
+        upload(buffers.positionsStagingY(), positionsY, size);
+        upload(buffers.positionsStagingZ(), positionsZ, size);
         positionDataGeneration++;
+        positionsDirty = true;
     }
 
     private void validateRadiusBatchSize(int size) {
@@ -1070,8 +1151,20 @@ public final class VulkanSpatialComputeBackend implements ManagedSpatialComputeB
         }
     }
 
-    private record GpuBuffer(long buffer, long memory, long sizeBytes, ByteBuffer mapped) {
-        private static GpuBuffer create(VkDevice device, VkPhysicalDevice physicalDevice, long sizeBytes) {
+    // A buffer bound into the descriptor set. Device-local position buffers and
+    // the host-visible output buffer both expose handle + size for descriptor
+    // writes without leaking mapping-specific accessors.
+    private sealed interface GpuResource permits GpuBuffer, DeviceLocalBuffer {
+        long buffer();
+
+        long sizeBytes();
+    }
+
+    // Host-visible, host-coherent, persistently mapped. Used for position
+    // staging (CPU writes here, vkCmdCopyBuffer moves it to device-local) and
+    // for the output buffer (GPU writes, CPU reads back).
+    private record GpuBuffer(long buffer, long memory, long sizeBytes, ByteBuffer mapped) implements GpuResource {
+        private static GpuBuffer create(VkDevice device, VkPhysicalDevice physicalDevice, long sizeBytes, int usage) {
             if (sizeBytes > Integer.MAX_VALUE) {
                 throw new IllegalArgumentException("Host-visible buffer exceeds Java buffer capacity");
             }
@@ -1079,14 +1172,19 @@ public final class VulkanSpatialComputeBackend implements ManagedSpatialComputeB
                 VkBufferCreateInfo createInfo = VkBufferCreateInfo.calloc(stack)
                     .sType$Default()
                     .size(sizeBytes)
-                    .usage(VK_BUFFER_USAGE_STORAGE_BUFFER_BIT)
+                    .usage(usage)
                     .sharingMode(VK_SHARING_MODE_EXCLUSIVE);
                 LongBuffer bufferHandle = stack.mallocLong(1);
                 check(vkCreateBuffer(device, createInfo, null, bufferHandle), "create storage buffer");
                 long buffer = bufferHandle.get(0);
                 VkMemoryRequirements requirements = VkMemoryRequirements.calloc(stack);
                 vkGetBufferMemoryRequirements(device, buffer, requirements);
-                int memoryType = findMemoryType(physicalDevice, requirements.memoryTypeBits(), stack);
+                int memoryType = findMemoryType(
+                    physicalDevice,
+                    requirements.memoryTypeBits(),
+                    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                    stack
+                );
                 VkMemoryAllocateInfo allocation = VkMemoryAllocateInfo.calloc(stack)
                     .sType$Default()
                     .allocationSize(requirements.size())
@@ -1122,49 +1220,137 @@ public final class VulkanSpatialComputeBackend implements ManagedSpatialComputeB
             vkDestroyBuffer(device, buffer, null);
             vkFreeMemory(device, memory, null);
         }
+    }
 
-        private static int findMemoryType(
-            VkPhysicalDevice physicalDevice,
-            int supportedTypes,
-            MemoryStack stack
-        ) {
-            VkPhysicalDeviceMemoryProperties memory = VkPhysicalDeviceMemoryProperties.calloc(stack);
-            vkGetPhysicalDeviceMemoryProperties(physicalDevice, memory);
-            int required = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
-            for (int index = 0; index < memory.memoryTypeCount(); index++) {
-                boolean supported = (supportedTypes & (1 << index)) != 0;
-                int flags = memory.memoryTypes(index).propertyFlags();
-                if (supported && (flags & required) == required) {
-                    return index;
+    // Device-local, not mapped. Holds positions for GPU reads; the compute
+    // shader reads them as readonly storage buffers. On a discrete GPU this is
+    // VRAM (no PCIe traversal during dispatch); on integrated GPUs device-local
+    // is typically system RAM, so this degrades to a no-op without harm.
+    private record DeviceLocalBuffer(long buffer, long memory, long sizeBytes) implements GpuResource {
+        private static DeviceLocalBuffer create(VkDevice device, VkPhysicalDevice physicalDevice, long sizeBytes) {
+            try (MemoryStack stack = stackPush()) {
+                VkBufferCreateInfo createInfo = VkBufferCreateInfo.calloc(stack)
+                    .sType$Default()
+                    .size(sizeBytes)
+                    .usage(VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT)
+                    .sharingMode(VK_SHARING_MODE_EXCLUSIVE);
+                LongBuffer bufferHandle = stack.mallocLong(1);
+                check(vkCreateBuffer(device, createInfo, null, bufferHandle), "create device-local buffer");
+                long buffer = bufferHandle.get(0);
+                VkMemoryRequirements requirements = VkMemoryRequirements.calloc(stack);
+                vkGetBufferMemoryRequirements(device, buffer, requirements);
+                int memoryType = findMemoryType(
+                    physicalDevice,
+                    requirements.memoryTypeBits(),
+                    VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                    stack
+                );
+                VkMemoryAllocateInfo allocation = VkMemoryAllocateInfo.calloc(stack)
+                    .sType$Default()
+                    .allocationSize(requirements.size())
+                    .memoryTypeIndex(memoryType);
+                LongBuffer memoryHandle = stack.mallocLong(1);
+                long memory = NULL;
+                try {
+                    check(vkAllocateMemory(device, allocation, null, memoryHandle), "allocate device-local buffer memory");
+                    memory = memoryHandle.get(0);
+                    check(vkBindBufferMemory(device, buffer, memory, 0), "bind device-local buffer memory");
+                    return new DeviceLocalBuffer(buffer, memory, sizeBytes);
+                } catch (RuntimeException error) {
+                    if (memory != NULL) {
+                        vkFreeMemory(device, memory, null);
+                    }
+                    vkDestroyBuffer(device, buffer, null);
+                    throw error;
                 }
             }
-            throw new IllegalStateException("No host-visible coherent Vulkan memory type is available");
         }
+
+        private void close(VkDevice device) {
+            vkDestroyBuffer(device, buffer, null);
+            vkFreeMemory(device, memory, null);
+        }
+    }
+
+    private static int findMemoryType(
+        VkPhysicalDevice physicalDevice,
+        int supportedTypes,
+        int requiredProperties,
+        MemoryStack stack
+    ) {
+        VkPhysicalDeviceMemoryProperties memory = VkPhysicalDeviceMemoryProperties.calloc(stack);
+        vkGetPhysicalDeviceMemoryProperties(physicalDevice, memory);
+        for (int index = 0; index < memory.memoryTypeCount(); index++) {
+            boolean supported = (supportedTypes & (1 << index)) != 0;
+            int flags = memory.memoryTypes(index).propertyFlags();
+            if (supported && (flags & requiredProperties) == requiredProperties) {
+                return index;
+            }
+        }
+        throw new IllegalStateException(
+            "No Vulkan memory type satisfying " + Integer.toBinaryString(requiredProperties) + " is available"
+        );
     }
 
     private record BufferSet(
         int capacity,
-        GpuBuffer positionsX,
-        GpuBuffer positionsY,
-        GpuBuffer positionsZ,
+        DeviceLocalBuffer positionsX,
+        DeviceLocalBuffer positionsY,
+        DeviceLocalBuffer positionsZ,
+        GpuBuffer positionsStagingX,
+        GpuBuffer positionsStagingY,
+        GpuBuffer positionsStagingZ,
         GpuBuffer output
     ) {
         private static BufferSet create(VkDevice device, VkPhysicalDevice physicalDevice, int capacity) {
             long sizeBytes = (long) capacity * Float.BYTES;
-            List<GpuBuffer> allocated = new ArrayList<>(4);
+            DeviceLocalBuffer posX = null;
+            DeviceLocalBuffer posY = null;
+            DeviceLocalBuffer posZ = null;
+            GpuBuffer stagingX = null;
+            GpuBuffer stagingY = null;
+            GpuBuffer stagingZ = null;
+            GpuBuffer output = null;
             try {
-                for (int index = 0; index < 4; index++) {
-                    allocated.add(GpuBuffer.create(device, physicalDevice, sizeBytes));
-                }
+                posX = DeviceLocalBuffer.create(device, physicalDevice, sizeBytes);
+                posY = DeviceLocalBuffer.create(device, physicalDevice, sizeBytes);
+                posZ = DeviceLocalBuffer.create(device, physicalDevice, sizeBytes);
+                stagingX = GpuBuffer.create(device, physicalDevice, sizeBytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+                stagingY = GpuBuffer.create(device, physicalDevice, sizeBytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+                stagingZ = GpuBuffer.create(device, physicalDevice, sizeBytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+                output = GpuBuffer.create(device, physicalDevice, sizeBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
                 return new BufferSet(
                     capacity,
-                    allocated.get(0),
-                    allocated.get(1),
-                    allocated.get(2),
-                    allocated.get(3)
+                    posX,
+                    posY,
+                    posZ,
+                    stagingX,
+                    stagingY,
+                    stagingZ,
+                    output
                 );
             } catch (RuntimeException error) {
-                allocated.forEach(buffer -> buffer.close(device));
+                if (posX != null) {
+                    posX.close(device);
+                }
+                if (posY != null) {
+                    posY.close(device);
+                }
+                if (posZ != null) {
+                    posZ.close(device);
+                }
+                if (stagingX != null) {
+                    stagingX.close(device);
+                }
+                if (stagingY != null) {
+                    stagingY.close(device);
+                }
+                if (stagingZ != null) {
+                    stagingZ.close(device);
+                }
+                if (output != null) {
+                    output.close(device);
+                }
                 throw error;
             }
         }
@@ -1173,6 +1359,9 @@ public final class VulkanSpatialComputeBackend implements ManagedSpatialComputeB
             positionsX.close(device);
             positionsY.close(device);
             positionsZ.close(device);
+            positionsStagingX.close(device);
+            positionsStagingY.close(device);
+            positionsStagingZ.close(device);
             output.close(device);
         }
     }
