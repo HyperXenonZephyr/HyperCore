@@ -1,4 +1,19 @@
-# HyperCore
+<p align="center">
+  <img src="./Logo.png" width="180" alt="HyperCore logo">
+</p>
+
+<h1 align="center">HyperCore</h1>
+
+<p align="center">
+  <a href="https://www.java.com/"><img src="https://img.shields.io/badge/Java-21-ED8B00?logo=java&logoColor=white" alt="Java 21"></a>
+  <a href="https://gradle.org/"><img src="https://img.shields.io/badge/Gradle-8.x-02303A?logo=gradle&logoColor=white" alt="Gradle"></a>
+  <a href="https://minecraftforge.net/"><img src="https://img.shields.io/badge/Minecraft%20Forge-1.21.1-orange" alt="Minecraft Forge 1.21.1"></a>
+  <a href="https://fabricmc.net/"><img src="https://img.shields.io/badge/Fabric-1.21.1-DBD0A4" alt="Fabric 1.21.1"></a>
+  <a href="https://www.vulkan.org/"><img src="https://img.shields.io/badge/Vulkan-Compute-AC162C?logo=vulkan&logoColor=white" alt="Vulkan Compute"></a>
+  <a href="https://www.lwjgl.org/"><img src="https://img.shields.io/badge/LWJGL-3.x-9B6BFF?logo=lwjgl&logoColor=white" alt="LWJGL 3"></a>
+  <a href="https://junit.org/junit5/"><img src="https://img.shields.io/badge/JUnit-5-25A162?logo=junit5&logoColor=white" alt="JUnit 5"></a>
+  <a href="./LICENSE"><img src="https://img.shields.io/badge/License-Apache%202.0-blue" alt="Apache License 2.0"></a>
+</p>
 
 HyperCore is an experimental high-performance Minecraft Java server project targeting multi-loader mod execution. Its long-term goals are simultaneous Forge mod and Fabric mod execution alongside Bukkit/Paper plugin interoperability, safe multi-core execution, optional GPU compute acceleration, and measurable server-side optimization.
 
