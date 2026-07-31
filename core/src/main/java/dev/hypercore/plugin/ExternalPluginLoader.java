@@ -77,7 +77,8 @@ public final class ExternalPluginLoader implements AutoCloseable {
                     plugin = new BukkitPluginAdapter(
                         javaPlugin,
                         candidate.descriptor.plugin().name(),
-                        candidate.bukkitCommands()
+                        candidate.bukkitCommands(),
+                        plugins
                     );
                 } else {
                     throw new IllegalArgumentException(

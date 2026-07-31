@@ -84,6 +84,16 @@ All notable changes to HyperCore are documented in this file. The format is base
 - Added `HyperCoreBukkitScheduler` delegating `Bukkit.getScheduler()` sync and async task methods to the HyperCore `PluginScheduler`, and `HyperCoreBukkitPluginManager` as a minimal per-plugin `PluginManager` stub.
 - Added unit coverage for the Bukkit adapter: `BukkitPluginAdapterTest` exercises lifecycle ordering, command dispatch (with and without arguments), sync task scheduling via `Bukkit.getScheduler()`, API-stub injection, and command cleanup on disable; `ExternalPluginLoaderTest.loadsJavaPluginFromBukkitJar` verifies the end-to-end JAR → `plugin.yml` → adapter → command dispatch path. An `ExampleBukkitPlugin` fixture extends `JavaPlugin` and records lifecycle, command, and scheduler activity.
 - Updated `COMPATIBILITY.md` to mark the bridged Bukkit/Paper paths as `Prototype` with accurate limitations (no Bukkit event catalog, tab completion, `plugin.yml` permissions, or cross-plugin lookups) and to track adapter-gate progress.
+- Added a generated full `org.bukkit.event.*` skeleton with hand-written infrastructure (`Event`, `Cancellable`, `HandlerList`) and a build-time generator for the remaining event shells, giving Bukkit plugins a complete event class hierarchy to compile against.
+- Added bidirectional Bukkit event bridging: selected HyperCore internal events are forwarded as Bukkit events for Bukkit plugins to consume, and Bukkit events fired through `HyperCoreBukkitPluginManager.callEvent` are bridged back to the HyperCore event bus where a counterpart exists.
+- Extended `CommandDefinition` with `TabCompleter` support and wired Bukkit tab completion into the Forge/Fabric Brigadier suggestion paths.
+- Extended `PluginPermissionService` to register permissions with child nodes and resolve them recursively, preserving wildcard and operator semantics while preventing inheritance cycles.
+- Updated `BukkitPluginYmlParser` to parse the `permissions` block from `plugin.yml` (description, default, and children) and wired registration into `BukkitPluginAdapter.onLoad`.
+- Added `PluginManager.getPlugin(name)` for display-name lookup and updated `HyperCoreBukkitPluginManager.getPlugin(name)` so Bukkit plugins can discover each other via `Bukkit.getPluginManager().getPlugin(name)`.
+- Added unit coverage for permission children resolution, plugin lookup by name, and Bukkit-level cross-plugin discovery.
+- Added a dedicated-server GameTest Bukkit plugin (`GametestBukkitPlugin`) in a new `:core` `gametestPlugin` source set, packaged into `hypercore-gametest-bukkit-plugin.jar`, and copied into `run/plugins` before Forge and Fabric `runGameTestServer` tasks.
+- Added `bukkitPluginLoadsAndCommandExecutes` GameTest methods to both Forge and Fabric test suites that verify the test Bukkit plugin is discovered, loaded, and its `/hypercore-gametest` command executes in a real dedicated server.
+- Fixed plugin-command registration timing in Forge and Fabric so commands defined by Bukkit plugins loaded during server startup are registered with the live Brigadier dispatcher after `RegisterCommandsEvent` / `CommandRegistrationCallback` has fired.
 
 ### Fixed
 
@@ -92,3 +102,6 @@ All notable changes to HyperCore are documented in this file. The format is base
 - Disabled ForgeGradle's merged source-set output, restoring standard Gradle class directories and preventing clean builds from omitting unchanged classes.
 - Staged development classes and resources into one exploded mod directory so Forge server and GameTest runs load HyperCore correctly with standard Gradle source-set outputs.
 - Fixed executor completion metrics so a completed future cannot become visible before `completedTasks` is incremented.
+- Reset shared Bukkit server singleton state between unit tests so `BukkitPluginAdapterTest` and `ExternalPluginLoaderTest` do not leak static state across test cases.
+- Fixed a Forge dev-run JPMS split-package conflict by changing `:core` from `implementation` to `compileOnly` in `:forge`; `prepareDevMod` already merges core classes into the dev-mod directory, so the standalone core jar no longer needs to be on the module path.
+- Added the `fabric-gametest-api-v1` dependency and configured the Loom `gameTestServer` run config (server environment, `-Dfabric-api.gametest`, and `run/plugins` staging) so Fabric dedicated-server GameTests execute correctly.

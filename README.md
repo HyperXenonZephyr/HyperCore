@@ -16,12 +16,12 @@ The project is a multi-loader Gradle build: a loader-agnostic `:core` runtime co
 - A bounded worker pool reserves one logical CPU for the main server thread and rejects excess work instead of growing an unbounded queue.
 - A 200-tick latency window reports average, p95, and maximum tick duration.
 - Operator diagnostics are available through `/hypercore status`, `/hypercore timings`, `/hypercore capabilities`, and `/hypercore regions`.
-- A Forge GameTest verifies that HyperCore loads in a real dedicated-server environment; Forge remains the primary test bed.
+- Forge and Fabric GameTests both verify that HyperCore loads in a real dedicated-server environment and that a test Bukkit plugin is discovered, enabled, and executes its registered command.
 - Configuration controls worker count, queue capacity, tick sampling, GPU probing, the default-on GPU compute path, and CPU backend selection; Forge reads `config/hypercore-common.toml` and Fabric reads `config/hypercore.properties` with the same keys.
 - OS, JVM, logical CPU, and graphics adapter capabilities are reported; Vulkan compute initializes by default on a dedicated daemon thread and falls back safely when unavailable.
 - A scalar CPU spatial batch backend and a Vulkan compute backend implement the same squared-distance operation for correctness comparisons.
 - A logical region-owner model provides deterministic ownership, per-target FIFO mailboxes, tick-boundary dispatch, and cross-region message accounting.
-- A controlled plugin bridge kernel provides lifecycle callbacks, plugin-owned commands, permissions, cancellable prioritized events, and plugin-owned sync/async tick scheduling. External HyperCore SPI plugin JARs are discovered from `plugins/` with isolated class loaders and deterministic dependency ordering. A prototype Bukkit/Paper compatibility layer additionally discovers JARs using `plugin.yml`, wraps `JavaPlugin` main classes, and bridges their lifecycle, commands, and sync scheduling through the same SPI. The Forge command bridge exposes registered commands and `/hypercore plugins` reports bridge and scheduler health.
+- A controlled plugin bridge kernel provides lifecycle callbacks, plugin-owned commands, permissions, cancellable prioritized events, and plugin-owned sync/async tick scheduling. External HyperCore SPI plugin JARs are discovered from `plugins/` with isolated class loaders and deterministic dependency ordering. A Bukkit/Paper compatibility layer discovers JARs using `plugin.yml`, wraps `JavaPlugin` main classes, and bridges their lifecycle, commands, tab completion, permissions (with child-node inheritance), and sync scheduling through the same SPI. It also exposes a generated `org.bukkit.event.*` skeleton with bidirectional event bridging for selected types and supports cross-plugin lookup via `Bukkit.getPluginManager().getPlugin(name)`. The Forge and Fabric command bridges expose registered commands and `/hypercore plugins` reports bridge and scheduler health.
 - GPU support now includes Vulkan loader/API detection, device selection, two compiled SPIR-V compute pipelines, device-local position buffers with host-visible staging, direct, resident-snapshot, and 33-query chunking correctness self-tests, and a configurable batch-size offload policy. Runtime execution uses `cpu-scalar` while Vulkan initializes, switches atomically to `adaptive-vulkan` when ready, and falls back to CPU after a later dispatch failure.
 - An immutable structure-of-arrays position snapshot and radius-query service now uses a GPU-generated packed match mask instead of reading every distance back to CPU. Repeated queries over the same `PositionBatch` retain one Vulkan position upload, while `withinRadii` records up to 32 radius dispatches in one command buffer and one fence wait before transparently chunking larger groups. Query, candidate, match, snapshot, multi-query batch, mask, readback-byte, initialization, and CPU/GPU counters are exposed through `/hypercore capabilities`.
 - A deterministic `:core:benchmarkCompute` Gradle task measures complete scalar/vector/Vulkan calls, resident snapshot calls, and eight-query individual-versus-batched submission. The current RTX 4060 report is recorded in [BENCHMARKS.md](BENCHMARKS.md); batching improved p50 between `1.33x` and `7.56x` from 4K through 1M candidates in the latest run, while the 4M compute-dominated case measured `1.19x`.
@@ -66,11 +66,21 @@ On first launch, set `eula=true` in `forge/run/eula.txt` only after reviewing th
 ./gradlew.bat :forge:runGameTestServer
 ```
 
+The Forge GameTest also loads `core/build/libs/hypercore-gametest-bukkit-plugin.jar` from `forge/run/plugins` to validate Bukkit plugin discovery and command execution.
+
 ### Fabric development server
 
 ```powershell
 ./gradlew.bat :fabric:runServer
 ```
+
+### Fabric dedicated-server GameTest
+
+```powershell
+./gradlew.bat :fabric:runGameTestServer
+```
+
+Fabric's GameTest uses the same test Bukkit plugin staged into `fabric/run/plugins`.
 
 ### Compute benchmark
 
@@ -153,7 +163,7 @@ External HyperCore plugins are loaded from JARs in the server's `plugins/` direc
 
 The main class must implement `dev.hypercore.plugin.HyperPlugin` and have an accessible no-argument constructor. Hard dependencies determine lifecycle order and block dependents when unavailable. Soft dependencies affect order only when present and when doing so does not create a cycle. Every plugin receives a child-first class loader with server, Minecraft, logging, Gson, and HyperCore API namespaces delegated to the parent. Callback context class loaders are installed for lifecycle, command, event, and scheduled execution. Class sharing between plugin class loaders is not implemented, so dependencies currently express lifecycle order rather than a Java linkage contract.
 
-Forge command registration is bridged into this SPI. A prototype Bukkit/Paper compatibility layer now discovers JARs using `plugin.yml`, translates the descriptor into the HyperCore SPI, wraps `JavaPlugin` main classes with a lifecycle/command/scheduler adapter, and bridges `plugin.yml`-defined commands and sync scheduling through the HyperCore registry. The adapter ships minimal `org.bukkit.*` API stubs (`JavaPlugin`, `Server`, `Bukkit`, `PluginCommand`, `CommandSender`, `BukkitScheduler`) sufficient for plugins that only touch those surfaces; it is not binary-compatible with the full Bukkit/Paper API and does not map the Bukkit event catalog, tab completion, `plugin.yml` permissions, or cross-plugin lookups. See [COMPATIBILITY.md](COMPATIBILITY.md) for the current behavior matrix and explicit unsupported areas.
+Forge and Fabric command registration is bridged into this SPI. A Bukkit/Paper compatibility layer discovers JARs using `plugin.yml`, translates the descriptor into the HyperCore SPI, wraps `JavaPlugin` main classes with a lifecycle/command/scheduler adapter, and bridges `plugin.yml`-defined commands, aliases, tab completion, permissions (with child-node inheritance), and sync scheduling through the HyperCore registry. It exposes a generated `org.bukkit.event.*` skeleton that covers the full package tree, with hand-written core infrastructure (`Event`, `Cancellable`, `HandlerList`) and generated event shells for the remaining types. Selected HyperCore internal events are forwarded as Bukkit events, and Bukkit events fired through the adapter are bridged back to the HyperCore event bus where a counterpart exists. Plugins can discover each other through `Bukkit.getPluginManager().getPlugin(name)`. The adapter still only ships targeted `org.bukkit.*` stubs and is not binary-compatible with the entire Bukkit/Paper API surface; world, block entity, inventory, and entity mutation APIs remain unimplemented. See [COMPATIBILITY.md](COMPATIBILITY.md) for the current behavior matrix and explicit unsupported areas.
 
 ## Roadmap
 
@@ -179,7 +189,8 @@ Forge command registration is bridged into this SPI. A prototype Bukkit/Paper co
 - [x] Plugin-owned tick scheduler and initial compatibility matrix
 - [x] External HyperCore SPI plugin discovery, isolation, and dependency ordering
 - [x] Bukkit/Paper `plugin.yml` descriptor translation and `JavaPlugin` lifecycle/command/scheduler bridge prototype (minimal `org.bukkit.*` stubs; not binary-compatible)
-- [ ] Full Bukkit/Paper API conformance, event catalog, tab completion, and `plugin.yml` permissions
+- [x] Full `org.bukkit.event.*` skeleton with bidirectional event bridge, tab completion, `plugin.yml` permissions with children, and cross-plugin lookup (validated in Forge/Fabric GameTests)
+- [ ] Bukkit/Paper world, block, block-entity, inventory, and entity mutation API conformance
 
 See [CHANGELOG.md](CHANGELOG.md) for completed changes.
 

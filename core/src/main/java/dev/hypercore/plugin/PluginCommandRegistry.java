@@ -45,7 +45,8 @@ public final class PluginCommandRegistry {
                 : PluginPermissionService.normalizeNode(definition.permission()),
             definition.description().trim(),
             definition.usage().trim(),
-            definition.executor()
+            definition.executor(),
+            definition.tabCompleter()
         );
         RegisteredCommand command = new RegisteredCommand(normalizedPluginId, normalizedDefinition);
         labels.forEach(label -> commandsByLabel.put(label, command));
@@ -91,6 +92,24 @@ public final class PluginCommandRegistry {
         return primaryCommands.size();
     }
 
+    /**
+     * Returns tab-completion suggestions for the given command label and partial
+     * arguments. If the registered command has no tab completer, an empty list is
+     * returned.
+     */
+    public List<String> suggest(String label, List<String> arguments, PluginCommandSender sender) {
+        String normalizedLabel = normalizeLabel(label);
+        RegisteredCommand command;
+        synchronized (this) {
+            command = commandsByLabel.get(normalizedLabel);
+        }
+        if (command == null || command.definition().tabCompleter() == null) {
+            return List.of();
+        }
+        Objects.requireNonNull(sender, "sender");
+        return command.definition().tabCompleter().complete(sender, normalizedLabel, List.copyOf(arguments == null ? List.of() : arguments));
+    }
+
     public synchronized void unregisterPlugin(String pluginId) {
         String normalizedPluginId = PluginPermissionService.normalizePluginId(pluginId);
         Set<String> labels = labelsByPlugin.remove(normalizedPluginId);
@@ -118,13 +137,19 @@ public final class PluginCommandRegistry {
         boolean execute(PluginCommandSender sender, String label, List<String> arguments);
     }
 
+    @FunctionalInterface
+    public interface TabCompleter {
+        List<String> complete(PluginCommandSender sender, String label, List<String> arguments);
+    }
+
     public record CommandDefinition(
         String name,
         List<String> aliases,
         String permission,
         String description,
         String usage,
-        CommandExecutor executor
+        CommandExecutor executor,
+        TabCompleter tabCompleter
     ) {
         public CommandDefinition {
             name = Objects.requireNonNull(name, "name");
@@ -133,6 +158,22 @@ public final class PluginCommandRegistry {
             description = Objects.requireNonNullElse(description, "");
             usage = Objects.requireNonNullElse(usage, "");
             executor = Objects.requireNonNull(executor, "executor");
+            tabCompleter = tabCompleter;
+        }
+
+        /**
+         * Backward-compatible constructor for commands that do not provide tab
+         * completions.
+         */
+        public CommandDefinition(
+            String name,
+            List<String> aliases,
+            String permission,
+            String description,
+            String usage,
+            CommandExecutor executor
+        ) {
+            this(name, aliases, permission, description, usage, executor, null);
         }
     }
 

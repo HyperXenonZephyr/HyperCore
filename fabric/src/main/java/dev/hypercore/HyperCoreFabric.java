@@ -1,6 +1,7 @@
 package dev.hypercore;
 
 import com.mojang.logging.LogUtils;
+import dev.hypercore.bukkit.BukkitEventBridge;
 import dev.hypercore.command.HyperCoreCommands;
 import dev.hypercore.compute.AdaptiveSpatialComputeBackend;
 import dev.hypercore.config.FabricConfigLoader;
@@ -31,6 +32,7 @@ public final class HyperCoreFabric implements DedicatedServerModInitializer {
 
     private static final Logger LOGGER = LogUtils.getLogger();
     private final HyperCoreRuntime runtime = new HyperCoreRuntime();
+    private BukkitEventBridge bukkitEventBridge;
 
     @Override
     public void onInitializeServer() {
@@ -53,6 +55,12 @@ public final class HyperCoreFabric implements DedicatedServerModInitializer {
         // point's Path.of("plugins") convention.
         Path configDirectory = Path.of("config");
         runtime.start(FabricConfigLoader.load(configDirectory), Path.of("plugins"));
+        bukkitEventBridge = new BukkitEventBridge(runtime.plugins());
+        bukkitEventBridge.attach();
+        // Plugin commands are loaded after CommandRegistrationCallback fires, so
+        // re-register them against the live server dispatcher now that plugins
+        // are available.
+        FabricPluginCommandBridge.register(server.getCommands().getDispatcher(), runtime.plugins());
         LOGGER.info(
             "HyperCore runtime started with {} workers, queue capacity {}, and compute backend {}",
             runtime.executor().parallelism(),
@@ -62,6 +70,9 @@ public final class HyperCoreFabric implements DedicatedServerModInitializer {
     }
 
     private void onServerStarted(MinecraftServer server) {
+        if (bukkitEventBridge != null) {
+            bukkitEventBridge.fireServerStarted();
+        }
         RuntimeCapabilities capabilities = runtime.capabilities();
         LOGGER.info(
             "HyperCore is active on Minecraft {} using Java {} on {} {} with {} detected GPU adapter(s)",

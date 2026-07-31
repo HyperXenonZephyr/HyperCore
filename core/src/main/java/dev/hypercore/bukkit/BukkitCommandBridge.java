@@ -53,6 +53,13 @@ final class BukkitCommandBridge {
                 (sender, label, arguments) -> {
                     var bukkitSender = new BukkitCommandSenderAdapter(sender);
                     return command.execute(bukkitSender, label, arguments.toArray(String[]::new));
+                },
+                (sender, label, arguments) -> {
+                    if (command.getTabCompleter() == null) {
+                        return List.of();
+                    }
+                    var bukkitSender = new BukkitCommandSenderAdapter(sender);
+                    return command.tabComplete(bukkitSender, label, arguments.toArray(String[]::new));
                 }
             ));
         }

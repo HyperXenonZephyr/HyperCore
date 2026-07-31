@@ -19,15 +19,34 @@ def lwjglNatives = operatingSystem.contains('win')
         : (architecture.contains('aarch64') || architecture.contains('arm64') ? 'natives-linux-arm64' : 'natives-linux')
 
 sourceSets {
+    main {
+        // Generated Bukkit event shells are compiled alongside hand-written
+        // stubs so that plugins see a complete org.bukkit.event.* package tree.
+        java.srcDirs += layout.buildDirectory.dir('generated-src/bukkit-events/java')
+    }
+    eventGenerator {
+        // Build-time generator for Bukkit event shells. Isolated so that Gson
+        // and the generator code do not leak into the production classpath.
+        java.setSrcDirs(['src/eventGenerator/java'])
+        resources.setSrcDirs(['src/eventGenerator/resources'])
+    }
     shaderCompiler {
         resources.setSrcDirs([])
     }
     vector {
         // Compiled against the live JDK 21 toolchain with the jdk.incubator.vector
         // module added explicitly (see compileVectorJava). Intentionally does NOT
-        // use --release, which excludes incubator modules from the symbol image.
+        // use --release, which excludes incubator modules from the release
+        // symbol image.
         java.setSrcDirs(['src/vector/java'])
         resources.setSrcDirs([])
+    }
+    gametestPlugin {
+        // Standalone Bukkit plugin used by Forge/Fabric dedicated-server GameTests
+        // to validate end-to-end plugin loading. It is compiled into its own JAR
+        // and copied into run/plugins before the game test server starts.
+        java.setSrcDirs(['src/gametestPlugin/java'])
+        resources.setSrcDirs(['src/gametestPlugin/resources'])
     }
 }
 
@@ -75,6 +94,10 @@ dependencies {
     // it, so both loader adapters bundle it (Forge Jar-in-Jar / Fabric include).
     implementation 'org.yaml:snakeyaml:2.3'
 
+    // Gson is used by the eventGenerator source set to read the Bukkit event
+    // catalog and emit empty event shells.
+    eventGeneratorImplementation 'com.google.code.gson:gson:2.10.1'
+
     // Shaderc is a build-time tool used only by the shaderCompiler source set.
     shaderCompilerImplementation "org.lwjgl:lwjgl:${lwjglVersion}"
     shaderCompilerImplementation "org.lwjgl:lwjgl-shaderc:${lwjglVersion}"
@@ -87,6 +110,11 @@ dependencies {
     // dependency and preserves --release 21 on the main source set.
     vectorImplementation sourceSets.main.output
     testImplementation sourceSets.vector.output
+
+    // The game-test Bukkit plugin compiles against HyperCore's Bukkit stubs
+    // (org.bukkit.*) and SLF4J, but is packaged separately from the main jar.
+    gametestPluginImplementation sourceSets.main.output
+    gametestPluginImplementation 'org.slf4j:slf4j-api:2.0.13'
 
     testImplementation platform('org.junit:junit-bom:5.11.4')
     testImplementation 'org.junit.jupiter:junit-jupiter'
@@ -154,6 +182,24 @@ tasks.register('compileRadiusMaskShader', JavaExec) {
     }
 }
 
+def generatedBukkitEvents = layout.buildDirectory.dir('generated-src/bukkit-events/java')
+
+tasks.register('generateBukkitEventStubs', JavaExec) {
+    dependsOn tasks.named('compileEventGeneratorJava')
+    classpath = sourceSets.eventGenerator.runtimeClasspath
+    mainClass = 'dev.hypercore.build.BukkitEventGenerator'
+    args(
+        sourceSets.eventGenerator.resources.srcDirs.iterator().next().toPath().resolve('bukkit-events.json').toFile().absolutePath,
+        generatedBukkitEvents.get().asFile.absolutePath
+    )
+    inputs.file sourceSets.eventGenerator.resources.srcDirs.iterator().next().toPath().resolve('bukkit-events.json')
+    outputs.dir generatedBukkitEvents
+}
+
+tasks.named('compileJava').configure {
+    dependsOn tasks.named('generateBukkitEventStubs')
+}
+
 tasks.named('processResources').configure {
     dependsOn tasks.named('compileComputeShaders')
     dependsOn tasks.named('compileRadiusMaskShader')
@@ -168,6 +214,15 @@ tasks.register('benchmarkCompute', JavaExec) {
     args(layout.buildDirectory.file('reports/hypercore/compute-benchmark.md').get().asFile.absolutePath)
     jvmArgs('--add-modules', 'jdk.incubator.vector')
     outputs.upToDateWhen { false }
+}
+
+tasks.register('gametestPluginJar', Jar) {
+    dependsOn tasks.named('compileGametestPluginJava')
+    dependsOn tasks.named('processGametestPluginResources')
+    from sourceSets.gametestPlugin.output
+    archiveBaseName = 'hypercore-gametest-bukkit-plugin'
+    archiveExtension = 'jar'
+    destinationDirectory = layout.buildDirectory.dir('libs')
 }
 
 jar {

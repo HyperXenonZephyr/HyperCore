@@ -77,6 +77,21 @@ class PluginManagerTest {
         assertThrows(IllegalArgumentException.class, () -> manager.register(descriptor, new HyperPlugin() { }));
     }
 
+    @Test
+    void looksUpPluginByDisplayName() {
+        PluginManager manager = new PluginManager();
+        manager.register(new PluginDescriptor("alpha", "AlphaPlugin", "1.0"), new HyperPlugin() { });
+        manager.register(new PluginDescriptor("beta", "BetaPlugin", "1.0"), new HyperPlugin() { });
+
+        PluginManager.PluginContainer alpha = manager.getPlugin("AlphaPlugin");
+        assertEquals("alpha", alpha.descriptor().id());
+
+        PluginManager.PluginContainer beta = manager.getPlugin("betaplugin");
+        assertEquals("beta", beta.descriptor().id());
+
+        assertEquals(null, manager.getPlugin("Missing"));
+    }
+
     private static final class TestEvent implements PluginEventBus.PluginEvent {
     }
 }

@@ -92,7 +92,11 @@ repositories {
 jarJar.register()
 
 dependencies {
-    implementation project(':core')
+    // Core classes are compiled against directly, but the runtime classpath must
+    // not carry the standalone :core jar because prepareDevMod merges them into
+    // the dev-mod directory. Having both on the JPMS module path causes split-
+    // package resolution errors on Forge 1.21.1.
+    compileOnly project(':core')
     implementation minecraft.dependency("net.minecraftforge:forge:${rootProject.minecraftVersion}-${rootProject.forgeVersion}")
     implementation(jarJar("org.lwjgl:lwjgl-vulkan:${lwjglVersion}")) {
         transitive = false
@@ -142,6 +146,19 @@ tasks.register('prepareDevMod', Sync) {
 
 tasks.matching { it.name == 'runServer' || it.name == 'runGameTestServer' }.configureEach {
     dependsOn tasks.named('prepareDevMod')
+}
+
+// Copy the dedicated-server GameTest Bukkit plugin into run/plugins so the
+// external plugin loader discovers it during runServer/runGameTestServer.
+def gametestPluginJarTask = project(':core').tasks.named('gametestPluginJar')
+tasks.register('prepareGametestPlugins', Copy) {
+    dependsOn gametestPluginJarTask
+    from gametestPluginJarTask.get().archiveFile
+    into layout.projectDirectory.dir('run/plugins')
+}
+
+tasks.matching { it.name == 'runServer' || it.name == 'runGameTestServer' }.configureEach {
+    dependsOn tasks.named('prepareGametestPlugins')
 }
 
 // Production mod JAR: bundle :core's main + vector output alongside forge main

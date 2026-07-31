@@ -4,7 +4,9 @@ import fixture.external.ValidPlugin;
 import fixture.external.FailingPlugin;
 import fixture.external.ExampleBukkitPlugin;
 import dev.hypercore.plugin.compat.BukkitPluginYmlParser;
+import dev.hypercore.bukkit.BukkitServerAccess;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -27,6 +29,14 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class ExternalPluginLoaderTest {
     @TempDir
     Path temporaryDirectory;
+
+    @BeforeEach
+    void resetStaticBukkitState() {
+        // BukkitPluginAdapter installs a static server singleton; clear it so
+        // loader tests do not observe state leaked by BukkitPluginAdapterTest.
+        BukkitServerAccess.reset();
+        org.bukkit.Bukkit.setServer(null);
+    }
 
     @AfterEach
     void cleanupBukkitDataFolders() {

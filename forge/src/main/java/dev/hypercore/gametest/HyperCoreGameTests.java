@@ -34,6 +34,15 @@ public final class HyperCoreGameTests {
         helper.succeed();
     }
 
+    @GameTest(template = "forge:empty3x3x3")
+    public static void bukkitPluginLoadsAndCommandExecutes(GameTestHelper helper) {
+        // The gametest Bukkit plugin registers /hypercore-gametest. If the plugin
+        // failed to load from run/plugins, this command will not exist and the
+        // prefixed execution will throw, failing the GameTest.
+        runCommand(helper, "hypercore-gametest");
+        helper.succeed();
+    }
+
     private static void runCommand(GameTestHelper helper, String command) {
         MinecraftServer server = helper.getLevel().getServer();
         server.getCommands().performPrefixedCommand(

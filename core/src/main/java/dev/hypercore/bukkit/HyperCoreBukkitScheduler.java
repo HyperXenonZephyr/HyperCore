@@ -1,6 +1,5 @@
 package dev.hypercore.bukkit;
 
-import dev.hypercore.plugin.PluginContext;
 import dev.hypercore.plugin.PluginScheduler;
 
 import org.bukkit.plugin.Plugin;
@@ -12,51 +11,54 @@ import java.util.List;
 
 /**
  * Adapts HyperCore's {@link dev.hypercore.plugin.PluginScheduler} to the Bukkit
- * {@link BukkitScheduler} interface. The {@code Plugin} parameter on each
- * method is accepted for API compatibility but ignored — task ownership is
- * tracked by the underlying {@link PluginContext}.
+ * {@link BukkitScheduler} interface. Task ownership is derived from the
+ * {@link Plugin#getName()} passed to each method so that every Bukkit plugin
+ * only sees its own tasks cancelled.
  */
 final class HyperCoreBukkitScheduler implements BukkitScheduler {
-    private final PluginContext context;
+    private final PluginScheduler scheduler;
 
-    HyperCoreBukkitScheduler(PluginContext context) {
-        this.context = context;
+    HyperCoreBukkitScheduler(PluginScheduler scheduler) {
+        this.scheduler = scheduler;
     }
 
     @Override
     public BukkitTask runTask(Plugin plugin, Runnable task) {
-        return new TaskAdapter(context.runTask(task), plugin, true);
+        return new TaskAdapter(scheduler.runTask(pluginId(plugin), task), plugin, true);
     }
 
     @Override
     public BukkitTask runTaskLater(Plugin plugin, Runnable task, long delay) {
-        return new TaskAdapter(context.runTaskLater(delay, task), plugin, true);
+        return new TaskAdapter(scheduler.runTaskLater(pluginId(plugin), delay, task), plugin, true);
     }
 
     @Override
     public BukkitTask runTaskTimer(Plugin plugin, Runnable task, long delay, long period) {
-        return new TaskAdapter(context.runTaskTimer(delay, period, task), plugin, true);
+        return new TaskAdapter(scheduler.runTaskTimer(pluginId(plugin), delay, period, task), plugin, true);
     }
 
     @Override
     public BukkitTask runTaskAsynchronously(Plugin plugin, Runnable task) {
-        return new TaskAdapter(context.runTaskAsync(task), plugin, false);
+        return new TaskAdapter(scheduler.runTaskAsync(pluginId(plugin), task), plugin, false);
     }
 
     @Override
     public BukkitTask runTaskLaterAsynchronously(Plugin plugin, Runnable task, long delay) {
-        return new TaskAdapter(context.runTaskLaterAsync(delay, task), plugin, false);
+        return new TaskAdapter(scheduler.runTaskLaterAsync(pluginId(plugin), delay, task), plugin, false);
     }
 
     @Override
     public BukkitTask runTaskTimerAsynchronously(Plugin plugin, Runnable task, long delay, long period) {
-        return new TaskAdapter(context.runTaskTimerAsync(delay, period, task), plugin, false);
+        return new TaskAdapter(scheduler.runTaskTimerAsync(pluginId(plugin), delay, period, task), plugin, false);
     }
 
     @Override
     public void cancelTasks(Plugin plugin) {
-        // The HyperCore scheduler cancels by plugin id during plugin cleanup;
-        // this method is a no-op in the minimal shim.
+        scheduler.cancelPlugin(pluginId(plugin));
+    }
+
+    private static String pluginId(Plugin plugin) {
+        return plugin == null ? "bukkit-unknown" : plugin.getName();
     }
 
     private static final class TaskAdapter implements BukkitTask {

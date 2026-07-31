@@ -11,6 +11,7 @@ import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Optional;
 
 import static net.minecraft.commands.Commands.argument;
@@ -54,6 +55,21 @@ public final class FabricPluginCommandBridge {
         dispatcher.register(literal(label)
             .executes(context -> dispatch(plugins, label, List.of(), context.getSource()))
             .then(argument("arguments", StringArgumentType.greedyString())
+                .suggests((context, builder) -> {
+                    String remaining = builder.getRemaining();
+                    List<String> arguments = parseArgumentsQuietly(remaining);
+                    List<String> suggestions = plugins.commands().suggest(
+                        label,
+                        arguments,
+                        new FabricCommandSender(context.getSource())
+                    );
+                    for (String suggestion : suggestions) {
+                        if (suggestion.toLowerCase(Locale.ROOT).startsWith(remaining.toLowerCase(Locale.ROOT))) {
+                            builder.suggest(suggestion);
+                        }
+                    }
+                    return builder.buildFuture();
+                })
                 .executes(context -> dispatch(
                     plugins,
                     label,
@@ -87,6 +103,14 @@ public final class FabricPluginCommandBridge {
             }
         }
         return List.copyOf(arguments);
+    }
+
+    private static List<String> parseArgumentsQuietly(String input) {
+        try {
+            return parseArguments(input);
+        } catch (CommandSyntaxException error) {
+            return input.isEmpty() ? List.of() : List.of(input);
+        }
     }
 
     private record FabricCommandSender(CommandSourceStack source) implements PluginCommandSender {

@@ -1,0 +1,7 @@
+name: HyperCoreGametestBukkitPlugin
+version: '1.0.0'
+main: fixture.gametest.GametestBukkitPlugin
+commands:
+  hypercore-gametest:
+    description: HyperCore dedicated-server GameTest command
+    usage: /hypercore-gametest

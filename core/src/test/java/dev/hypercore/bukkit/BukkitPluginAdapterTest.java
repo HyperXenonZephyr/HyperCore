@@ -6,6 +6,7 @@ import dev.hypercore.plugin.PluginDescriptor;
 import dev.hypercore.plugin.PluginManager;
 import fixture.external.ExampleBukkitPlugin;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import java.io.File;
@@ -35,6 +36,15 @@ class BukkitPluginAdapterTest {
 
     private final List<File> dataFolders = new ArrayList<>();
 
+    @BeforeEach
+    void resetStaticBukkitState() {
+        // Each test constructs a fresh PluginManager; clear the shared Bukkit
+        // server singleton so the next adapter installs a server backed by the
+        // correct manager.
+        BukkitServerAccess.reset();
+        org.bukkit.Bukkit.setServer(null);
+    }
+
     @AfterEach
     void cleanupDataFolders() {
         // The adapter creates a best-effort data folder at plugins/<name>;
@@ -56,10 +66,10 @@ class BukkitPluginAdapterTest {
 
     @Test
     void runsBukkitLifecycleThroughAdapter() {
-        ExampleBukkitPlugin bukkitPlugin = new ExampleBukkitPlugin();
-        BukkitPluginAdapter adapter = newAdapter(bukkitPlugin);
-
         PluginManager manager = new PluginManager();
+        ExampleBukkitPlugin bukkitPlugin = new ExampleBukkitPlugin();
+        BukkitPluginAdapter adapter = newAdapter(bukkitPlugin, manager);
+
         manager.register(new PluginDescriptor(PLUGIN_ID, PLUGIN_NAME, "1.0"), adapter);
 
         manager.enableAll();
@@ -73,10 +83,10 @@ class BukkitPluginAdapterTest {
 
     @Test
     void injectsBukkitApiStubsIntoJavaPlugin() {
-        ExampleBukkitPlugin bukkitPlugin = new ExampleBukkitPlugin();
-        BukkitPluginAdapter adapter = newAdapter(bukkitPlugin);
-
         PluginManager manager = new PluginManager();
+        ExampleBukkitPlugin bukkitPlugin = new ExampleBukkitPlugin();
+        BukkitPluginAdapter adapter = newAdapter(bukkitPlugin, manager);
+
         manager.register(new PluginDescriptor(PLUGIN_ID, PLUGIN_NAME, "1.0"), adapter);
         manager.enableAll();
 
@@ -91,10 +101,10 @@ class BukkitPluginAdapterTest {
 
     @Test
     void dispatchesBukkitCommandViaRegistry() {
-        ExampleBukkitPlugin bukkitPlugin = new ExampleBukkitPlugin();
-        BukkitPluginAdapter adapter = newAdapter(bukkitPlugin);
-
         PluginManager manager = new PluginManager();
+        ExampleBukkitPlugin bukkitPlugin = new ExampleBukkitPlugin();
+        BukkitPluginAdapter adapter = newAdapter(bukkitPlugin, manager);
+
         manager.register(new PluginDescriptor(PLUGIN_ID, PLUGIN_NAME, "1.0"), adapter);
         manager.enableAll();
 
@@ -114,10 +124,10 @@ class BukkitPluginAdapterTest {
 
     @Test
     void dispatchesBukkitCommandWithDefaultArgument() {
-        ExampleBukkitPlugin bukkitPlugin = new ExampleBukkitPlugin();
-        BukkitPluginAdapter adapter = newAdapter(bukkitPlugin);
-
         PluginManager manager = new PluginManager();
+        ExampleBukkitPlugin bukkitPlugin = new ExampleBukkitPlugin();
+        BukkitPluginAdapter adapter = newAdapter(bukkitPlugin, manager);
+
         manager.register(new PluginDescriptor(PLUGIN_ID, PLUGIN_NAME, "1.0"), adapter);
         manager.enableAll();
 
@@ -134,10 +144,10 @@ class BukkitPluginAdapterTest {
 
     @Test
     void schedulesSyncTaskViaBukkitScheduler() {
-        ExampleBukkitPlugin bukkitPlugin = new ExampleBukkitPlugin();
-        BukkitPluginAdapter adapter = newAdapter(bukkitPlugin);
-
         PluginManager manager = new PluginManager();
+        ExampleBukkitPlugin bukkitPlugin = new ExampleBukkitPlugin();
+        BukkitPluginAdapter adapter = newAdapter(bukkitPlugin, manager);
+
         manager.register(new PluginDescriptor(PLUGIN_ID, PLUGIN_NAME, "1.0"), adapter);
         manager.enableAll();
 
@@ -155,10 +165,10 @@ class BukkitPluginAdapterTest {
 
     @Test
     void commandRegistrationSurvivesDisableCleanup() {
-        ExampleBukkitPlugin bukkitPlugin = new ExampleBukkitPlugin();
-        BukkitPluginAdapter adapter = newAdapter(bukkitPlugin);
-
         PluginManager manager = new PluginManager();
+        ExampleBukkitPlugin bukkitPlugin = new ExampleBukkitPlugin();
+        BukkitPluginAdapter adapter = newAdapter(bukkitPlugin, manager);
+
         manager.register(new PluginDescriptor(PLUGIN_ID, PLUGIN_NAME, "1.0"), adapter);
         manager.enableAll();
         assertEquals(1, manager.status().registeredCommands());
@@ -167,11 +177,27 @@ class BukkitPluginAdapterTest {
         assertEquals(0, manager.status().registeredCommands());
     }
 
-    private static BukkitPluginAdapter newAdapter(ExampleBukkitPlugin plugin) {
+    @Test
+    void exposesPluginForCrossPluginLookup() {
+        PluginManager manager = new PluginManager();
+        ExampleBukkitPlugin bukkitPlugin = new ExampleBukkitPlugin();
+        BukkitPluginAdapter adapter = newAdapter(bukkitPlugin, manager);
+
+        manager.register(new PluginDescriptor(PLUGIN_ID, PLUGIN_NAME, "1.0"), adapter);
+        manager.enableAll();
+
+        org.bukkit.plugin.Plugin found = bukkitPlugin.getServer().getPluginManager().getPlugin(PLUGIN_NAME);
+        assertEquals(bukkitPlugin, found, "Bukkit PluginManager should return the wrapped JavaPlugin by name");
+        assertEquals(bukkitPlugin, org.bukkit.Bukkit.getPluginManager().getPlugin(PLUGIN_NAME));
+
+        manager.close();
+    }
+
+    private static BukkitPluginAdapter newAdapter(ExampleBukkitPlugin plugin, PluginManager manager) {
         Map<String, Map<String, Object>> commands = Map.of(
             "greet", Map.of("description", "Greet someone", "usage", "/greet [name]")
         );
-        return new BukkitPluginAdapter(plugin, PLUGIN_NAME, commands);
+        return new BukkitPluginAdapter(plugin, PLUGIN_NAME, commands, manager);
     }
 
     private static PluginCommandSender capturingSender(

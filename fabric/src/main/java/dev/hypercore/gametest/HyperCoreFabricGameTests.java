@@ -18,7 +18,7 @@ import net.minecraft.server.MinecraftServer;
  * {@code fabric/build.gradle}; this class supplies the tests it runs.
  */
 public final class HyperCoreFabricGameTests implements FabricGameTest {
-    private HyperCoreFabricGameTests() {
+    public HyperCoreFabricGameTests() {
     }
 
     @GameTest(template = EMPTY_STRUCTURE)
@@ -41,6 +41,15 @@ public final class HyperCoreFabricGameTests implements FabricGameTest {
     @GameTest(template = EMPTY_STRUCTURE)
     public static void hyperCorePluginsCommand(GameTestHelper helper) {
         runCommand(helper, "hypercore plugins");
+        helper.succeed();
+    }
+
+    @GameTest(template = EMPTY_STRUCTURE)
+    public static void bukkitPluginLoadsAndCommandExecutes(GameTestHelper helper) {
+        // The gametest Bukkit plugin registers /hypercore-gametest. If the plugin
+        // failed to load from run/plugins, this command will not exist and the
+        // prefixed execution will throw, failing the GameTest.
+        runCommand(helper, "hypercore-gametest");
         helper.succeed();
     }
 

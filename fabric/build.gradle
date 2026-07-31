@@ -33,6 +33,7 @@ dependencies {
     mappings loom.officialMojangMappings()
     modImplementation "net.fabricmc:fabric-loader:${rootProject.fabricLoaderVersion}"
     modImplementation "net.fabricmc.fabric-api:fabric-api:${rootProject.fabricApiVersion}"
+    modImplementation "net.fabricmc.fabric-api:fabric-gametest-api-v1:${rootProject.fabricGametestApiVersion}"
 
     // core is a plain Java library (no Minecraft, no remap). Plain implementation
     // is correct — do NOT use namedElements, core has no mappings to remap.
@@ -76,6 +77,10 @@ loom {
         }
         gameTestServer {
             runDir = "run"
+            server()
+            // Fabric's GameTest mixins enable test-server mode when this system
+            // property is present and skip the EULA / server.properties checks.
+            vmArg "-Dfabric-api.gametest"
             vmArg "--add-modules"
             vmArg "jdk.incubator.vector"
         }
@@ -95,6 +100,19 @@ tasks.withType(JavaCompile).configureEach {
 
 tasks.named('test', Test).configure {
     useJUnitPlatform()
+}
+
+// Copy the dedicated-server GameTest Bukkit plugin into run/plugins so the
+// external plugin loader discovers it during runServer/runGameTestServer.
+def gametestPluginJarTask = project(':core').tasks.named('gametestPluginJar')
+tasks.register('prepareGametestPlugins', Copy) {
+    dependsOn gametestPluginJarTask
+    from gametestPluginJarTask.get().archiveFile
+    into layout.projectDirectory.dir('run/plugins')
+}
+
+tasks.matching { it.name == 'runServer' || it.name == 'runGameTestServer' }.configureEach {
+    dependsOn tasks.named('prepareGametestPlugins')
 }
 
 // Expand the mod version into fabric.mod.json.

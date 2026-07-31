@@ -1,26 +1,25 @@
 package dev.hypercore.bukkit;
 
-import dev.hypercore.plugin.PluginContext;
+import dev.hypercore.plugin.PluginManager;
 
 import org.bukkit.Server;
-import org.bukkit.plugin.PluginManager;
 import org.bukkit.scheduler.BukkitScheduler;
 
 import java.util.logging.Logger;
 
 /**
  * Implements the Bukkit {@link Server} interface by delegating scheduler and
- * plugin-manager calls back to the HyperCore {@link PluginContext}. A new
- * instance is created per plugin lifecycle by {@link BukkitPluginAdapter}.
+ * plugin-manager calls to the HyperCore {@link PluginManager}. A single shared
+ * instance is used for every Bukkit plugin loaded into the runtime.
  */
 final class HyperCoreBukkitServer implements Server {
     private final BukkitScheduler scheduler;
-    private final PluginManager pluginManager;
+    private final org.bukkit.plugin.PluginManager pluginManager;
     private final Logger logger;
 
-    HyperCoreBukkitServer(PluginContext context) {
-        this.scheduler = new HyperCoreBukkitScheduler(context);
-        this.pluginManager = new HyperCoreBukkitPluginManager(context);
+    HyperCoreBukkitServer(PluginManager plugins) {
+        this.scheduler = new HyperCoreBukkitScheduler(plugins.scheduler());
+        this.pluginManager = new HyperCoreBukkitPluginManager(plugins);
         this.logger = Logger.getLogger("HyperCore");
     }
 
@@ -40,7 +39,7 @@ final class HyperCoreBukkitServer implements Server {
     }
 
     @Override
-    public PluginManager getPluginManager() {
+    public org.bukkit.plugin.PluginManager getPluginManager() {
         return pluginManager;
     }
 

@@ -2,6 +2,7 @@ package dev.hypercore.bukkit;
 
 import dev.hypercore.plugin.HyperPlugin;
 import dev.hypercore.plugin.PluginContext;
+import dev.hypercore.plugin.PluginManager;
 
 import org.bukkit.Bukkit;
 import org.bukkit.command.PluginCommand;
@@ -38,33 +39,36 @@ public final class BukkitPluginAdapter implements HyperPlugin {
     private final JavaPlugin plugin;
     private final String pluginName;
     private final Map<String, Map<String, Object>> commandsMap;
+    private final PluginManager pluginManager;
 
     private HyperCoreBukkitServer server;
     private Map<String, PluginCommand> pluginCommands;
 
     /**
-     * @param plugin      the instantiated JavaPlugin (main class from plugin.yml)
-     * @param pluginName  the display name (Bukkit {@code name} field)
-     * @param commandsMap the raw commands map from plugin.yml (may be empty)
+     * @param plugin        the instantiated JavaPlugin (main class from plugin.yml)
+     * @param pluginName    the display name (Bukkit {@code name} field)
+     * @param commandsMap   the raw commands map from plugin.yml (may be empty)
+     * @param pluginManager the HyperCore plugin manager that owns this adapter
      */
     public BukkitPluginAdapter(
         JavaPlugin plugin,
         String pluginName,
-        Map<String, Map<String, Object>> commandsMap
+        Map<String, Map<String, Object>> commandsMap,
+        PluginManager pluginManager
     ) {
         this.plugin = Objects.requireNonNull(plugin, "plugin");
         this.pluginName = Objects.requireNonNull(pluginName, "pluginName");
         this.commandsMap = Objects.requireNonNullElse(commandsMap, Map.of());
+        this.pluginManager = Objects.requireNonNull(pluginManager, "pluginManager");
     }
 
     @Override
     public void onLoad(PluginContext context) {
-        server = new HyperCoreBukkitServer(context);
+        server = BukkitServerAccess.acquire(pluginManager);
         pluginCommands = createPluginCommands();
 
         File dataFolder = new File("plugins", pluginName);
         if (!dataFolder.exists() && !dataFolder.mkdirs()) {
-            context.descriptor();
             // Data folder creation is best-effort; the plugin can still load.
         }
 
@@ -93,6 +97,13 @@ public final class BukkitPluginAdapter implements HyperPlugin {
     public void onDisable(PluginContext context) {
         plugin.fireOnDisable();
         plugin.setEnabled(false);
+    }
+
+    /**
+     * Returns the wrapped {@link JavaPlugin} instance.
+     */
+    JavaPlugin plugin() {
+        return plugin;
     }
 
     private Map<String, PluginCommand> createPluginCommands() {

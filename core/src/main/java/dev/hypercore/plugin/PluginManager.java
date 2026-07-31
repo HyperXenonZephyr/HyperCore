@@ -123,6 +123,47 @@ public final class PluginManager implements AutoCloseable {
         return scheduler;
     }
 
+    /**
+     * Lifecycle callback used by adapter layers (such as the Bukkit bridge) to
+     * observe plugin state changes without creating a compile dependency from
+     * core to those layers.
+     */
+    public interface LifecycleCallback {
+        void onLoad(PluginDescriptor descriptor, HyperPlugin plugin);
+
+        void onEnable(PluginDescriptor descriptor, HyperPlugin plugin);
+
+        void onDisable(PluginDescriptor descriptor, HyperPlugin plugin);
+    }
+
+    private LifecycleCallback lifecycleCallback;
+
+    public void setLifecycleCallback(LifecycleCallback callback) {
+        this.lifecycleCallback = callback;
+    }
+
+    public synchronized List<PluginContainer> getPluginContainers() {
+        return List.copyOf(plugins.values());
+    }
+
+    /**
+     * Looks up a plugin by its display name. Bukkit-style plugins are usually
+     * referenced by name rather than id, so this supports cross-plugin lookup
+     * from adapter layers.
+     *
+     * @param name the plugin display name (case-insensitive)
+     * @return the matching container, or {@code null} if none is found
+     */
+    public synchronized PluginContainer getPlugin(String name) {
+        String normalized = PluginPermissionService.normalizePluginId(name);
+        for (PluginContainer container : plugins.values()) {
+            if (PluginPermissionService.normalizePluginId(container.descriptor().name()).equals(normalized)) {
+                return container;
+            }
+        }
+        return null;
+    }
+
     public synchronized boolean contains(String pluginId) {
         return plugins.containsKey(PluginPermissionService.normalizePluginId(pluginId));
     }
@@ -147,6 +188,10 @@ public final class PluginManager implements AutoCloseable {
         try {
             container.context().runWithContext(() -> container.plugin().onLoad(container.context()));
             container.state(PluginState.LOADED);
+            LifecycleCallback callback = lifecycleCallback;
+            if (callback != null) {
+                callback.onLoad(container.descriptor(), container.plugin());
+            }
         } catch (RuntimeException error) {
             fail(container, "load", error);
         }
@@ -156,13 +201,21 @@ public final class PluginManager implements AutoCloseable {
         try {
             container.context().runWithContext(() -> container.plugin().onEnable(container.context()));
             container.state(PluginState.ENABLED);
+            LifecycleCallback callback = lifecycleCallback;
+            if (callback != null) {
+                callback.onEnable(container.descriptor(), container.plugin());
+            }
         } catch (RuntimeException error) {
             fail(container, "enable", error);
         }
     }
 
     private void disable(PluginContainer container) {
+        LifecycleCallback callback = lifecycleCallback;
         if (container.state() == PluginState.ENABLED) {
+            if (callback != null) {
+                callback.onDisable(container.descriptor(), container.plugin());
+            }
             try {
                 container.context().runWithContext(() -> container.plugin().onDisable(container.context()));
             } catch (RuntimeException error) {
@@ -196,7 +249,32 @@ public final class PluginManager implements AutoCloseable {
         FAILED
     }
 
-    private static final class PluginContainer {
+
+
+    public record Status(
+        int registeredPlugins,
+        int externalPlugins,
+        int enabledPlugins,
+        int failedPlugins,
+        int registeredCommands,
+        int registeredPermissions,
+        int registeredListeners,
+        int scheduledTasks,
+        long completedScheduledTasks,
+        long failedScheduledTasks,
+        long cancelledScheduledTasks
+    ) {
+    }
+
+    record RegistrationResult(boolean successful, String state) {
+    }
+
+    /**
+     * Snapshot of a registered plugin. Exposed so that adapter layers can
+     * enumerate plugins without direct map access. The state field is mutable
+     * because the manager transitions plugins through their lifecycle.
+     */
+    public static final class PluginContainer {
         private final PluginDescriptor descriptor;
         private final HyperPlugin plugin;
         private final PluginContext context;
@@ -217,19 +295,19 @@ public final class PluginManager implements AutoCloseable {
             this.external = external;
         }
 
-        private PluginDescriptor descriptor() {
+        public PluginDescriptor descriptor() {
             return descriptor;
         }
 
-        private HyperPlugin plugin() {
+        public HyperPlugin plugin() {
             return plugin;
         }
 
-        private PluginContext context() {
+        public PluginContext context() {
             return context;
         }
 
-        private PluginState state() {
+        public PluginState state() {
             return state;
         }
 
@@ -237,26 +315,8 @@ public final class PluginManager implements AutoCloseable {
             this.state = state;
         }
 
-        private boolean external() {
+        public boolean external() {
             return external;
         }
-    }
-
-    public record Status(
-        int registeredPlugins,
-        int externalPlugins,
-        int enabledPlugins,
-        int failedPlugins,
-        int registeredCommands,
-        int registeredPermissions,
-        int registeredListeners,
-        int scheduledTasks,
-        long completedScheduledTasks,
-        long failedScheduledTasks,
-        long cancelledScheduledTasks
-    ) {
-    }
-
-    record RegistrationResult(boolean successful, String state) {
     }
 }
