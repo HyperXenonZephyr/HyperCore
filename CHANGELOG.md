@@ -99,6 +99,13 @@ All notable changes to HyperCore are documented in this file. The format is base
 - Added Bukkit adapter implementations `HyperCoreWorld`, `HyperCoreBlock`, `HyperCoreBlockState`, `HyperCoreEntity`, and `HyperCorePlayer` that bridge `org.bukkit.*` calls to `RegionExecutionService`.
 - Wired `Bukkit.getWorld(name)` and `Bukkit.getWorlds()` to `RegionExecutionService` via `BukkitServerAccess`, exposing loaded dimensions to Bukkit plugins once the loader adapter registers the real world factory.
 - Extended `GametestBukkitPlugin` and both Forge/Fabric GameTest suites with `bukkitWorldBlockAndEntityApis` to verify block set/read, `BlockState` update, entity spawn, `World.getEntities()`, and same-region entity teleport in real dedicated servers.
+- Added Bukkit inventory and item-stack API conformance: `BlockState.getInventory()`, `Inventory` set/read, `ItemStack` durability and amount handling, and `ForgeItemStack`/`FabricItemStack` wrappers that preserve native NBT and map materials bidirectionally.
+- Added `bukkitInventoryApi` GameTests to both Forge and Fabric dedicated-server suites, verifying chest block-entity inventory write/read through the Bukkit API.
+- Implemented true multi-core region-parallel execution: `RegionTaskCoordinator.advanceTick(activeRegions, task, execution)` groups active regions by logical owner lane and dispatches owner batches across the HyperCore worker pool, while each region remains serialized under its write lock.
+- Added `RegionExecutionService.tickRegions(RegionTickTask)` to drive a full parallel region tick from the loader adapter tick boundary.
+- Added internal world/block/entity events (`BlockPlaceEvent`, `BlockBreakEvent`, `EntitySpawnEvent`, `PlayerMoveEvent`, `PlayerJoinEvent`) and wired them through `BukkitEventBridge` so HyperCore mutations produce Bukkit events and Bukkit listener cancellations propagate back to abort the mutation.
+- Added `bukkitEventBridge` and `regionParallelExecution` GameTests to both Forge and Fabric suites, verifying event firing/cancellation and multi-owner region ticks in real dedicated servers.
+- Exposed the installed `RegionExecutionService` through `BukkitServerAccess.regionExecution()` so HyperCore-aware integration tests can drive the region coordinator directly.
 
 ### Fixed
 
@@ -110,3 +117,4 @@ All notable changes to HyperCore are documented in this file. The format is base
 - Reset shared Bukkit server singleton state between unit tests so `BukkitPluginAdapterTest` and `ExternalPluginLoaderTest` do not leak static state across test cases.
 - Fixed a Forge dev-run JPMS split-package conflict by changing `:core` from `implementation` to `compileOnly` in `:forge`; `prepareDevMod` already merges core classes into the dev-mod directory, so the standalone core jar no longer needs to be on the module path.
 - Added the `fabric-gametest-api-v1` dependency and configured the Loom `gameTestServer` run config (server environment, `-Dfabric-api.gametest`, and `run/plugins` staging) so Fabric dedicated-server GameTests execute correctly.
+- Rewrote the `regionParallelExecution` GameTest to validate multi-owner region ticks through `RegionExecutionService.tickRegions(...)` instead of issuing Bukkit `Block.setType` calls from custom worker threads, avoiding unsafe off-server-thread Minecraft world access.

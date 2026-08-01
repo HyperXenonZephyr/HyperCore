@@ -1,6 +1,9 @@
 package dev.hypercore.world;
 
+import dev.hypercore.region.RegionKey;
+
 import java.util.Collection;
+import java.util.List;
 
 /**
  * Creates {@link WorldAccess} handles for loaded worlds.
@@ -22,4 +25,13 @@ public interface WorldAccessFactory {
      * Returns the names of all currently loaded worlds.
      */
     Collection<String> worldNames();
+
+    /**
+     * Returns the region keys that are currently loaded. The default
+     * implementation returns an empty list; loader-specific factories can
+     * override it to report loaded chunks.
+     */
+    default Collection<RegionKey> loadedRegions(int regionSizeChunks) {
+        return List.of();
+    }
 }

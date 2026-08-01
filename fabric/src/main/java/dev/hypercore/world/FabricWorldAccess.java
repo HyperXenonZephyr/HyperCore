@@ -273,14 +273,17 @@ public final class FabricWorldAccess implements WorldAccess {
         if (bukkitStack == null || bukkitStack.isEmpty()) {
             return ItemStack.EMPTY;
         }
+        if (bukkitStack instanceof FabricItemStack fabricStack) {
+            return fabricStack.toMinecraft();
+        }
         return new ItemStack(toItem(bukkitStack.getType()), bukkitStack.getAmount());
     }
 
     static org.bukkit.inventory.ItemStack toBukkit(ItemStack mcStack) {
-        if (mcStack.isEmpty()) {
+        if (mcStack == null || mcStack.isEmpty()) {
             return null;
         }
-        return new org.bukkit.inventory.ItemStack(toMaterial(mcStack.getItem()), mcStack.getCount());
+        return new FabricItemStack(mcStack);
     }
 
     @SuppressWarnings("unchecked")

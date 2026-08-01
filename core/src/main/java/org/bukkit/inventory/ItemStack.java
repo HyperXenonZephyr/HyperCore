@@ -85,6 +85,33 @@ public class ItemStack implements Cloneable {
         return type == other.type;
     }
 
+    /**
+     * Returns the damage value of this item stack.
+     *
+     * <p>Stub: real Bukkit returns the item's durability/damage meta.
+     */
+    public short getDurability() {
+        return 0;
+    }
+
+    /**
+     * Sets the damage value of this item stack.
+     *
+     * <p>Stub: real Bukkit updates the item's durability/damage meta.
+     */
+    public void setDurability(short durability) {
+        // No-op in this minimal stub.
+    }
+
+    /**
+     * Returns the maximum stack size for this item's material.
+     *
+     * <p>Stub: real Bukkit queries the material's max stack size.
+     */
+    public int getMaxStackSize() {
+        return 64;
+    }
+
     @Override
     public ItemStack clone() {
         try {

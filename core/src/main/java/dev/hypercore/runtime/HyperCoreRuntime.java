@@ -62,7 +62,7 @@ public final class HyperCoreRuntime implements AutoCloseable {
             new TickMetrics(settings.tickSampleWindow()),
             capabilities,
             regionTasks,
-            new RegionExecutionService(new NoOpWorldAccessFactory(), regionTasks),
+            new RegionExecutionService(new NoOpWorldAccessFactory(), regionTasks, plugins.events()),
             vulkan,
             gpuOffloadPolicy,
             computeBackend,
@@ -103,7 +103,7 @@ public final class HyperCoreRuntime implements AutoCloseable {
      */
     public synchronized void registerWorldAccessFactory(WorldAccessFactory factory) {
         State current = requireState();
-        RegionExecutionService execution = new RegionExecutionService(factory, current.regionTasks());
+        RegionExecutionService execution = new RegionExecutionService(factory, current.regionTasks(), plugins.events());
         BukkitServerAccess.installRegionExecution(execution);
         state = new State(
             current.executor(),

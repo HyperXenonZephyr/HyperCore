@@ -7,8 +7,10 @@ import dev.hypercore.compute.AdaptiveSpatialComputeBackend;
 import dev.hypercore.config.HyperCoreConfig;
 import dev.hypercore.hardware.RuntimeCapabilities;
 import dev.hypercore.plugin.ForgePluginCommandBridge;
+import dev.hypercore.region.RegionTaskCoordinator;
 import dev.hypercore.runtime.HyperCoreRuntime;
 import dev.hypercore.world.ForgeWorldAccessFactory;
+import dev.hypercore.world.WorldRegionTickTask;
 import net.minecraftforge.common.MinecraftForge;
 import net.minecraftforge.event.RegisterCommandsEvent;
 import net.minecraftforge.event.TickEvent;
@@ -104,7 +106,10 @@ public final class HyperCore {
             runtime.plugins().scheduler().tick();
         } else {
             runtime.tickMetrics().endTick();
-            runtime.regionTasks().dispatchPendingTick().ifPresent(future -> future.thenAccept(result -> {
+            try {
+                RegionTaskCoordinator.TickResult result = runtime.regionExecution()
+                    .tickRegions(new WorldRegionTickTask())
+                    .join();
                 if (!result.complete()) {
                     LOGGER.warn(
                         "Region tick {} completed partially: failed={}, requeued={}",
@@ -113,7 +118,9 @@ public final class HyperCore {
                         result.requeuedMessages()
                     );
                 }
-            }));
+            } catch (RuntimeException error) {
+                LOGGER.error("Region tick failed", error);
+            }
         }
     }
 

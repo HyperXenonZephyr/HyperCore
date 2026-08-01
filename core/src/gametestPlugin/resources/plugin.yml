@@ -4,4 +4,4 @@ main: fixture.gametest.GametestBukkitPlugin
 commands:
   hypercore-gametest:
     description: HyperCore dedicated-server GameTest command
-    usage: /hypercore-gametest
+    usage: /hypercore-gametest [block|entity|inventory|event|parallel]

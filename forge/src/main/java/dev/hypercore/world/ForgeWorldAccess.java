@@ -274,14 +274,17 @@ public final class ForgeWorldAccess implements WorldAccess {
         if (bukkitStack == null || bukkitStack.isEmpty()) {
             return ItemStack.EMPTY;
         }
+        if (bukkitStack instanceof ForgeItemStack forgeStack) {
+            return forgeStack.toMinecraft();
+        }
         return new ItemStack(toItem(bukkitStack.getType()), bukkitStack.getAmount());
     }
 
     static org.bukkit.inventory.ItemStack toBukkit(ItemStack mcStack) {
-        if (mcStack.isEmpty()) {
+        if (mcStack == null || mcStack.isEmpty()) {
             return null;
         }
-        return new org.bukkit.inventory.ItemStack(toMaterial(mcStack.getItem()), mcStack.getCount());
+        return new ForgeItemStack(mcStack);
     }
 
     @SuppressWarnings("unchecked")

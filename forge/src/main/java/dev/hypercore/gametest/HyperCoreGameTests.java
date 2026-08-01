@@ -57,6 +57,26 @@ public final class HyperCoreGameTests {
         helper.succeed();
     }
 
+    @GameTest(template = "forge:empty3x3x3")
+    public static void bukkitInventoryApi(GameTestHelper helper) {
+        BlockPos blockPos = helper.absolutePos(new BlockPos(1, 1, 1));
+        runCommand(helper, "hypercore-gametest inventory " + blockPos.getX() + " " + blockPos.getY() + " " + blockPos.getZ());
+        helper.succeed();
+    }
+
+    @GameTest(template = "forge:empty3x3x3")
+    public static void bukkitEventBridge(GameTestHelper helper) {
+        BlockPos blockPos = helper.absolutePos(new BlockPos(1, 1, 1));
+        runCommand(helper, "hypercore-gametest event " + blockPos.getX() + " " + blockPos.getY() + " " + blockPos.getZ());
+        helper.succeed();
+    }
+
+    @GameTest(template = "forge:empty3x3x3")
+    public static void regionParallelExecution(GameTestHelper helper) {
+        runCommand(helper, "hypercore-gametest parallel 4");
+        helper.succeed();
+    }
+
     private static void runCommand(GameTestHelper helper, String command) {
         MinecraftServer server = helper.getLevel().getServer();
         CommandSourceStack source = server.createCommandSourceStack().withPermission(2);

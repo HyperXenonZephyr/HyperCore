@@ -2,6 +2,7 @@ package org.bukkit.block;
 
 import org.bukkit.Material;
 import org.bukkit.World;
+import org.bukkit.inventory.Inventory;
 
 /**
  * Minimal stub of the Bukkit {@code BlockState} interface.
@@ -67,5 +68,13 @@ public interface BlockState {
             return false;
         }
         return update();
+    }
+
+    /**
+     * Returns the inventory of the block entity at this block, or {@code null}
+     * if the block is not a container.
+     */
+    default Inventory getInventory() {
+        return null;
     }
 }

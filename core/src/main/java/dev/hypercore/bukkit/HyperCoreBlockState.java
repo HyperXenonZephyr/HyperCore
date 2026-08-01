@@ -60,4 +60,9 @@ public final class HyperCoreBlockState implements BlockState {
         block.setType(type);
         return true;
     }
+
+    @Override
+    public org.bukkit.inventory.Inventory getInventory() {
+        return block.getInventory();
+    }
 }

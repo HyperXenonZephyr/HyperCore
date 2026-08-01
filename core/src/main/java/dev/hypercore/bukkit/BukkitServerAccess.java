@@ -46,6 +46,17 @@ public final class BukkitServerAccess {
     }
 
     /**
+     * Returns the currently installed region execution service, or {@code null}
+     * if no loader adapter has registered a world access factory yet.
+     *
+     * <p>Intended for HyperCore-aware integration tests that need to drive the
+     * region task coordinator directly without relying on the server tick loop.
+     */
+    public static RegionExecutionService regionExecution() {
+        return REGION_EXECUTION.get();
+    }
+
+    /**
      * Returns the currently installed shared server, or {@code null} if none has
      * been acquired yet.
      */

@@ -6,6 +6,7 @@ import org.bukkit.Material;
 import org.bukkit.World;
 import org.bukkit.block.Block;
 import org.bukkit.block.BlockState;
+import org.bukkit.inventory.Inventory;
 
 import java.util.Objects;
 
@@ -61,5 +62,12 @@ public final class HyperCoreBlock implements Block {
     @Override
     public BlockState getState() {
         return new HyperCoreBlockState(this, getType());
+    }
+
+    /**
+     * Returns the inventory of the block entity at these coordinates.
+     */
+    public Inventory getInventory() {
+        return execution.getBlockInventory(worldName, x, y, z);
     }
 }

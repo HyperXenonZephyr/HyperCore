@@ -146,8 +146,11 @@ public final class HyperCoreCommands {
 
     private static int showRegions(CommandSourceStack source, HyperCoreRuntime runtime) {
         RegionTaskCoordinator.Status status = runtime.regionTasks().status();
+        int activeRegions = runtime.regionExecution().pendingActiveRegions();
         source.sendSuccess(() -> Component.literal(
             "Region owners=" + status.owners()
+                + " | activeRegions=" + activeRegions
+                + " | estimatedParallelism=" + Math.min(status.owners(), Math.max(1, activeRegions))
                 + " | queued=" + status.queuedMessages()
                 + " | inFlight=" + status.tickInFlight()
                 + " | messages=" + status.executedMessages() + "/" + status.submittedMessages()

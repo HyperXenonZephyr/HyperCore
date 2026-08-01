@@ -7,8 +7,10 @@ import dev.hypercore.compute.AdaptiveSpatialComputeBackend;
 import dev.hypercore.config.FabricConfigLoader;
 import dev.hypercore.hardware.RuntimeCapabilities;
 import dev.hypercore.plugin.FabricPluginCommandBridge;
+import dev.hypercore.region.RegionTaskCoordinator;
 import dev.hypercore.runtime.HyperCoreRuntime;
 import dev.hypercore.world.FabricWorldAccessFactory;
+import dev.hypercore.world.WorldRegionTickTask;
 import net.fabricmc.api.DedicatedServerModInitializer;
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
@@ -115,7 +117,10 @@ public final class HyperCoreFabric implements DedicatedServerModInitializer {
             return;
         }
         runtime.tickMetrics().endTick();
-        runtime.regionTasks().dispatchPendingTick().ifPresent(future -> future.thenAccept(result -> {
+        try {
+            RegionTaskCoordinator.TickResult result = runtime.regionExecution()
+                .tickRegions(new WorldRegionTickTask())
+                .join();
             if (!result.complete()) {
                 LOGGER.warn(
                     "Region tick {} completed partially: failed={}, requeued={}",
@@ -124,7 +129,9 @@ public final class HyperCoreFabric implements DedicatedServerModInitializer {
                     result.requeuedMessages()
                 );
             }
-        }));
+        } catch (RuntimeException error) {
+            LOGGER.error("Region tick failed", error);
+        }
     }
 
     private void onServerStopping(MinecraftServer server) {
