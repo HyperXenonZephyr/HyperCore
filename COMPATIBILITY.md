@@ -18,9 +18,13 @@ This matrix describes tested behavior, not aspirational API coverage. `HyperCore
 | Per-plugin class-loader isolation | Implemented | Implemented | Child-first loaders with protected server/API namespaces delegated to the parent. `org.bukkit.*` resolves from the parent. |
 | Hard and soft dependency ordering | Implemented | Prototype | `plugin.yml` `depend`/`softdepend` are translated and ordered alongside HyperCore SPI dependencies. |
 | `plugin.yml` discovery | Implemented | Prototype | Parsed by `BukkitPluginYmlParser` into an `ExternalPluginDescriptor` plus a commands map. |
-| `org.bukkit.*` namespace | N/A | Prototype | Minimal stubs (`JavaPlugin`, `Server`, `Bukkit`, `PluginCommand`, `CommandSender`, `BukkitScheduler`, `FileConfiguration`) are shipped in `:core`. Not binary-compatible with real Bukkit/Paper. |
+| `org.bukkit.*` namespace | N/A | Prototype | Minimal stubs (`JavaPlugin`, `Server`, `Bukkit`, `World`, `Block`, `BlockState`, `Entity`, `Player`, `PluginCommand`, `CommandSender`, `BukkitScheduler`, `FileConfiguration`) are shipped in `:core`. Not binary-compatible with real Bukkit/Paper. |
 | Tab completion | Implemented | Prototype | `TabCompleter` is wired through `CommandDefinition` and integrated with Brigadier suggestions on Forge/Fabric. |
 | Cross-plugin lookups | N/A | Prototype | `PluginManager` indexes plugins by display name; `HyperCoreBukkitPluginManager.getPlugin(name)` returns the wrapped `JavaPlugin`. |
+| `World.getBlockAt`, `Block.getType`, `Block.setType` | N/A | Prototype | Backed by `RegionExecutionService` and `WorldAccess`; mutations run under the region lock. Verified in Forge/Fabric GameTests. |
+| `Block.getState`, `BlockState.setType`, `BlockState.update` | N/A | Prototype | Snapshot writes back through the originating `HyperCoreBlock`; verified in Forge/Fabric GameTests. |
+| `World.spawnEntity`, `World.getEntities`, `Entity.teleport` | N/A | Prototype | Spawn and same-region teleport run under the region lock; `getEntities` delegates to the loaded `ServerLevel`. Verified in Forge/Fabric GameTests with zombies. |
+| Player inventory, item meta, block-entity inventory, entity AI | N/A | Not supported | No compatibility claim is made. |
 | Paper-only API and Folia scheduler API | Not supported | Not supported | No compatibility claim is made. |
 
 ## Forge and Runtime
@@ -42,5 +46,6 @@ The Bukkit/Paper adapter is currently a `Prototype`. It will not be marked `Comp
 1. ~~A versioned Bukkit-facing API namespace and `plugin.yml` descriptor translator.~~ Done — `BukkitPluginYmlParser` translates `plugin.yml` into the HyperCore SPI descriptor.
 2. ~~Bukkit-aware class loading and deterministic dependency ordering beyond the implemented HyperCore SPI loader.~~ Done — `plugin.yml` JARs use the same child-first loader and dependency ordering as HyperCore SPI plugins.
 3. Scheduler, command, permission, and event conformance tests against selected reference plugins. Partial — scheduler, command, lifecycle, tab completion, permission children, and cross-plugin lookup paths are unit-tested with an `ExampleBukkitPlugin` fixture; event and permission conformance against real reference plugins is pending.
-4. A per-plugin test matrix covering startup, reload rejection, shutdown cleanup, and Forge/Fabric mod coexistence. Partial — startup, command dispatch, scheduling, shutdown cleanup, and cross-plugin lookup are covered; reload rejection and Forge/Fabric mod coexistence are pending.
+4. A per-plugin test matrix covering startup, reload rejection, shutdown cleanup, and Forge/Fabric mod coexistence. Partial — startup, command dispatch, scheduling, shutdown cleanup, cross-plugin lookup, world block read/write, `BlockState` update, entity spawn, and entity teleport are covered; reload rejection and Forge/Fabric mod coexistence are pending.
 5. Dedicated-server GameTests and end-to-end behavior checks without unsupported thread access. Done — both Forge and Fabric `runGameTestServer` load a dedicated test Bukkit plugin from `run/plugins` and verify its command executes in a real server.
+6. World, block, block-entity, inventory, and entity mutation API conformance. Partial — `World.getBlockAt`, `Block.getType`/`setType`, `BlockState.update`, `World.spawnEntity`, `World.getEntities`, and `Entity.teleport` are implemented and verified in Forge/Fabric GameTests; inventories, item meta, block-entity data, and advanced entity APIs are not supported.

@@ -5,12 +5,16 @@ import dev.hypercore.compute.CpuBackendSelector;
 import dev.hypercore.compute.GpuOffloadPolicy;
 import dev.hypercore.compute.SpatialComputeBackend;
 import dev.hypercore.compute.SpatialQueryEngine;
+import dev.hypercore.bukkit.BukkitServerAccess;
 import dev.hypercore.concurrent.HyperCoreExecutor;
 import dev.hypercore.config.HyperCoreSettings;
 import dev.hypercore.hardware.RuntimeCapabilities;
 import dev.hypercore.hardware.VulkanRuntimeProbe;
 import dev.hypercore.metrics.TickMetrics;
 import dev.hypercore.region.RegionTaskCoordinator;
+import dev.hypercore.world.NoOpWorldAccessFactory;
+import dev.hypercore.world.RegionExecutionService;
+import dev.hypercore.world.WorldAccessFactory;
 import dev.hypercore.plugin.PluginManager;
 import dev.hypercore.plugin.ExternalPluginLoader;
 
@@ -52,11 +56,13 @@ public final class HyperCoreRuntime implements AutoCloseable {
         if (externalPlugins != null) {
             externalPlugins.load();
         }
+        RegionTaskCoordinator regionTasks = new RegionTaskCoordinator(executor, workers);
         state = new State(
             executor,
             new TickMetrics(settings.tickSampleWindow()),
             capabilities,
-            new RegionTaskCoordinator(executor, workers),
+            regionTasks,
+            new RegionExecutionService(new NoOpWorldAccessFactory(), regionTasks),
             vulkan,
             gpuOffloadPolicy,
             computeBackend,
@@ -84,6 +90,33 @@ public final class HyperCoreRuntime implements AutoCloseable {
 
     public RegionTaskCoordinator regionTasks() {
         return requireState().regionTasks();
+    }
+
+    public RegionExecutionService regionExecution() {
+        return requireState().regionExecution();
+    }
+
+    /**
+     * Registers the real world access factory provided by the loader adapter.
+     * Must be called after {@link #start(HyperCoreSettings, Path)} and before
+     * any Bukkit plugin tries to access worlds.
+     */
+    public synchronized void registerWorldAccessFactory(WorldAccessFactory factory) {
+        State current = requireState();
+        RegionExecutionService execution = new RegionExecutionService(factory, current.regionTasks());
+        BukkitServerAccess.installRegionExecution(execution);
+        state = new State(
+            current.executor(),
+            current.tickMetrics(),
+            current.capabilities(),
+            current.regionTasks(),
+            execution,
+            current.vulkan(),
+            current.gpuOffloadPolicy(),
+            current.computeBackend(),
+            current.spatialQueries(),
+            current.externalPlugins()
+        );
     }
 
     public PluginManager plugins() {
@@ -161,6 +194,7 @@ public final class HyperCoreRuntime implements AutoCloseable {
         TickMetrics tickMetrics,
         RuntimeCapabilities capabilities,
         RegionTaskCoordinator regionTasks,
+        RegionExecutionService regionExecution,
         VulkanRuntimeProbe.Result vulkan,
         GpuOffloadPolicy gpuOffloadPolicy,
         AdaptiveSpatialComputeBackend computeBackend,

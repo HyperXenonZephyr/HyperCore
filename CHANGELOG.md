@@ -94,6 +94,11 @@ All notable changes to HyperCore are documented in this file. The format is base
 - Added a dedicated-server GameTest Bukkit plugin (`GametestBukkitPlugin`) in a new `:core` `gametestPlugin` source set, packaged into `hypercore-gametest-bukkit-plugin.jar`, and copied into `run/plugins` before Forge and Fabric `runGameTestServer` tasks.
 - Added `bukkitPluginLoadsAndCommandExecutes` GameTest methods to both Forge and Fabric test suites that verify the test Bukkit plugin is discovered, loaded, and its `/hypercore-gametest` command executes in a real dedicated server.
 - Fixed plugin-command registration timing in Forge and Fabric so commands defined by Bukkit plugins loaded during server startup are registered with the live Brigadier dispatcher after `RegisterCommandsEvent` / `CommandRegistrationCallback` has fired.
+- Added a loader-agnostic `WorldAccess` abstraction and a region-locked `RegionExecutionService` so Bukkit world/block/entity APIs execute through HyperCore's ownership model.
+- Added `ForgeWorldAccess` and `FabricWorldAccess` implementations that delegate block, entity, inventory, and player lookups to the running Minecraft `ServerLevel`.
+- Added Bukkit adapter implementations `HyperCoreWorld`, `HyperCoreBlock`, `HyperCoreBlockState`, `HyperCoreEntity`, and `HyperCorePlayer` that bridge `org.bukkit.*` calls to `RegionExecutionService`.
+- Wired `Bukkit.getWorld(name)` and `Bukkit.getWorlds()` to `RegionExecutionService` via `BukkitServerAccess`, exposing loaded dimensions to Bukkit plugins once the loader adapter registers the real world factory.
+- Extended `GametestBukkitPlugin` and both Forge/Fabric GameTest suites with `bukkitWorldBlockAndEntityApis` to verify block set/read, `BlockState` update, entity spawn, `World.getEntities()`, and same-region entity teleport in real dedicated servers.
 
 ### Fixed
 

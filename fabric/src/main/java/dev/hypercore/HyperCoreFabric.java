@@ -8,6 +8,7 @@ import dev.hypercore.config.FabricConfigLoader;
 import dev.hypercore.hardware.RuntimeCapabilities;
 import dev.hypercore.plugin.FabricPluginCommandBridge;
 import dev.hypercore.runtime.HyperCoreRuntime;
+import dev.hypercore.world.FabricWorldAccessFactory;
 import net.fabricmc.api.DedicatedServerModInitializer;
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
@@ -55,6 +56,7 @@ public final class HyperCoreFabric implements DedicatedServerModInitializer {
         // point's Path.of("plugins") convention.
         Path configDirectory = Path.of("config");
         runtime.start(FabricConfigLoader.load(configDirectory), Path.of("plugins"));
+        runtime.registerWorldAccessFactory(new FabricWorldAccessFactory(server));
         bukkitEventBridge = new BukkitEventBridge(runtime.plugins());
         bukkitEventBridge.attach();
         // Plugin commands are loaded after CommandRegistrationCallback fires, so

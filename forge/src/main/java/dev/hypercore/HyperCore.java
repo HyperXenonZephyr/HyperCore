@@ -8,6 +8,7 @@ import dev.hypercore.config.HyperCoreConfig;
 import dev.hypercore.hardware.RuntimeCapabilities;
 import dev.hypercore.plugin.ForgePluginCommandBridge;
 import dev.hypercore.runtime.HyperCoreRuntime;
+import dev.hypercore.world.ForgeWorldAccessFactory;
 import net.minecraftforge.common.MinecraftForge;
 import net.minecraftforge.event.RegisterCommandsEvent;
 import net.minecraftforge.event.TickEvent;
@@ -40,6 +41,7 @@ public final class HyperCore {
     @SubscribeEvent
     public void onServerAboutToStart(ServerAboutToStartEvent event) {
         runtime.start(HyperCoreConfig.settings(), Path.of("plugins"));
+        runtime.registerWorldAccessFactory(new ForgeWorldAccessFactory(event.getServer()));
         bukkitEventBridge = new BukkitEventBridge(runtime.plugins());
         bukkitEventBridge.attach();
         // Plugin commands are loaded after RegisterCommandsEvent fires, so re-
