@@ -106,6 +106,12 @@ All notable changes to HyperCore are documented in this file. The format is base
 - Added internal world/block/entity events (`BlockPlaceEvent`, `BlockBreakEvent`, `EntitySpawnEvent`, `PlayerMoveEvent`, `PlayerJoinEvent`) and wired them through `BukkitEventBridge` so HyperCore mutations produce Bukkit events and Bukkit listener cancellations propagate back to abort the mutation.
 - Added `bukkitEventBridge` and `regionParallelExecution` GameTests to both Forge and Fabric suites, verifying event firing/cancellation and multi-owner region ticks in real dedicated servers.
 - Exposed the installed `RegionExecutionService` through `BukkitServerAccess.regionExecution()` so HyperCore-aware integration tests can drive the region coordinator directly.
+- Extended Bukkit entity and player API conformance: `Entity.setCustomName`/`getCustomName`, `LivingEntity.damage`, `HumanEntity` display-name helpers, `Player.getGameMode`/`setGameMode`, and `Player.teleport` are wired through `RegionExecutionService` and `WorldAccess`.
+- Added `WorldCreator` and `Server.createWorld(...)` support, delegating world creation/loading to the loader-specific `WorldAccessFactory`; the core does not generate custom dimensions, but maps Bukkit requests to already-loaded vanilla dimensions.
+- Extended the bidirectional event bridge with `PlayerInteractEvent`, `EntityDamageEvent`, `PlayerLoginEvent`, and `PlayerQuitEvent`, and added matching internal HyperCore events.
+- Added a JMH-based `benchmarkRegionParallel` Gradle task and `RegionParallelBenchmarkMain` measuring region-tick scheduling throughput across 1/2/4/8/16 active regions.
+- Extended `GametestBukkitPlugin` with `player`, `permission`, and `world` commands, and added matching `bukkitPlayerEntityApis`, `bukkitPermissionRegistration`, and `bukkitWorldCreator` GameTests to both Forge and Fabric suites.
+- Added `RegionExecutionService.activateRegion(...)` as a low-overhead diagnostics hook to include a region in the next tick without performing world I/O.
 
 ### Fixed
 

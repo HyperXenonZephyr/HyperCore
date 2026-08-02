@@ -8,6 +8,7 @@ import org.bukkit.World;
 import org.bukkit.scheduler.BukkitScheduler;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
 import java.util.function.Supplier;
 import java.util.logging.Logger;
@@ -79,5 +80,23 @@ final class HyperCoreBukkitServer implements Server {
             worlds.add(execution.world(name));
         }
         return List.copyOf(worlds);
+    }
+
+    @Override
+    public World createWorld(org.bukkit.WorldCreator creator) {
+        RegionExecutionService execution = regionExecution.get();
+        if (execution == null) {
+            return null;
+        }
+        return execution.createWorld(creator);
+    }
+
+    @Override
+    public Collection<org.bukkit.entity.Player> getOnlinePlayers() {
+        RegionExecutionService execution = regionExecution.get();
+        if (execution == null) {
+            return List.of();
+        }
+        return List.copyOf(execution.onlinePlayers());
     }
 }

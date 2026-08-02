@@ -48,14 +48,17 @@ public final class BukkitPluginYmlParser {
     /**
      * Parsed plugin.yml content: the translated descriptor plus the raw
      * {@code commands} map (command name → properties) for the Bukkit command
-     * bridge to register.
+     * bridge to register and the raw {@code permissions} map for the permission
+     * service.
      */
     public record ParsedPluginYml(
         ExternalPluginDescriptor descriptor,
-        Map<String, Map<String, Object>> commands
+        Map<String, Map<String, Object>> commands,
+        Map<String, Map<String, Object>> permissions
     ) {
         public ParsedPluginYml {
             commands = Objects.requireNonNullElse(commands, Map.of());
+            permissions = Objects.requireNonNullElse(permissions, Map.of());
         }
     }
 
@@ -105,6 +108,7 @@ public final class BukkitPluginYmlParser {
         }
 
         Map<String, Map<String, Object>> commands = readCommandsMap(root);
+        Map<String, Map<String, Object>> permissions = readPermissionsMap(root);
 
         return new ParsedPluginYml(
             new ExternalPluginDescriptor(
@@ -114,7 +118,8 @@ public final class BukkitPluginYmlParser {
                 depends,
                 softDepends
             ),
-            commands
+            commands,
+            permissions
         );
     }
 
@@ -133,6 +138,23 @@ public final class BukkitPluginYmlParser {
             commands.put(commandName, properties);
         }
         return Map.copyOf(commands);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Map<String, Object>> readPermissionsMap(Map<String, Object> root) {
+        Object value = root.get("permissions");
+        if (!(value instanceof Map<?, ?> rawPermissions) || rawPermissions.isEmpty()) {
+            return Map.of();
+        }
+        Map<String, Map<String, Object>> permissions = new LinkedHashMap<>();
+        for (Map.Entry<?, ?> entry : rawPermissions.entrySet()) {
+            String permissionName = entry.getKey().toString();
+            Map<String, Object> properties = entry.getValue() instanceof Map<?, ?> props
+                ? (Map<String, Object>) props
+                : Map.of();
+            permissions.put(permissionName, properties);
+        }
+        return Map.copyOf(permissions);
     }
 
     private static String requiredString(Map<String, Object> root, String field) {

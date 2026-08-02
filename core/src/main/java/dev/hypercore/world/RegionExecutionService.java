@@ -6,8 +6,10 @@ import dev.hypercore.plugin.PluginEventBus;
 import dev.hypercore.region.RegionKey;
 import dev.hypercore.region.RegionTaskCoordinator;
 import dev.hypercore.world.region.RegionLock;
+import dev.hypercore.bukkit.HyperCoreEntity;
 import dev.hypercore.world.event.BlockBreakEvent;
 import dev.hypercore.world.event.BlockPlaceEvent;
+import dev.hypercore.world.event.EntityDamageEvent;
 import dev.hypercore.world.event.EntitySpawnEvent;
 import dev.hypercore.world.event.PlayerMoveEvent;
 
@@ -19,6 +21,7 @@ import org.bukkit.entity.EntityType;
 import org.bukkit.entity.Player;
 import org.bukkit.inventory.Inventory;
 
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashSet;
 import java.util.List;
@@ -91,6 +94,23 @@ public final class RegionExecutionService {
     }
 
     /**
+     * Creates or loads a world from the given creator configuration.
+     *
+     * <p>The actual terrain generation is delegated to the Minecraft server
+     * through the loader-specific {@link WorldAccessFactory}. HyperCore only
+     * exposes the Bukkit API and returns the corresponding world view.
+     *
+     * @return the created or loaded world, or {@code null} on failure
+     */
+    public World createWorld(org.bukkit.WorldCreator creator) {
+        String worldName = worldAccessFactory.createWorld(creator);
+        if (worldName == null) {
+            return null;
+        }
+        return world(worldName);
+    }
+
+    /**
      * Returns a handle for the world with the given name, or {@code null}.
      */
     public WorldAccess access(String worldName) {
@@ -111,6 +131,15 @@ public final class RegionExecutionService {
         int chunkX = Math.floorDiv(blockX, 16);
         int chunkZ = Math.floorDiv(blockZ, 16);
         return RegionKey.fromChunk(worldName, chunkX, chunkZ, RegionTaskCoordinator.DEFAULT_REGION_SIZE_CHUNKS);
+    }
+
+    /**
+     * Marks the region containing the given block position as active so it will
+     * be included in the next region tick. This is a low-overhead way to drive
+     * the coordinator in tests and diagnostics without performing world I/O.
+     */
+    public void activateRegion(String worldName, int blockX, int blockZ) {
+        activeRegions.add(regionKeyFor(worldName, blockX, blockZ));
     }
 
     /**
@@ -338,6 +367,179 @@ public final class RegionExecutionService {
     }
 
     /**
+     * Returns the Bukkit entity type of the entity with the given unique id,
+     * or {@code null} if the entity is not tracked.
+     */
+    public org.bukkit.entity.EntityType getEntityType(UUID entityId) {
+        String worldName = resolveEntityWorld(entityId);
+        if (worldName == null) {
+            return null;
+        }
+        WorldAccess world = worldAccessFactory.access(worldName);
+        return world == null ? null : world.getEntityType(entityId);
+    }
+
+    /**
+     * Returns the custom name of the entity with the given unique id.
+     */
+    public String getEntityCustomName(UUID entityId) {
+        String worldName = resolveEntityWorld(entityId);
+        if (worldName == null) {
+            return null;
+        }
+        WorldAccess world = worldAccessFactory.access(worldName);
+        return world == null ? null : world.getEntityCustomName(entityId);
+    }
+
+    /**
+     * Sets the custom name of the entity with the given unique id.
+     *
+     * @return {@code true} if the entity was found and updated
+     */
+    public boolean setEntityCustomName(UUID entityId, String name) {
+        String worldName = resolveEntityWorld(entityId);
+        if (worldName == null) {
+            return false;
+        }
+        WorldAccess world = requireWorld(worldName);
+        Location location = getEntityLocation(entityId);
+        if (location == null) {
+            return false;
+        }
+        RegionKey key = regionKeyFor(worldName, location.getBlockX(), location.getBlockZ());
+        try {
+            return lockFor(key).write(() -> world.setEntityCustomName(entityId, name));
+        } catch (Exception error) {
+            throw new RuntimeException("Failed to set custom name for entity " + entityId, error);
+        }
+    }
+
+    /**
+     * Returns whether the entity with the given unique id is alive and loaded.
+     */
+    public boolean isEntityAlive(UUID entityId) {
+        String worldName = resolveEntityWorld(entityId);
+        if (worldName == null) {
+            return false;
+        }
+        WorldAccess world = worldAccessFactory.access(worldName);
+        return world != null && world.isEntityAlive(entityId);
+    }
+
+    /**
+     * Removes the entity with the given unique id from the world.
+     *
+     * @return {@code true} if the entity was found and removed
+     */
+    public boolean removeEntity(UUID entityId) {
+        String worldName = resolveEntityWorld(entityId);
+        if (worldName == null) {
+            return false;
+        }
+        WorldAccess world = requireWorld(worldName);
+        Location location = getEntityLocation(entityId);
+        if (location == null) {
+            return false;
+        }
+        RegionKey key = regionKeyFor(worldName, location.getBlockX(), location.getBlockZ());
+        try {
+            return lockFor(key).write(() -> {
+                boolean removed = world.removeEntity(entityId);
+                if (removed) {
+                    entityWorlds.remove(entityId);
+                }
+                return removed;
+            });
+        } catch (Exception error) {
+            throw new RuntimeException("Failed to remove entity " + entityId, error);
+        }
+    }
+
+    /**
+     * Returns the game mode of the player with the given unique id.
+     */
+    public org.bukkit.GameMode getPlayerGameMode(UUID playerId) {
+        String worldName = resolveEntityWorld(playerId);
+        if (worldName == null) {
+            return null;
+        }
+        WorldAccess world = worldAccessFactory.access(worldName);
+        return world == null ? null : world.getPlayerGameMode(playerId);
+    }
+
+    /**
+     * Sets the game mode of the player with the given unique id.
+     *
+     * @return {@code true} if the player was found and updated
+     */
+    public boolean setPlayerGameMode(UUID playerId, org.bukkit.GameMode gameMode) {
+        String worldName = resolveEntityWorld(playerId);
+        if (worldName == null) {
+            return false;
+        }
+        WorldAccess world = requireWorld(worldName);
+        Location location = getEntityLocation(playerId);
+        if (location == null) {
+            return false;
+        }
+        RegionKey key = regionKeyFor(worldName, location.getBlockX(), location.getBlockZ());
+        try {
+            return lockFor(key).write(() -> world.setPlayerGameMode(playerId, gameMode));
+        } catch (Exception error) {
+            throw new RuntimeException("Failed to set game mode for player " + playerId, error);
+        }
+    }
+
+    /**
+     * Deals damage to the entity with the given unique id.
+     *
+     * <p>Fires an {@link EntityDamageEvent} before applying damage. If the event
+     * is cancelled, no damage is dealt.
+     */
+    public void damageEntity(UUID entityId, double amount) {
+        String worldName = resolveEntityWorld(entityId);
+        if (worldName == null) {
+            return;
+        }
+        WorldAccess world = requireWorld(worldName);
+        Location location = getEntityLocation(entityId);
+        if (location == null) {
+            return;
+        }
+        RegionKey key = regionKeyFor(worldName, location.getBlockX(), location.getBlockZ());
+        try {
+            lockFor(key).write(() -> {
+                org.bukkit.entity.Entity entity = resolveEntity(entityId);
+                if (entity == null) {
+                    return;
+                }
+                EntityDamageEvent event = new EntityDamageEvent(entity, amount);
+                eventBus.post(event);
+                if (event.cancelled()) {
+                    return;
+                }
+                if (entity instanceof org.bukkit.entity.LivingEntity living) {
+                    living.damage(event.getDamage());
+                }
+                activeRegions.add(key);
+            });
+        } catch (Exception error) {
+            throw new RuntimeException("Failed to damage entity " + entityId, error);
+        }
+    }
+
+    private org.bukkit.entity.Entity resolveEntity(UUID entityId) {
+        org.bukkit.entity.EntityType type = getEntityType(entityId);
+        if (type == null) {
+            return null;
+        }
+        if (type == org.bukkit.entity.EntityType.PLAYER) {
+            return resolvePlayer(entityId);
+        }
+        return new HyperCoreEntity(this, entityId);
+    }
+
+    /**
      * Runs one parallel region tick over all active regions and any regions with
      * pending cross-region messages.
      *
@@ -382,6 +584,29 @@ public final class RegionExecutionService {
     private boolean postCancellable(PluginEventBus.CancellableEvent event) {
         eventBus.post(event);
         return event.cancelled();
+    }
+
+    /**
+     * Returns all online players across all loaded worlds.
+     */
+    public Collection<Player> onlinePlayers() {
+        List<Player> players = new ArrayList<>();
+        Set<UUID> seen = new HashSet<>();
+        for (String worldName : worldAccessFactory.worldNames()) {
+            WorldAccess world = worldAccessFactory.access(worldName);
+            if (world == null) {
+                continue;
+            }
+            for (UUID playerId : world.playerIds()) {
+                if (seen.add(playerId)) {
+                    Player player = resolvePlayer(playerId);
+                    if (player != null) {
+                        players.add(player);
+                    }
+                }
+            }
+        }
+        return List.copyOf(players);
     }
 
     private boolean isPlayer(WorldAccess world, UUID entityId) {

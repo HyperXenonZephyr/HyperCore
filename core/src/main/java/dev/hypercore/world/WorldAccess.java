@@ -5,6 +5,7 @@ import org.bukkit.entity.EntityType;
 import org.bukkit.inventory.Inventory;
 
 import java.util.Collection;
+import java.util.List;
 import java.util.UUID;
 
 /**
@@ -73,4 +74,69 @@ public interface WorldAccess {
      * Returns the unique ids of all entities currently tracked in this world.
      */
     Collection<UUID> entityIds();
+
+    /**
+     * Returns the unique ids of all players currently in this world.
+     */
+    default Collection<UUID> playerIds() {
+        return List.of();
+    }
+
+    /**
+     * Returns the Bukkit entity type of the entity with the given unique id,
+     * or {@code null} if it is not present.
+     */
+    default EntityType getEntityType(UUID entityId) {
+        return null;
+    }
+
+    /**
+     * Returns the custom name of the entity with the given unique id,
+     * or {@code null} if none or the entity is not present.
+     */
+    default String getEntityCustomName(UUID entityId) {
+        return null;
+    }
+
+    /**
+     * Sets the custom name of the entity with the given unique id.
+     *
+     * @return {@code true} if the entity was found and updated
+     */
+    default boolean setEntityCustomName(UUID entityId, String name) {
+        return false;
+    }
+
+    /**
+     * Returns whether the entity with the given unique id is alive and loaded.
+     */
+    default boolean isEntityAlive(UUID entityId) {
+        return getEntityPosition(entityId) != null;
+    }
+
+    /**
+     * Removes the entity with the given unique id from the world.
+     *
+     * @return {@code true} if the entity was found and removed
+     */
+    default boolean removeEntity(UUID entityId) {
+        return false;
+    }
+
+    /**
+     * Returns the game mode of the player with the given unique id,
+     * or {@code null} if the player is not present.
+     */
+    default org.bukkit.GameMode getPlayerGameMode(UUID playerId) {
+        return null;
+    }
+
+    /**
+     * Sets the game mode of the player with the given unique id.
+     *
+     * @return {@code true} if the player was found and updated
+     */
+    default boolean setPlayerGameMode(UUID playerId, org.bukkit.GameMode gameMode) {
+        return false;
+    }
 }

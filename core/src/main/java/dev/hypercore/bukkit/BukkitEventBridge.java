@@ -9,9 +9,13 @@ import dev.hypercore.plugin.lifecycle.PluginEnabledEvent;
 import dev.hypercore.plugin.lifecycle.ServerStartedEvent;
 import dev.hypercore.world.event.BlockBreakEvent;
 import dev.hypercore.world.event.BlockPlaceEvent;
+import dev.hypercore.world.event.EntityDamageEvent;
 import dev.hypercore.world.event.EntitySpawnEvent;
+import dev.hypercore.world.event.PlayerInteractEvent;
 import dev.hypercore.world.event.PlayerJoinEvent;
+import dev.hypercore.world.event.PlayerLoginEvent;
 import dev.hypercore.world.event.PlayerMoveEvent;
+import dev.hypercore.world.event.PlayerQuitEvent;
 
 import org.bukkit.Bukkit;
 import org.bukkit.event.Event;
@@ -49,8 +53,12 @@ public final class BukkitEventBridge implements PluginManager.LifecycleCallback 
         subscriptions.add(events.register("hypercore", BlockPlaceEvent.class, PluginEventBus.EventPriority.NORMAL, false, this::onBlockPlace));
         subscriptions.add(events.register("hypercore", BlockBreakEvent.class, PluginEventBus.EventPriority.NORMAL, false, this::onBlockBreak));
         subscriptions.add(events.register("hypercore", EntitySpawnEvent.class, PluginEventBus.EventPriority.NORMAL, false, this::onEntitySpawn));
+        subscriptions.add(events.register("hypercore", EntityDamageEvent.class, PluginEventBus.EventPriority.NORMAL, false, this::onEntityDamage));
         subscriptions.add(events.register("hypercore", PlayerMoveEvent.class, PluginEventBus.EventPriority.NORMAL, false, this::onPlayerMove));
         subscriptions.add(events.register("hypercore", PlayerJoinEvent.class, PluginEventBus.EventPriority.NORMAL, false, this::onPlayerJoin));
+        subscriptions.add(events.register("hypercore", PlayerQuitEvent.class, PluginEventBus.EventPriority.NORMAL, false, this::onPlayerQuit));
+        subscriptions.add(events.register("hypercore", PlayerLoginEvent.class, PluginEventBus.EventPriority.NORMAL, false, this::onPlayerLogin));
+        subscriptions.add(events.register("hypercore", PlayerInteractEvent.class, PluginEventBus.EventPriority.NORMAL, false, this::onPlayerInteract));
     }
 
     @Override
@@ -141,6 +149,52 @@ public final class BukkitEventBridge implements PluginManager.LifecycleCallback 
             internal.getJoinMessage()
         );
         callBukkit(bukkit);
+    }
+
+    private void onPlayerQuit(PlayerQuitEvent internal) {
+        org.bukkit.event.player.PlayerQuitEvent bukkit = new org.bukkit.event.player.PlayerQuitEvent(
+            internal.getPlayer(),
+            internal.getQuitMessage()
+        );
+        callBukkit(bukkit);
+        internal.setQuitMessage(bukkit.getQuitMessage());
+    }
+
+    private void onPlayerLogin(PlayerLoginEvent internal) {
+        org.bukkit.event.player.PlayerLoginEvent bukkit = new org.bukkit.event.player.PlayerLoginEvent(
+            internal.getPlayer()
+        );
+        callBukkit(bukkit);
+        if (bukkit.isCancelled()) {
+            internal.cancelled(true);
+            internal.setKickMessage(bukkit.getKickMessage());
+        }
+    }
+
+    private void onPlayerInteract(PlayerInteractEvent internal) {
+        org.bukkit.event.player.PlayerInteractEvent bukkit = new org.bukkit.event.player.PlayerInteractEvent(
+            internal.getPlayer(),
+            internal.getBlock(),
+            internal.getMaterial(),
+            internal.getLocation()
+        );
+        callBukkit(bukkit);
+        if (bukkit.isCancelled()) {
+            internal.cancelled(true);
+        }
+    }
+
+    private void onEntityDamage(EntityDamageEvent internal) {
+        org.bukkit.event.entity.EntityDamageEvent bukkit = new org.bukkit.event.entity.EntityDamageEvent(
+            internal.getEntity(),
+            internal.getDamage()
+        );
+        callBukkit(bukkit);
+        if (bukkit.isCancelled()) {
+            internal.cancelled(true);
+        } else {
+            // Future: propagate setDamage back to the internal event when needed.
+        }
     }
 
     /**

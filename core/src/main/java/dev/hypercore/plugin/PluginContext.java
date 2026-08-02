@@ -38,6 +38,10 @@ public final class PluginContext {
         return descriptor;
     }
 
+    public PluginPermissionService permissions() {
+        return permissions;
+    }
+
     public void registerCommand(CommandDefinition definition) {
         Objects.requireNonNull(definition, "definition");
         commands.register(descriptor.id(), new CommandDefinition(

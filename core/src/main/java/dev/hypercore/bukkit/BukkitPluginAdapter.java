@@ -3,6 +3,7 @@ package dev.hypercore.bukkit;
 import dev.hypercore.plugin.HyperPlugin;
 import dev.hypercore.plugin.PluginContext;
 import dev.hypercore.plugin.PluginManager;
+import dev.hypercore.plugin.PluginPermissionService;
 
 import org.bukkit.Bukkit;
 import org.bukkit.command.PluginCommand;
@@ -39,6 +40,7 @@ public final class BukkitPluginAdapter implements HyperPlugin {
     private final JavaPlugin plugin;
     private final String pluginName;
     private final Map<String, Map<String, Object>> commandsMap;
+    private final Map<String, Map<String, Object>> permissionsMap;
     private final PluginManager pluginManager;
 
     private HyperCoreBukkitServer server;
@@ -56,9 +58,27 @@ public final class BukkitPluginAdapter implements HyperPlugin {
         Map<String, Map<String, Object>> commandsMap,
         PluginManager pluginManager
     ) {
+        this(plugin, pluginName, commandsMap, Map.of(), pluginManager);
+    }
+
+    /**
+     * @param plugin          the instantiated JavaPlugin (main class from plugin.yml)
+     * @param pluginName      the display name (Bukkit {@code name} field)
+     * @param commandsMap     the raw commands map from plugin.yml (may be empty)
+     * @param permissionsMap  the raw permissions map from plugin.yml (may be empty)
+     * @param pluginManager   the HyperCore plugin manager that owns this adapter
+     */
+    public BukkitPluginAdapter(
+        JavaPlugin plugin,
+        String pluginName,
+        Map<String, Map<String, Object>> commandsMap,
+        Map<String, Map<String, Object>> permissionsMap,
+        PluginManager pluginManager
+    ) {
         this.plugin = Objects.requireNonNull(plugin, "plugin");
         this.pluginName = Objects.requireNonNull(pluginName, "pluginName");
         this.commandsMap = Objects.requireNonNullElse(commandsMap, Map.of());
+        this.permissionsMap = Objects.requireNonNullElse(permissionsMap, Map.of());
         this.pluginManager = Objects.requireNonNull(pluginManager, "pluginManager");
     }
 
@@ -88,9 +108,64 @@ public final class BukkitPluginAdapter implements HyperPlugin {
         // obtain them via getCommand(name) and set executors, and so the
         // registered CommandDefinition dispatches to the same PluginCommand.
         BukkitCommandBridge.registerCommands(context, pluginCommands, commandsMap);
+        registerPermissions(context);
 
         plugin.setEnabled(true);
         plugin.fireOnEnable();
+    }
+
+    private void registerPermissions(PluginContext context) {
+        for (Map.Entry<String, Map<String, Object>> entry : permissionsMap.entrySet()) {
+            String node = entry.getKey();
+            Map<String, Object> props = entry.getValue() == null ? Map.of() : entry.getValue();
+            PluginPermissionService.PermissionDefault defaultValue = readPermissionDefault(props.get("default"));
+            String description = props.get("description") instanceof String desc ? desc : null;
+            Map<String, Boolean> children = readChildren(props.get("children"));
+            context.permissions().register(pluginName, node, description, defaultValue, children);
+        }
+    }
+
+    private static PluginPermissionService.PermissionDefault readPermissionDefault(Object value) {
+        if (value == null) {
+            return PluginPermissionService.PermissionDefault.OP;
+        }
+        String text = value.toString().trim().toUpperCase(Locale.ROOT);
+        if (text.isEmpty()) {
+            return PluginPermissionService.PermissionDefault.OP;
+        }
+        return switch (text) {
+            case "TRUE", "NOT_OP" -> PluginPermissionService.PermissionDefault.TRUE;
+            case "FALSE" -> PluginPermissionService.PermissionDefault.FALSE;
+            case "OP" -> PluginPermissionService.PermissionDefault.OP;
+            default -> PluginPermissionService.PermissionDefault.OP;
+        };
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Boolean> readChildren(Object value) {
+        if (!(value instanceof Map<?, ?> rawChildren)) {
+            return Map.of();
+        }
+        Map<String, Boolean> children = new LinkedHashMap<>();
+        for (Map.Entry<?, ?> entry : rawChildren.entrySet()) {
+            String childNode = entry.getKey().toString();
+            Object childValue = entry.getValue();
+            boolean enabled = true;
+            if (childValue instanceof Boolean flag) {
+                enabled = flag;
+            } else if (childValue instanceof Map<?, ?> childProps) {
+                Object permission = childProps.get("permission");
+                if (permission instanceof String perm && !perm.isBlank()) {
+                    childNode = perm;
+                }
+                Object permissionValue = childProps.get("value");
+                if (permissionValue instanceof Boolean flag) {
+                    enabled = flag;
+                }
+            }
+            children.put(childNode, enabled);
+        }
+        return Map.copyOf(children);
     }
 
     @Override

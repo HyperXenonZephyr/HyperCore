@@ -2,6 +2,7 @@ package dev.hypercore.world;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.Container;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntityType;
@@ -114,6 +115,76 @@ public final class FabricWorldAccess implements WorldAccess {
             ids.add(entity.getUUID());
         }
         return ids;
+    }
+
+    @Override
+    public Collection<UUID> playerIds() {
+        List<UUID> ids = new ArrayList<>();
+        for (Player player : level.players()) {
+            ids.add(player.getUUID());
+        }
+        return ids;
+    }
+
+    @Override
+    public org.bukkit.entity.EntityType getEntityType(UUID entityId) {
+        Entity entity = findEntity(entityId);
+        return entity == null ? null : toBukkitEntityType(entity.getType());
+    }
+
+    @Override
+    public String getEntityCustomName(UUID entityId) {
+        Entity entity = findEntity(entityId);
+        if (entity == null) {
+            return null;
+        }
+        net.minecraft.network.chat.Component name = entity.getCustomName();
+        return name == null ? null : name.getString();
+    }
+
+    @Override
+    public boolean setEntityCustomName(UUID entityId, String name) {
+        Entity entity = findEntity(entityId);
+        if (entity == null) {
+            return false;
+        }
+        entity.setCustomName(name == null ? null : net.minecraft.network.chat.Component.literal(name));
+        return true;
+    }
+
+    @Override
+    public boolean isEntityAlive(UUID entityId) {
+        Entity entity = findEntity(entityId);
+        return entity != null && entity.isAlive();
+    }
+
+    @Override
+    public boolean removeEntity(UUID entityId) {
+        Entity entity = findEntity(entityId);
+        if (entity == null) {
+            return false;
+        }
+        entity.remove(Entity.RemovalReason.DISCARDED);
+        return true;
+    }
+
+    @Override
+    public org.bukkit.GameMode getPlayerGameMode(UUID playerId) {
+        Player player = level.getPlayerByUUID(playerId);
+        if (!(player instanceof ServerPlayer serverPlayer)) {
+            return null;
+        }
+        return toBukkitGameMode(serverPlayer.gameMode.getGameModeForPlayer());
+    }
+
+    @Override
+    public boolean setPlayerGameMode(UUID playerId, org.bukkit.GameMode gameMode) {
+        Player player = level.getPlayerByUUID(playerId);
+        if (!(player instanceof ServerPlayer serverPlayer)) {
+            return false;
+        }
+        serverPlayer.setGameMode(toMinecraftGameMode(gameMode));
+        return true;
     }
 
     private Entity findEntity(UUID entityId) {
@@ -308,6 +379,48 @@ public final class FabricWorldAccess implements WorldAccess {
             case PRIMED_TNT -> (EntityType<? extends Entity>) EntityType.TNT;
             case EXPERIENCE_ORB -> (EntityType<? extends Entity>) EntityType.EXPERIENCE_ORB;
             default -> throw new UnsupportedOperationException("Unmapped entity type: " + type);
+        };
+    }
+
+    private static org.bukkit.entity.EntityType toBukkitEntityType(EntityType<?> type) {
+        if (type == EntityType.PLAYER) return org.bukkit.entity.EntityType.PLAYER;
+        if (type == EntityType.ZOMBIE) return org.bukkit.entity.EntityType.ZOMBIE;
+        if (type == EntityType.SKELETON) return org.bukkit.entity.EntityType.SKELETON;
+        if (type == EntityType.CREEPER) return org.bukkit.entity.EntityType.CREEPER;
+        if (type == EntityType.SPIDER) return org.bukkit.entity.EntityType.SPIDER;
+        if (type == EntityType.CAVE_SPIDER) return org.bukkit.entity.EntityType.CAVE_SPIDER;
+        if (type == EntityType.ENDERMAN) return org.bukkit.entity.EntityType.ENDERMAN;
+        if (type == EntityType.WITCH) return org.bukkit.entity.EntityType.WITCH;
+        if (type == EntityType.VILLAGER) return org.bukkit.entity.EntityType.VILLAGER;
+        if (type == EntityType.PIG) return org.bukkit.entity.EntityType.PIG;
+        if (type == EntityType.COW) return org.bukkit.entity.EntityType.COW;
+        if (type == EntityType.SHEEP) return org.bukkit.entity.EntityType.SHEEP;
+        if (type == EntityType.CHICKEN) return org.bukkit.entity.EntityType.CHICKEN;
+        if (type == EntityType.HORSE) return org.bukkit.entity.EntityType.HORSE;
+        if (type == EntityType.ITEM) return org.bukkit.entity.EntityType.DROPPED_ITEM;
+        if (type == EntityType.ARROW) return org.bukkit.entity.EntityType.ARROW;
+        if (type == EntityType.FIREBALL) return org.bukkit.entity.EntityType.FIREBALL;
+        if (type == EntityType.TNT) return org.bukkit.entity.EntityType.PRIMED_TNT;
+        if (type == EntityType.EXPERIENCE_ORB) return org.bukkit.entity.EntityType.EXPERIENCE_ORB;
+        throw new UnsupportedOperationException("Unmapped Minecraft entity type: " + type);
+    }
+
+    private static org.bukkit.GameMode toBukkitGameMode(net.minecraft.world.level.GameType type) {
+        return switch (type) {
+            case SURVIVAL -> org.bukkit.GameMode.SURVIVAL;
+            case CREATIVE -> org.bukkit.GameMode.CREATIVE;
+            case ADVENTURE -> org.bukkit.GameMode.ADVENTURE;
+            case SPECTATOR -> org.bukkit.GameMode.SPECTATOR;
+            default -> throw new UnsupportedOperationException("Unmapped game mode: " + type);
+        };
+    }
+
+    private static net.minecraft.world.level.GameType toMinecraftGameMode(org.bukkit.GameMode mode) {
+        return switch (mode) {
+            case SURVIVAL -> net.minecraft.world.level.GameType.SURVIVAL;
+            case CREATIVE -> net.minecraft.world.level.GameType.CREATIVE;
+            case ADVENTURE -> net.minecraft.world.level.GameType.ADVENTURE;
+            case SPECTATOR -> net.minecraft.world.level.GameType.SPECTATOR;
         };
     }
 }

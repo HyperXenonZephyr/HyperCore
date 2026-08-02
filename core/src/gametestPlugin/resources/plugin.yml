@@ -4,4 +4,13 @@ main: fixture.gametest.GametestBukkitPlugin
 commands:
   hypercore-gametest:
     description: HyperCore dedicated-server GameTest command
-    usage: /hypercore-gametest [block|entity|inventory|event|parallel]
+    usage: /hypercore-gametest [block|entity|player|inventory|event|permission|world|parallel]
+permissions:
+  hypercore.gametest.admin:
+    description: Admin permission for the GameTest plugin
+    default: op
+    children:
+      hypercore.gametest.use: true
+  hypercore.gametest.use:
+    description: Basic permission for the GameTest plugin
+    default: true

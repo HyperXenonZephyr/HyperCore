@@ -129,6 +129,30 @@ final class HyperCoreBukkitPluginManager implements org.bukkit.plugin.PluginMana
     }
 
     @Override
+    public void addPermission(org.bukkit.permissions.Permission permission) {
+        Objects.requireNonNull(permission, "permission");
+        plugins.permissions().register("bukkit", permission);
+    }
+
+    @Override
+    public void removePermission(org.bukkit.permissions.Permission permission) {
+        Objects.requireNonNull(permission, "permission");
+        removePermission(permission.getName());
+    }
+
+    @Override
+    public void removePermission(String name) {
+        Objects.requireNonNull(name, "name");
+        plugins.permissions().unregisterPlugin(name);
+    }
+
+    @Override
+    public org.bukkit.permissions.Permission getPermission(String name) {
+        Objects.requireNonNull(name, "name");
+        return plugins.permissions().getPermission(name);
+    }
+
+    @Override
     public void callEvent(Event event) {
         Objects.requireNonNull(event, "event");
         HandlerList handlerList = event.getHandlers();

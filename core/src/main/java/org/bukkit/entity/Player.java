@@ -1,7 +1,7 @@
 package org.bukkit.entity;
 
+import org.bukkit.GameMode;
 import org.bukkit.Location;
-import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.PlayerInventory;
 
 import java.util.UUID;
@@ -38,4 +38,60 @@ public interface Player extends HumanEntity {
      */
     @Override
     boolean teleport(Location location);
+
+    /**
+     * Returns the game mode of this player.
+     */
+    GameMode getGameMode();
+
+    /**
+     * Sets the game mode of this player.
+     *
+     * @param gameMode the new game mode
+     */
+    void setGameMode(GameMode gameMode);
+
+    /**
+     * Disconnects this player from the server with the given reason.
+     *
+     * @param message the kick message
+     */
+    default void kickPlayer(String message) {
+        // No-op in this minimal stub.
+    }
+
+    /**
+     * Returns whether this player is currently online.
+     */
+    default boolean isOnline() {
+        return isValid();
+    }
+
+    /**
+     * Returns whether this player is sneaking.
+     */
+    default boolean isSneaking() {
+        return false;
+    }
+
+    /**
+     * Sets whether this player is sneaking.
+     */
+    default void setSneaking(boolean sneaking) {
+        // No-op in this minimal stub.
+    }
+
+    /**
+     * Returns whether this player is sprinting.
+     */
+    default boolean isSprinting() {
+        return false;
+    }
+
+    /**
+     * Sets whether this player is sprinting.
+     */
+    default void setSprinting(boolean sprinting) {
+        // No-op in this minimal stub.
+    }
 }

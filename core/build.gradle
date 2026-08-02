@@ -48,11 +48,18 @@ sourceSets {
         java.setSrcDirs(['src/gametestPlugin/java'])
         resources.setSrcDirs(['src/gametestPlugin/resources'])
     }
+    benchmark {
+        // Standalone micro-benchmarks for region scheduling and world mutation
+        // throughput. Not part of the main jar; invoked via benchmarkRegionParallel.
+        java.setSrcDirs(['src/benchmark/java'])
+        resources.setSrcDirs([])
+    }
 }
 
 java.toolchain.languageVersion = JavaLanguageVersion.of(21)
 
 repositories {
+    maven { url 'https://maven.aliyun.com/repository/public' }
     mavenCentral()
 }
 
@@ -127,6 +134,12 @@ dependencies {
     // Standalone benchmark/logging binding so benchmarkCompute has an SLF4J
     // implementation without pulling test sources onto its classpath.
     benchmarkRuntime 'org.slf4j:slf4j-simple:2.0.13'
+
+    // JMH for region-parallel micro-benchmarks.
+    benchmarkImplementation 'org.openjdk.jmh:jmh-core:1.37'
+    benchmarkAnnotationProcessor 'org.openjdk.jmh:jmh-generator-annprocess:1.37'
+    benchmarkImplementation sourceSets.main.output
+    benchmarkImplementation sourceSets.vector.output
 }
 
 tasks.withType(JavaCompile).configureEach {
@@ -212,6 +225,17 @@ tasks.register('benchmarkCompute', JavaExec) {
     classpath = sourceSets.main.output + sourceSets.vector.output + configurations.runtimeClasspath + configurations.benchmarkRuntime
     mainClass = 'dev.hypercore.compute.ComputeBenchmarkMain'
     args(layout.buildDirectory.file('reports/hypercore/compute-benchmark.md').get().asFile.absolutePath)
+    jvmArgs('--add-modules', 'jdk.incubator.vector')
+    outputs.upToDateWhen { false }
+}
+
+tasks.register('benchmarkRegionParallel', JavaExec) {
+    dependsOn tasks.named('classes')
+    dependsOn tasks.named('compileVectorJava')
+    dependsOn tasks.named('compileBenchmarkJava')
+    classpath = sourceSets.main.output + sourceSets.vector.output + sourceSets.benchmark.output + configurations.benchmarkRuntimeClasspath + configurations.runtimeClasspath + configurations.benchmarkRuntime
+    mainClass = 'dev.hypercore.region.RegionParallelBenchmarkMain'
+    args(layout.buildDirectory.file('reports/hypercore/region-parallel-benchmark.md').get().asFile.absolutePath)
     jvmArgs('--add-modules', 'jdk.incubator.vector')
     outputs.upToDateWhen { false }
 }

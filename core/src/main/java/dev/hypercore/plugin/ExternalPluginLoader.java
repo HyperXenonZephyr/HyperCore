@@ -78,6 +78,7 @@ public final class ExternalPluginLoader implements AutoCloseable {
                         javaPlugin,
                         candidate.descriptor.plugin().name(),
                         candidate.bukkitCommands(),
+                        candidate.bukkitPermissions(),
                         plugins
                     );
                 } else {
@@ -165,7 +166,7 @@ public final class ExternalPluginLoader implements AutoCloseable {
                     errors.add(id + ": duplicate plugin id");
                     continue;
                 }
-                if (candidates.putIfAbsent(id, new Candidate(jar, descriptor, parsed.bukkitCommands())) != null) {
+                if (candidates.putIfAbsent(id, new Candidate(jar, descriptor, parsed.bukkitCommands(), parsed.bukkitPermissions())) != null) {
                     candidates.remove(id);
                     duplicateIds.add(id);
                     errors.add(id + ": duplicate plugin id");
@@ -196,23 +197,24 @@ public final class ExternalPluginLoader implements AutoCloseable {
         if (ymlEntry != null) {
             try (Reader reader = new java.io.InputStreamReader(archive.getInputStream(ymlEntry), java.nio.charset.StandardCharsets.UTF_8)) {
                 BukkitPluginYmlParser.ParsedPluginYml parsed = BukkitPluginYmlParser.parseWithCommands(reader);
-                return new ParsedDescriptor(parsed.descriptor(), parsed.commands());
+                return new ParsedDescriptor(parsed.descriptor(), parsed.commands(), parsed.permissions());
             }
         }
         return null;
     }
 
     /**
-     * Wrapper for a parsed descriptor plus the optional Bukkit commands map
-     * extracted from plugin.yml. For hypercore-plugin.json descriptors the
-     * commands map is always empty.
+     * Wrapper for a parsed descriptor plus the optional Bukkit commands and
+     * permissions maps extracted from plugin.yml. For hypercore-plugin.json
+     * descriptors both maps are always empty.
      */
     record ParsedDescriptor(
         ExternalPluginDescriptor descriptor,
-        Map<String, Map<String, Object>> bukkitCommands
+        Map<String, Map<String, Object>> bukkitCommands,
+        Map<String, Map<String, Object>> bukkitPermissions
     ) {
         static ParsedDescriptor native0(ExternalPluginDescriptor descriptor) {
-            return new ParsedDescriptor(descriptor, Map.of());
+            return new ParsedDescriptor(descriptor, Map.of(), Map.of());
         }
     }
 
@@ -350,7 +352,8 @@ public final class ExternalPluginLoader implements AutoCloseable {
     private record Candidate(
         Path jar,
         ExternalPluginDescriptor descriptor,
-        Map<String, Map<String, Object>> bukkitCommands
+        Map<String, Map<String, Object>> bukkitCommands,
+        Map<String, Map<String, Object>> bukkitPermissions
     ) {
     }
 

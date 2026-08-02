@@ -3,10 +3,12 @@ package org.bukkit.plugin;
 import org.bukkit.event.Event;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
+import org.bukkit.permissions.Permission;
 
 /**
  * Bukkit {@code PluginManager} interface. Provides plugin lookup, event
- * registration, and event dispatch methods required by Bukkit plugins.
+ * registration, permission registration, and event dispatch methods required
+ * by Bukkit plugins.
  */
 public interface PluginManager {
 
@@ -65,4 +67,24 @@ public interface PluginManager {
      * applicable, to the HyperCore internal event bus.
      */
     void callEvent(Event event);
+
+    /**
+     * Registers a permission with the server.
+     */
+    void addPermission(Permission permission);
+
+    /**
+     * Removes a permission from the server.
+     */
+    void removePermission(Permission permission);
+
+    /**
+     * Removes a permission from the server by name.
+     */
+    void removePermission(String name);
+
+    /**
+     * Returns the permission with the given name, or {@code null} if not found.
+     */
+    Permission getPermission(String name);
 }

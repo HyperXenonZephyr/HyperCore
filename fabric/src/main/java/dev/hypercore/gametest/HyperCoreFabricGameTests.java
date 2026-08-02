@@ -82,6 +82,28 @@ public final class HyperCoreFabricGameTests implements FabricGameTest {
     }
 
     @GameTest(template = EMPTY_STRUCTURE)
+    public static void bukkitPlayerEntityApis(GameTestHelper helper) {
+        Vec3 entityPos = helper.absoluteVec(new Vec3(1.5, 2.0, 1.5));
+        runCommand(helper, "hypercore-gametest entity " + entityPos.x() + " " + entityPos.y() + " " + entityPos.z());
+
+        Vec3 playerPos = helper.absoluteVec(new Vec3(2.5, 2.0, 2.5));
+        runCommand(helper, "hypercore-gametest player " + playerPos.x() + " " + playerPos.y() + " " + playerPos.z());
+        helper.succeed();
+    }
+
+    @GameTest(template = EMPTY_STRUCTURE)
+    public static void bukkitPermissionRegistration(GameTestHelper helper) {
+        runCommand(helper, "hypercore-gametest permission");
+        helper.succeed();
+    }
+
+    @GameTest(template = EMPTY_STRUCTURE)
+    public static void bukkitWorldCreator(GameTestHelper helper) {
+        runCommand(helper, "hypercore-gametest world");
+        helper.succeed();
+    }
+
+    @GameTest(template = EMPTY_STRUCTURE)
     public static void regionParallelExecution(GameTestHelper helper) {
         runCommand(helper, "hypercore-gametest parallel 4");
         helper.succeed();

@@ -1,8 +1,11 @@
 package org.bukkit;
 
+import org.bukkit.entity.Player;
 import org.bukkit.plugin.PluginManager;
 import org.bukkit.scheduler.BukkitScheduler;
 
+import java.util.Collection;
+import java.util.Collections;
 import java.util.logging.Logger;
 
 /**
@@ -39,5 +42,14 @@ public final class Bukkit {
 
     public static Logger getLogger() {
         return server.getLogger();
+    }
+
+    /**
+     * Returns all online players. The default implementation returns an empty
+     * collection; server adapters can override {@link Server#getOnlinePlayers()}
+     * to provide real data.
+     */
+    public static Collection<Player> getOnlinePlayers() {
+        return server == null ? Collections.emptyList() : server.getOnlinePlayers();
     }
 }

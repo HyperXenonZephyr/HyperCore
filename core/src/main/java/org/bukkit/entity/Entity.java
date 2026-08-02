@@ -25,6 +25,11 @@ public interface Entity {
     String getName();
 
     /**
+     * Returns the Bukkit entity type (zombie, player, dropped item, etc.).
+     */
+    EntityType getType();
+
+    /**
      * Returns the world containing this entity.
      */
     World getWorld();
@@ -76,5 +81,40 @@ public interface Entity {
      */
     default Vector getVelocity() {
         return new Vector();
+    }
+
+    /**
+     * Returns the custom name of this entity, or {@code null} if none.
+     */
+    default String getCustomName() {
+        return null;
+    }
+
+    /**
+     * Sets the custom name of this entity. {@code null} clears the name.
+     */
+    default void setCustomName(String name) {
+        // No-op in this minimal stub.
+    }
+
+    /**
+     * Returns whether this entity has been removed from the world.
+     */
+    default boolean isDead() {
+        return false;
+    }
+
+    /**
+     * Returns whether this entity is still valid (loaded and not removed).
+     */
+    default boolean isValid() {
+        return !isDead();
+    }
+
+    /**
+     * Removes this entity from the world.
+     */
+    default void remove() {
+        // No-op in this minimal stub.
     }
 }

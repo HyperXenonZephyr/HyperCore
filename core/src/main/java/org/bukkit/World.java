@@ -16,6 +16,15 @@ import java.util.List;
 public interface World {
 
     /**
+     * World environment types matching vanilla dimensions.
+     */
+    enum Environment {
+        NORMAL,
+        NETHER,
+        THE_END
+    }
+
+    /**
      * Returns the name of this world.
      */
     String getName();

@@ -2,6 +2,7 @@ package dev.hypercore.bukkit;
 
 import dev.hypercore.world.RegionExecutionService;
 
+import org.bukkit.GameMode;
 import org.bukkit.Location;
 import org.bukkit.World;
 import org.bukkit.entity.Player;
@@ -21,10 +22,12 @@ import java.util.UUID;
  */
 public final class HyperCorePlayer extends HyperCoreEntity implements Player {
     private final String name;
+    private String displayName;
 
     public HyperCorePlayer(RegionExecutionService execution, UUID playerId, String name) {
         super(execution, playerId);
         this.name = Objects.requireNonNull(name, "name");
+        this.displayName = this.name;
     }
 
     @Override
@@ -52,6 +55,28 @@ public final class HyperCorePlayer extends HyperCoreEntity implements Player {
     public PlayerInventory getInventory() {
         org.bukkit.inventory.Inventory inventory = execution.getPlayerInventory(getUniqueId());
         return inventory instanceof PlayerInventory playerInventory ? playerInventory : null;
+    }
+
+    @Override
+    public String getDisplayName() {
+        return displayName;
+    }
+
+    @Override
+    public void setDisplayName(String displayName) {
+        this.displayName = displayName == null ? name : displayName;
+    }
+
+    @Override
+    public GameMode getGameMode() {
+        GameMode mode = execution.getPlayerGameMode(getUniqueId());
+        return mode == null ? GameMode.SURVIVAL : mode;
+    }
+
+    @Override
+    public void setGameMode(GameMode gameMode) {
+        Objects.requireNonNull(gameMode, "gameMode");
+        execution.setPlayerGameMode(getUniqueId(), gameMode);
     }
 
     @Override

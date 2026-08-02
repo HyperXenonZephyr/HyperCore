@@ -1,8 +1,11 @@
 package dev.hypercore.plugin;
 
+import org.bukkit.permissions.Permission;
+
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -23,19 +26,48 @@ public final class PluginPermissionService {
         String description,
         PermissionDefault defaultValue
     ) {
+        register(pluginId, node, description, defaultValue, Map.of());
+    }
+
+    public synchronized void register(
+        String pluginId,
+        String node,
+        String description,
+        PermissionDefault defaultValue,
+        Map<String, Boolean> children
+    ) {
         String normalizedPluginId = normalizePluginId(pluginId);
         String normalizedNode = normalizeNode(node);
         RegisteredPermission permission = new RegisteredPermission(
             normalizedPluginId,
             normalizedNode,
             Objects.requireNonNullElse(description, "").trim(),
-            Objects.requireNonNull(defaultValue, "defaultValue")
+            Objects.requireNonNull(defaultValue, "defaultValue"),
+            children == null || children.isEmpty() ? Map.of() : Map.copyOf(children)
         );
         if (permissions.putIfAbsent(normalizedNode, permission) != null) {
             throw new IllegalArgumentException("Permission is already registered: " + normalizedNode);
         }
         permissionsByPlugin.computeIfAbsent(normalizedPluginId, ignored -> new HashSet<>())
             .add(normalizedNode);
+    }
+
+    /**
+     * Registers a Bukkit-style permission object, including its children.
+     */
+    public synchronized void register(String pluginId, Permission permission) {
+        Objects.requireNonNull(permission, "permission");
+        String defaultName = permission.getDefault() == null
+            ? PermissionDefault.OP.name()
+            : permission.getDefault().name();
+        PermissionDefault defaultValue = PermissionDefault.valueOf(defaultName.toUpperCase(Locale.ROOT));
+        register(
+            pluginId,
+            permission.getName(),
+            permission.getDescription(),
+            defaultValue,
+            permission.getChildren()
+        );
     }
 
     public synchronized boolean test(PluginCommandSender sender, String node) {
@@ -52,11 +84,54 @@ public final class PluginPermissionService {
         if (permission == null) {
             return false;
         }
-        return permission.defaultValue().allows(sender.operator());
+        if (permission.defaultValue().allows(sender.operator())) {
+            return true;
+        }
+        // Child permissions can grant access when a parent is explicitly set.
+        for (Map.Entry<String, Boolean> child : permission.children().entrySet()) {
+            if (!Boolean.TRUE.equals(child.getValue())) {
+                continue;
+            }
+            Optional<Boolean> childOverride = sender.permissionOverride(child.getKey());
+            if (childOverride.isPresent() && childOverride.get()) {
+                return true;
+            }
+            RegisteredPermission childRegistration = permissions.get(normalizeNode(child.getKey()));
+            if (childRegistration != null && childRegistration.defaultValue().allows(sender.operator())) {
+                return true;
+            }
+        }
+        return false;
     }
 
     public synchronized int registeredPermissions() {
         return permissions.size();
+    }
+
+    /**
+     * Returns the Bukkit permission object for the given node, or {@code null}
+     * if it is not registered.
+     */
+    public synchronized org.bukkit.permissions.Permission getPermission(String name) {
+        RegisteredPermission registered = permissions.get(normalizeNode(name));
+        if (registered == null) {
+            return null;
+        }
+        return new org.bukkit.permissions.Permission(
+            registered.node(),
+            toBukkitDefault(registered.defaultValue()),
+            registered.description(),
+            registered.children()
+        );
+    }
+
+    private static org.bukkit.permissions.PermissionDefault toBukkitDefault(PermissionDefault value) {
+        return switch (value) {
+            case TRUE -> org.bukkit.permissions.PermissionDefault.TRUE;
+            case FALSE -> org.bukkit.permissions.PermissionDefault.FALSE;
+            case OP -> org.bukkit.permissions.PermissionDefault.OP;
+            case NOT_OP -> org.bukkit.permissions.PermissionDefault.NOT_OP;
+        };
     }
 
     public synchronized void unregisterPlugin(String pluginId) {
@@ -95,7 +170,8 @@ public final class PluginPermissionService {
         String pluginId,
         String node,
         String description,
-        PermissionDefault defaultValue
+        PermissionDefault defaultValue,
+        Map<String, Boolean> children
     ) {
     }
 

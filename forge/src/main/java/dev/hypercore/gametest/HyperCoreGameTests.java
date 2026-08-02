@@ -58,6 +58,16 @@ public final class HyperCoreGameTests {
     }
 
     @GameTest(template = "forge:empty3x3x3")
+    public static void bukkitPlayerEntityApis(GameTestHelper helper) {
+        Vec3 entityPos = helper.absoluteVec(new Vec3(1.5, 2.0, 1.5));
+        runCommand(helper, "hypercore-gametest entity " + entityPos.x() + " " + entityPos.y() + " " + entityPos.z());
+
+        Vec3 playerPos = helper.absoluteVec(new Vec3(2.5, 2.0, 2.5));
+        runCommand(helper, "hypercore-gametest player " + playerPos.x() + " " + playerPos.y() + " " + playerPos.z());
+        helper.succeed();
+    }
+
+    @GameTest(template = "forge:empty3x3x3")
     public static void bukkitInventoryApi(GameTestHelper helper) {
         BlockPos blockPos = helper.absolutePos(new BlockPos(1, 1, 1));
         runCommand(helper, "hypercore-gametest inventory " + blockPos.getX() + " " + blockPos.getY() + " " + blockPos.getZ());
@@ -68,6 +78,18 @@ public final class HyperCoreGameTests {
     public static void bukkitEventBridge(GameTestHelper helper) {
         BlockPos blockPos = helper.absolutePos(new BlockPos(1, 1, 1));
         runCommand(helper, "hypercore-gametest event " + blockPos.getX() + " " + blockPos.getY() + " " + blockPos.getZ());
+        helper.succeed();
+    }
+
+    @GameTest(template = "forge:empty3x3x3")
+    public static void bukkitPermissionRegistration(GameTestHelper helper) {
+        runCommand(helper, "hypercore-gametest permission");
+        helper.succeed();
+    }
+
+    @GameTest(template = "forge:empty3x3x3")
+    public static void bukkitWorldCreator(GameTestHelper helper) {
+        runCommand(helper, "hypercore-gametest world");
         helper.succeed();
     }
 

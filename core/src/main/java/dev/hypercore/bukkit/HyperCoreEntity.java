@@ -5,6 +5,7 @@ import dev.hypercore.world.RegionExecutionService;
 import org.bukkit.Location;
 import org.bukkit.World;
 import org.bukkit.entity.Entity;
+import org.bukkit.entity.EntityType;
 
 import java.util.Objects;
 import java.util.UUID;
@@ -16,8 +17,9 @@ import java.util.UUID;
  * {@link RegionExecutionService}.
  *
  * <p>The adapter stores the entity's unique id and resolves its world and
- * location through the region-locked execution service. Teleports are delegated
- * back to the same service so that region ownership is respected.
+ * location through the region-locked execution service. Teleports and entity
+ * attribute mutations are delegated back to the same service so that region
+ * ownership is respected.
  */
 public class HyperCoreEntity implements Entity {
     protected final RegionExecutionService execution;
@@ -35,10 +37,17 @@ public class HyperCoreEntity implements Entity {
 
     @Override
     public String getName() {
-        // Minimal stub: real Bukkit returns the entity's custom name or its
-        // translated type name. The current WorldAccess contract does not expose
-        // entity types, so a stable identifier is returned instead.
-        return "Entity";
+        String customName = getCustomName();
+        if (customName != null && !customName.isEmpty()) {
+            return customName;
+        }
+        EntityType type = getType();
+        return type == null ? "Entity" : type.name().toLowerCase();
+    }
+
+    @Override
+    public EntityType getType() {
+        return execution.getEntityType(entityId);
     }
 
     @Override
@@ -55,6 +64,31 @@ public class HyperCoreEntity implements Entity {
     @Override
     public boolean teleport(Location location) {
         return execution.teleportEntity(entityId, location);
+    }
+
+    @Override
+    public String getCustomName() {
+        return execution.getEntityCustomName(entityId);
+    }
+
+    @Override
+    public void setCustomName(String name) {
+        execution.setEntityCustomName(entityId, name);
+    }
+
+    @Override
+    public boolean isDead() {
+        return !execution.isEntityAlive(entityId);
+    }
+
+    @Override
+    public boolean isValid() {
+        return execution.isEntityAlive(entityId);
+    }
+
+    @Override
+    public void remove() {
+        execution.removeEntity(entityId);
     }
 
     @Override

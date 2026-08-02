@@ -1,8 +1,10 @@
 package org.bukkit;
 
+import org.bukkit.GameMode;
 import org.bukkit.block.Block;
 import org.bukkit.block.BlockState;
 import org.bukkit.entity.Entity;
+import org.bukkit.entity.EntityType;
 import org.bukkit.entity.Player;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.ItemStack;
@@ -224,6 +226,11 @@ class BukkitApiStubsTest {
             }
 
             @Override
+            public EntityType getType() {
+                return EntityType.PLAYER;
+            }
+
+            @Override
             public UUID getUniqueId() {
                 return UUID.randomUUID();
             }
@@ -246,6 +253,15 @@ class BukkitApiStubsTest {
             @Override
             public org.bukkit.inventory.PlayerInventory getInventory() {
                 return null;
+            }
+
+            @Override
+            public GameMode getGameMode() {
+                return GameMode.SURVIVAL;
+            }
+
+            @Override
+            public void setGameMode(GameMode gameMode) {
             }
 
             @Override

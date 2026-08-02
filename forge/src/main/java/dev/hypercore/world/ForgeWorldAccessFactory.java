@@ -30,6 +30,24 @@ public final class ForgeWorldAccessFactory implements WorldAccessFactory {
     }
 
     @Override
+    public String createWorld(org.bukkit.WorldCreator creator) {
+        String requested = creator.name();
+        // HyperCore does not create custom dimensions in the core. If the
+        // requested name matches an already-loaded vanilla dimension, return
+        // that dimension's canonical name so plugins get a valid World view.
+        for (ServerLevel level : server.getAllLevels()) {
+            String dimensionName = level.dimension().location().toString();
+            if (dimensionName.equals(requested)
+                || (level.dimension() == Level.OVERWORLD && ("overworld".equals(requested) || "world".equals(requested)))
+                || (level.dimension() == Level.NETHER && "the_nether".equals(requested))
+                || (level.dimension() == Level.END && "the_end".equals(requested))) {
+                return dimensionName;
+            }
+        }
+        return null;
+    }
+
+    @Override
     public Collection<String> worldNames() {
         List<String> names = new ArrayList<>();
         for (ServerLevel level : server.getAllLevels()) {

@@ -22,6 +22,15 @@ public interface WorldAccessFactory {
     WorldAccess access(String worldName);
 
     /**
+     * Creates or loads a world from the given creator configuration.
+     *
+     * @return the name of the created/loaded world, or {@code null} on failure
+     */
+    default String createWorld(org.bukkit.WorldCreator creator) {
+        return null;
+    }
+
+    /**
      * Returns the names of all currently loaded worlds.
      */
     Collection<String> worldNames();
