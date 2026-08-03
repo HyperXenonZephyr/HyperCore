@@ -19,6 +19,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -101,6 +102,31 @@ class RegionExecutionServiceTest {
         assertEquals(6.0, found.getX());
     }
 
+    @Test
+    void playerExclusiveApiDelegatesToWorldAccess() {
+        Location location = new Location(service.world("world"), 5.0, 64.0, 5.0);
+        UUID playerId = service.spawnEntity("world", org.bukkit.entity.EntityType.PLAYER, location);
+        assertNotNull(playerId);
+
+        assertFalse(service.isSneaking(playerId));
+        service.setSneaking(playerId, true);
+        assertTrue(service.isSneaking(playerId));
+
+        assertFalse(service.isSprinting(playerId));
+        service.setSprinting(playerId, true);
+        assertTrue(service.isSprinting(playerId));
+
+        // Connection-based operations are no-ops in the memory access but must
+        // not throw.
+        service.kickPlayer(playerId, "test");
+        service.sendTitle(playerId, "title", "subtitle", 10, 70, 20);
+        service.resetTitle(playerId);
+        service.updateInventory(playerId);
+        service.setResourcePack(playerId, "https://example.com/pack.zip");
+        assertFalse(service.performCommand(playerId, "help"));
+        assertFalse(service.openInventory(playerId, null));
+    }
+
 
 
     private static final class MemoryWorldAccessFactory implements WorldAccessFactory {
@@ -121,6 +147,8 @@ class RegionExecutionServiceTest {
         private final String worldName;
         private final ConcurrentHashMap<Long, Material> blocks = new ConcurrentHashMap<>();
         private final ConcurrentHashMap<UUID, Position> entities = new ConcurrentHashMap<>();
+        private final ConcurrentHashMap<UUID, Boolean> sneaking = new ConcurrentHashMap<>();
+        private final ConcurrentHashMap<UUID, Boolean> sprinting = new ConcurrentHashMap<>();
 
         MemoryWorldAccess(String worldName) {
             this.worldName = worldName;
@@ -171,6 +199,26 @@ class RegionExecutionServiceTest {
         @Override
         public Collection<UUID> entityIds() {
             return List.copyOf(entities.keySet());
+        }
+
+        @Override
+        public boolean isSneaking(UUID playerId) {
+            return sneaking.getOrDefault(playerId, false);
+        }
+
+        @Override
+        public void setSneaking(UUID playerId, boolean sneaking) {
+            this.sneaking.put(playerId, sneaking);
+        }
+
+        @Override
+        public boolean isSprinting(UUID playerId) {
+            return sprinting.getOrDefault(playerId, false);
+        }
+
+        @Override
+        public void setSprinting(UUID playerId, boolean sprinting) {
+            this.sprinting.put(playerId, sprinting);
         }
 
         private static long key(int x, int y, int z) {

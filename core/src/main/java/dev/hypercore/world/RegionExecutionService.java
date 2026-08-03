@@ -7,6 +7,7 @@ import dev.hypercore.region.RegionKey;
 import dev.hypercore.region.RegionTaskCoordinator;
 import dev.hypercore.world.region.RegionLock;
 import dev.hypercore.bukkit.HyperCoreEntity;
+import dev.hypercore.bukkit.HyperCoreLivingEntity;
 import dev.hypercore.world.event.BlockBreakEvent;
 import dev.hypercore.world.event.BlockPlaceEvent;
 import dev.hypercore.world.event.EntityDamageEvent;
@@ -115,6 +116,201 @@ public final class RegionExecutionService {
      */
     public WorldAccess access(String worldName) {
         return worldAccessFactory.access(worldName);
+    }
+
+    /**
+     * Returns the current time of day in the given world.
+     */
+    public long getTime(String worldName) {
+        WorldAccess world = requireWorld(worldName);
+        return world.getTime();
+    }
+
+    /**
+     * Sets the current time of day in the given world.
+     */
+    public void setTime(String worldName, long time) {
+        WorldAccess world = requireWorld(worldName);
+        world.setTime(time);
+    }
+
+    /**
+     * Returns the absolute age of the given world in ticks.
+     */
+    public long getFullTime(String worldName) {
+        WorldAccess world = requireWorld(worldName);
+        return world.getTime();
+    }
+
+    /**
+     * Sets the absolute age of the given world in ticks.
+     */
+    public void setFullTime(String worldName, long time) {
+        WorldAccess world = requireWorld(worldName);
+        world.setTime(time);
+    }
+
+    /**
+     * Returns whether it is raining in the given world.
+     */
+    public boolean hasStorm(String worldName) {
+        WorldAccess world = requireWorld(worldName);
+        return world.hasStorm();
+    }
+
+    /**
+     * Sets whether it is raining in the given world.
+     */
+    public void setStorm(String worldName, boolean storm) {
+        WorldAccess world = requireWorld(worldName);
+        world.setStorm(storm);
+    }
+
+    /**
+     * Returns whether it is thundering in the given world.
+     */
+    public boolean isThundering(String worldName) {
+        WorldAccess world = requireWorld(worldName);
+        return world.isThundering();
+    }
+
+    /**
+     * Sets whether it is thundering in the given world.
+     */
+    public void setThundering(String worldName, boolean thundering) {
+        WorldAccess world = requireWorld(worldName);
+        world.setThundering(thundering);
+    }
+
+    /**
+     * Returns the spawn location of the given world.
+     */
+    public Location getSpawnLocation(String worldName) {
+        WorldAccess world = requireWorld(worldName);
+        WorldAccess.Position position = world.getSpawnLocation();
+        if (position == null) {
+            return null;
+        }
+        return new Location(world(worldName), position.x(), position.y(), position.z());
+    }
+
+    /**
+     * Sets the spawn location of the given world.
+     */
+    public void setSpawnLocation(String worldName, Location location) {
+        WorldAccess world = requireWorld(worldName);
+        world.setSpawnLocation(new WorldAccess.Position(location.getX(), location.getY(), location.getZ()));
+    }
+
+    /**
+     * Returns the biome at the given block coordinates.
+     */
+    public org.bukkit.block.Biome getBiome(String worldName, int x, int y, int z) {
+        WorldAccess world = requireWorld(worldName);
+        return toBukkitBiome(world.getBiome(x, y, z));
+    }
+
+    /**
+     * Sets the biome at the given block coordinates.
+     */
+    public void setBiome(String worldName, int x, int y, int z, org.bukkit.block.Biome biome) {
+        WorldAccess world = requireWorld(worldName);
+        world.setBiome(x, y, z, toBiomeKey(biome));
+    }
+
+    /**
+     * Returns the block data string at the given block coordinates.
+     */
+    public String getBlockDataAsString(String worldName, int x, int y, int z) {
+        WorldAccess world = requireWorld(worldName);
+        RegionKey key = regionKeyFor(worldName, x, z);
+        try {
+            return lockFor(key).read(() -> world.getBlockDataAsString(x, y, z));
+        } catch (Exception error) {
+            throw new RuntimeException("Failed to read block data at " + x + "," + y + "," + z, error);
+        }
+    }
+
+    /**
+     * Sets the block data at the given block coordinates.
+     */
+    public void setBlockData(String worldName, int x, int y, int z, String blockData) {
+        WorldAccess world = requireWorld(worldName);
+        RegionKey key = regionKeyFor(worldName, x, z);
+        try {
+            lockFor(key).write(() -> {
+                world.setBlockData(x, y, z, blockData);
+                activeRegions.add(key);
+            });
+        } catch (Exception error) {
+            throw new RuntimeException("Failed to write block data at " + x + "," + y + "," + z, error);
+        }
+    }
+
+    /**
+     * Returns the block light level at the given block coordinates.
+     */
+    public int getBlockLight(String worldName, int x, int y, int z) {
+        WorldAccess world = requireWorld(worldName);
+        RegionKey key = regionKeyFor(worldName, x, z);
+        try {
+            return lockFor(key).read(() -> world.getBlockLight(x, y, z));
+        } catch (Exception error) {
+            throw new RuntimeException("Failed to read block light at " + x + "," + y + "," + z, error);
+        }
+    }
+
+    /**
+     * Returns the sky light level at the given block coordinates.
+     */
+    public int getSkyLight(String worldName, int x, int y, int z) {
+        WorldAccess world = requireWorld(worldName);
+        RegionKey key = regionKeyFor(worldName, x, z);
+        try {
+            return lockFor(key).read(() -> world.getSkyLight(x, y, z));
+        } catch (Exception error) {
+            throw new RuntimeException("Failed to read sky light at " + x + "," + y + "," + z, error);
+        }
+    }
+
+    /**
+     * Returns whether the block at the given coordinates is directly powered.
+     */
+    public boolean isBlockPowered(String worldName, int x, int y, int z) {
+        WorldAccess world = requireWorld(worldName);
+        RegionKey key = regionKeyFor(worldName, x, z);
+        try {
+            return lockFor(key).read(() -> world.isBlockPowered(x, y, z));
+        } catch (Exception error) {
+            throw new RuntimeException("Failed to read block powered state at " + x + "," + y + "," + z, error);
+        }
+    }
+
+    /**
+     * Returns whether the block at the given coordinates is indirectly powered.
+     */
+    public boolean isBlockIndirectlyPowered(String worldName, int x, int y, int z) {
+        WorldAccess world = requireWorld(worldName);
+        RegionKey key = regionKeyFor(worldName, x, z);
+        try {
+            return lockFor(key).read(() -> world.isBlockIndirectlyPowered(x, y, z));
+        } catch (Exception error) {
+            throw new RuntimeException("Failed to read indirect power at " + x + "," + y + "," + z, error);
+        }
+    }
+
+    /**
+     * Returns the redstone signal strength from the given face at the given
+     * block coordinates.
+     */
+    public int getBlockPower(String worldName, int x, int y, int z, org.bukkit.block.BlockFace face) {
+        WorldAccess world = requireWorld(worldName);
+        RegionKey key = regionKeyFor(worldName, x, z);
+        try {
+            return lockFor(key).read(() -> world.getBlockPower(x, y, z, face.name().toLowerCase(java.util.Locale.ROOT)));
+        } catch (Exception error) {
+            throw new RuntimeException("Failed to read block power at " + x + "," + y + "," + z, error);
+        }
     }
 
     /**
@@ -456,6 +652,517 @@ public final class RegionExecutionService {
     }
 
     /**
+     * Returns the velocity of the entity with the given unique id.
+     */
+    public org.bukkit.util.Vector getEntityVelocity(UUID entityId) {
+        String worldName = resolveEntityWorld(entityId);
+        if (worldName == null) {
+            return new org.bukkit.util.Vector();
+        }
+        WorldAccess world = requireWorld(worldName);
+        Location location = getEntityLocation(entityId);
+        if (location == null) {
+            return new org.bukkit.util.Vector();
+        }
+        RegionKey key = regionKeyFor(worldName, location.getBlockX(), location.getBlockZ());
+        try {
+            return lockFor(key).read(() -> {
+                WorldAccess.Vector3 velocity = world.getEntityVelocity(entityId);
+                return velocity == null
+                    ? new org.bukkit.util.Vector()
+                    : new org.bukkit.util.Vector(velocity.x(), velocity.y(), velocity.z());
+            });
+        } catch (Exception error) {
+            throw new RuntimeException("Failed to read velocity for entity " + entityId, error);
+        }
+    }
+
+    /**
+     * Sets the velocity of the entity with the given unique id.
+     *
+     * @return {@code true} if the entity was found and updated
+     */
+    public boolean setEntityVelocity(UUID entityId, org.bukkit.util.Vector velocity) {
+        String worldName = resolveEntityWorld(entityId);
+        if (worldName == null) {
+            return false;
+        }
+        WorldAccess world = requireWorld(worldName);
+        Location location = getEntityLocation(entityId);
+        if (location == null) {
+            return false;
+        }
+        RegionKey key = regionKeyFor(worldName, location.getBlockX(), location.getBlockZ());
+        WorldAccess.Vector3 vector = new WorldAccess.Vector3(velocity.getX(), velocity.getY(), velocity.getZ());
+        try {
+            return lockFor(key).write(() -> {
+                boolean success = world.setEntityVelocity(entityId, vector);
+                if (success) {
+                    activeRegions.add(key);
+                }
+                return success;
+            });
+        } catch (Exception error) {
+            throw new RuntimeException("Failed to set velocity for entity " + entityId, error);
+        }
+    }
+
+    /**
+     * Returns the distance the entity with the given unique id has fallen.
+     */
+    public float getEntityFallDistance(UUID entityId) {
+        String worldName = resolveEntityWorld(entityId);
+        if (worldName == null) {
+            return 0.0f;
+        }
+        WorldAccess world = requireWorld(worldName);
+        Location location = getEntityLocation(entityId);
+        if (location == null) {
+            return 0.0f;
+        }
+        RegionKey key = regionKeyFor(worldName, location.getBlockX(), location.getBlockZ());
+        try {
+            return lockFor(key).read(() -> world.getEntityFallDistance(entityId));
+        } catch (Exception error) {
+            throw new RuntimeException("Failed to read fall distance for entity " + entityId, error);
+        }
+    }
+
+    /**
+     * Sets the distance the entity with the given unique id has fallen.
+     *
+     * @return {@code true} if the entity was found and updated
+     */
+    public boolean setEntityFallDistance(UUID entityId, float distance) {
+        String worldName = resolveEntityWorld(entityId);
+        if (worldName == null) {
+            return false;
+        }
+        WorldAccess world = requireWorld(worldName);
+        Location location = getEntityLocation(entityId);
+        if (location == null) {
+            return false;
+        }
+        RegionKey key = regionKeyFor(worldName, location.getBlockX(), location.getBlockZ());
+        try {
+            return lockFor(key).write(() -> {
+                boolean success = world.setEntityFallDistance(entityId, distance);
+                if (success) {
+                    activeRegions.add(key);
+                }
+                return success;
+            });
+        } catch (Exception error) {
+            throw new RuntimeException("Failed to set fall distance for entity " + entityId, error);
+        }
+    }
+
+    /**
+     * Returns the number of ticks the entity with the given unique id is on fire.
+     */
+    public int getEntityFireTicks(UUID entityId) {
+        String worldName = resolveEntityWorld(entityId);
+        if (worldName == null) {
+            return 0;
+        }
+        WorldAccess world = requireWorld(worldName);
+        Location location = getEntityLocation(entityId);
+        if (location == null) {
+            return 0;
+        }
+        RegionKey key = regionKeyFor(worldName, location.getBlockX(), location.getBlockZ());
+        try {
+            return lockFor(key).read(() -> world.getEntityFireTicks(entityId));
+        } catch (Exception error) {
+            throw new RuntimeException("Failed to read fire ticks for entity " + entityId, error);
+        }
+    }
+
+    /**
+     * Sets the number of ticks the entity with the given unique id is on fire.
+     *
+     * @return {@code true} if the entity was found and updated
+     */
+    public boolean setEntityFireTicks(UUID entityId, int ticks) {
+        String worldName = resolveEntityWorld(entityId);
+        if (worldName == null) {
+            return false;
+        }
+        WorldAccess world = requireWorld(worldName);
+        Location location = getEntityLocation(entityId);
+        if (location == null) {
+            return false;
+        }
+        RegionKey key = regionKeyFor(worldName, location.getBlockX(), location.getBlockZ());
+        try {
+            return lockFor(key).write(() -> {
+                boolean success = world.setEntityFireTicks(entityId, ticks);
+                if (success) {
+                    activeRegions.add(key);
+                }
+                return success;
+            });
+        } catch (Exception error) {
+            throw new RuntimeException("Failed to set fire ticks for entity " + entityId, error);
+        }
+    }
+
+    /**
+     * Returns the passengers of the entity with the given unique id.
+     */
+    public List<org.bukkit.entity.Entity> getEntityPassengers(UUID entityId) {
+        String worldName = resolveEntityWorld(entityId);
+        if (worldName == null) {
+            return List.of();
+        }
+        WorldAccess world = requireWorld(worldName);
+        Location location = getEntityLocation(entityId);
+        if (location == null) {
+            return List.of();
+        }
+        RegionKey key = regionKeyFor(worldName, location.getBlockX(), location.getBlockZ());
+        try {
+            return lockFor(key).read(() -> {
+                Collection<UUID> passengerIds = world.getEntityPassengers(entityId);
+                List<org.bukkit.entity.Entity> passengers = new ArrayList<>(passengerIds.size());
+                for (UUID passengerId : passengerIds) {
+                    org.bukkit.entity.Entity passenger = resolveEntity(passengerId);
+                    if (passenger != null) {
+                        passengers.add(passenger);
+                    }
+                }
+                return List.copyOf(passengers);
+            });
+        } catch (Exception error) {
+            throw new RuntimeException("Failed to read passengers for entity " + entityId, error);
+        }
+    }
+
+    /**
+     * Adds a passenger to the entity with the given unique id.
+     *
+     * @return {@code true} if the passenger was added
+     */
+    public boolean addEntityPassenger(UUID entityId, org.bukkit.entity.Entity passenger) {
+        if (passenger == null) {
+            return false;
+        }
+        String worldName = resolveEntityWorld(entityId);
+        if (worldName == null) {
+            return false;
+        }
+        WorldAccess world = requireWorld(worldName);
+        Location location = getEntityLocation(entityId);
+        if (location == null) {
+            return false;
+        }
+        RegionKey key = regionKeyFor(worldName, location.getBlockX(), location.getBlockZ());
+        try {
+            return lockFor(key).write(() -> {
+                boolean success = world.addEntityPassenger(entityId, passenger.getUniqueId());
+                if (success) {
+                    activeRegions.add(key);
+                }
+                return success;
+            });
+        } catch (Exception error) {
+            throw new RuntimeException("Failed to add passenger to entity " + entityId, error);
+        }
+    }
+
+    /**
+     * Removes a passenger from the entity with the given unique id.
+     */
+    public boolean removeEntityPassenger(UUID entityId, org.bukkit.entity.Entity passenger) {
+        if (passenger == null) {
+            return false;
+        }
+        String worldName = resolveEntityWorld(entityId);
+        if (worldName == null) {
+            return false;
+        }
+        WorldAccess world = requireWorld(worldName);
+        Location location = getEntityLocation(entityId);
+        if (location == null) {
+            return false;
+        }
+        RegionKey key = regionKeyFor(worldName, location.getBlockX(), location.getBlockZ());
+        try {
+            return lockFor(key).write(() -> world.removeEntityPassenger(entityId, passenger.getUniqueId()));
+        } catch (Exception error) {
+            throw new RuntimeException("Failed to remove passenger from entity " + entityId, error);
+        }
+    }
+
+    /**
+     * Returns whether the entity with the given unique id is inside a vehicle.
+     */
+    public boolean isEntityInsideVehicle(UUID entityId) {
+        String worldName = resolveEntityWorld(entityId);
+        if (worldName == null) {
+            return false;
+        }
+        WorldAccess world = requireWorld(worldName);
+        Location location = getEntityLocation(entityId);
+        if (location == null) {
+            return false;
+        }
+        RegionKey key = regionKeyFor(worldName, location.getBlockX(), location.getBlockZ());
+        try {
+            return lockFor(key).read(() -> world.isEntityInsideVehicle(entityId));
+        } catch (Exception error) {
+            throw new RuntimeException("Failed to read vehicle state for entity " + entityId, error);
+        }
+    }
+
+    /**
+     * Returns the vehicle of the entity with the given unique id.
+     */
+    public org.bukkit.entity.Entity getEntityVehicle(UUID entityId) {
+        String worldName = resolveEntityWorld(entityId);
+        if (worldName == null) {
+            return null;
+        }
+        WorldAccess world = requireWorld(worldName);
+        Location location = getEntityLocation(entityId);
+        if (location == null) {
+            return null;
+        }
+        RegionKey key = regionKeyFor(worldName, location.getBlockX(), location.getBlockZ());
+        try {
+            return lockFor(key).read(() -> {
+                UUID vehicleId = world.getEntityVehicle(entityId);
+                return vehicleId == null ? null : resolveEntity(vehicleId);
+            });
+        } catch (Exception error) {
+            throw new RuntimeException("Failed to read vehicle for entity " + entityId, error);
+        }
+    }
+
+    /**
+     * Makes the entity with the given unique id leave its vehicle.
+     *
+     * @return {@code true} if the entity was inside a vehicle
+     */
+    public boolean leaveVehicle(UUID entityId) {
+        String worldName = resolveEntityWorld(entityId);
+        if (worldName == null) {
+            return false;
+        }
+        WorldAccess world = requireWorld(worldName);
+        Location location = getEntityLocation(entityId);
+        if (location == null) {
+            return false;
+        }
+        RegionKey key = regionKeyFor(worldName, location.getBlockX(), location.getBlockZ());
+        try {
+            return lockFor(key).write(() -> world.leaveVehicle(entityId));
+        } catch (Exception error) {
+            throw new RuntimeException("Failed to make entity " + entityId + " leave vehicle", error);
+        }
+    }
+
+    /**
+     * Returns the health of the living entity with the given unique id.
+     */
+    public double getEntityHealth(UUID entityId) {
+        String worldName = resolveEntityWorld(entityId);
+        if (worldName == null) {
+            return 0.0;
+        }
+        WorldAccess world = requireWorld(worldName);
+        Location location = getEntityLocation(entityId);
+        if (location == null) {
+            return 0.0;
+        }
+        RegionKey key = regionKeyFor(worldName, location.getBlockX(), location.getBlockZ());
+        try {
+            return lockFor(key).read(() -> world.getEntityHealth(entityId));
+        } catch (Exception error) {
+            throw new RuntimeException("Failed to read health for entity " + entityId, error);
+        }
+    }
+
+    /**
+     * Sets the health of the living entity with the given unique id.
+     *
+     * @return {@code true} if the entity was found and updated
+     */
+    public boolean setEntityHealth(UUID entityId, double health) {
+        String worldName = resolveEntityWorld(entityId);
+        if (worldName == null) {
+            return false;
+        }
+        WorldAccess world = requireWorld(worldName);
+        Location location = getEntityLocation(entityId);
+        if (location == null) {
+            return false;
+        }
+        RegionKey key = regionKeyFor(worldName, location.getBlockX(), location.getBlockZ());
+        try {
+            return lockFor(key).write(() -> {
+                boolean success = world.setEntityHealth(entityId, health);
+                if (success) {
+                    activeRegions.add(key);
+                }
+                return success;
+            });
+        } catch (Exception error) {
+            throw new RuntimeException("Failed to set health for entity " + entityId, error);
+        }
+    }
+
+    /**
+     * Returns the maximum health of the living entity with the given unique id.
+     */
+    public double getEntityMaxHealth(UUID entityId) {
+        String worldName = resolveEntityWorld(entityId);
+        if (worldName == null) {
+            return 0.0;
+        }
+        WorldAccess world = requireWorld(worldName);
+        Location location = getEntityLocation(entityId);
+        if (location == null) {
+            return 0.0;
+        }
+        RegionKey key = regionKeyFor(worldName, location.getBlockX(), location.getBlockZ());
+        try {
+            return lockFor(key).read(() -> world.getEntityMaxHealth(entityId));
+        } catch (Exception error) {
+            throw new RuntimeException("Failed to read max health for entity " + entityId, error);
+        }
+    }
+
+    /**
+     * Sets the maximum health of the living entity with the given unique id.
+     *
+     * @return {@code true} if the entity was found and updated
+     */
+    public boolean setEntityMaxHealth(UUID entityId, double maxHealth) {
+        String worldName = resolveEntityWorld(entityId);
+        if (worldName == null) {
+            return false;
+        }
+        WorldAccess world = requireWorld(worldName);
+        Location location = getEntityLocation(entityId);
+        if (location == null) {
+            return false;
+        }
+        RegionKey key = regionKeyFor(worldName, location.getBlockX(), location.getBlockZ());
+        try {
+            return lockFor(key).write(() -> {
+                boolean success = world.setEntityMaxHealth(entityId, maxHealth);
+                if (success) {
+                    activeRegions.add(key);
+                }
+                return success;
+            });
+        } catch (Exception error) {
+            throw new RuntimeException("Failed to set max health for entity " + entityId, error);
+        }
+    }
+
+    /**
+     * Returns whether the living entity with the given unique id has AI enabled.
+     */
+    public boolean isEntityAiEnabled(UUID entityId) {
+        String worldName = resolveEntityWorld(entityId);
+        if (worldName == null) {
+            return true;
+        }
+        WorldAccess world = requireWorld(worldName);
+        Location location = getEntityLocation(entityId);
+        if (location == null) {
+            return true;
+        }
+        RegionKey key = regionKeyFor(worldName, location.getBlockX(), location.getBlockZ());
+        try {
+            return lockFor(key).read(() -> world.isEntityAiEnabled(entityId));
+        } catch (Exception error) {
+            throw new RuntimeException("Failed to read AI state for entity " + entityId, error);
+        }
+    }
+
+    /**
+     * Sets whether the living entity with the given unique id has AI enabled.
+     *
+     * @return {@code true} if the entity was found and updated
+     */
+    public boolean setEntityAiEnabled(UUID entityId, boolean ai) {
+        String worldName = resolveEntityWorld(entityId);
+        if (worldName == null) {
+            return false;
+        }
+        WorldAccess world = requireWorld(worldName);
+        Location location = getEntityLocation(entityId);
+        if (location == null) {
+            return false;
+        }
+        RegionKey key = regionKeyFor(worldName, location.getBlockX(), location.getBlockZ());
+        try {
+            return lockFor(key).write(() -> {
+                boolean success = world.setEntityAiEnabled(entityId, ai);
+                if (success) {
+                    activeRegions.add(key);
+                }
+                return success;
+            });
+        } catch (Exception error) {
+            throw new RuntimeException("Failed to set AI state for entity " + entityId, error);
+        }
+    }
+
+    /**
+     * Returns whether the living entity with the given unique id is collidable.
+     */
+    public boolean isEntityCollidable(UUID entityId) {
+        String worldName = resolveEntityWorld(entityId);
+        if (worldName == null) {
+            return true;
+        }
+        WorldAccess world = requireWorld(worldName);
+        Location location = getEntityLocation(entityId);
+        if (location == null) {
+            return true;
+        }
+        RegionKey key = regionKeyFor(worldName, location.getBlockX(), location.getBlockZ());
+        try {
+            return lockFor(key).read(() -> world.isEntityCollidable(entityId));
+        } catch (Exception error) {
+            throw new RuntimeException("Failed to read collidable state for entity " + entityId, error);
+        }
+    }
+
+    /**
+     * Sets whether the living entity with the given unique id is collidable.
+     *
+     * @return {@code true} if the entity was found and updated
+     */
+    public boolean setEntityCollidable(UUID entityId, boolean collidable) {
+        String worldName = resolveEntityWorld(entityId);
+        if (worldName == null) {
+            return false;
+        }
+        WorldAccess world = requireWorld(worldName);
+        Location location = getEntityLocation(entityId);
+        if (location == null) {
+            return false;
+        }
+        RegionKey key = regionKeyFor(worldName, location.getBlockX(), location.getBlockZ());
+        try {
+            return lockFor(key).write(() -> {
+                boolean success = world.setEntityCollidable(entityId, collidable);
+                if (success) {
+                    activeRegions.add(key);
+                }
+                return success;
+            });
+        } catch (Exception error) {
+            throw new RuntimeException("Failed to set collidable state for entity " + entityId, error);
+        }
+    }
+
+    /**
      * Returns the game mode of the player with the given unique id.
      */
     public org.bukkit.GameMode getPlayerGameMode(UUID playerId) {
@@ -491,6 +1198,342 @@ public final class RegionExecutionService {
     }
 
     /**
+     * Disconnects the player with the given unique id from the server.
+     */
+    public void kickPlayer(UUID playerId, String message) {
+        String worldName = resolveEntityWorld(playerId);
+        if (worldName == null) {
+            return;
+        }
+        WorldAccess world = worldAccessFactory.access(worldName);
+        if (world == null) {
+            return;
+        }
+        world.kickPlayer(playerId, message);
+    }
+
+    /**
+     * Sends a title and optional subtitle to the player with the given unique id.
+     */
+    public void sendTitle(UUID playerId, String title, String subtitle, int fadeIn, int stay, int fadeOut) {
+        String worldName = resolveEntityWorld(playerId);
+        if (worldName == null) {
+            return;
+        }
+        WorldAccess world = worldAccessFactory.access(worldName);
+        if (world == null) {
+            return;
+        }
+        world.sendTitle(playerId, title, subtitle, fadeIn, stay, fadeOut);
+    }
+
+    /**
+     * Resets the title currently displayed to the player with the given unique id.
+     */
+    public void resetTitle(UUID playerId) {
+        String worldName = resolveEntityWorld(playerId);
+        if (worldName == null) {
+            return;
+        }
+        WorldAccess world = worldAccessFactory.access(worldName);
+        if (world == null) {
+            return;
+        }
+        world.resetTitle(playerId);
+    }
+
+    /**
+     * Executes a command as the player with the given unique id.
+     *
+     * @return {@code true} if the command was found and executed
+     */
+    public boolean performCommand(UUID playerId, String command) {
+        String worldName = resolveEntityWorld(playerId);
+        if (worldName == null) {
+            return false;
+        }
+        WorldAccess world = worldAccessFactory.access(worldName);
+        if (world == null) {
+            return false;
+        }
+        return world.performCommand(playerId, command);
+    }
+
+    /**
+     * Sends the current inventory contents to the player with the given unique id.
+     */
+    public void updateInventory(UUID playerId) {
+        String worldName = resolveEntityWorld(playerId);
+        if (worldName == null) {
+            return;
+        }
+        WorldAccess world = worldAccessFactory.access(worldName);
+        if (world == null) {
+            return;
+        }
+        world.updateInventory(playerId);
+    }
+
+    /**
+     * Opens the given inventory for the player with the given unique id.
+     *
+     * @return {@code true} if the inventory was opened
+     */
+    public boolean openInventory(UUID playerId, org.bukkit.inventory.Inventory inventory) {
+        String worldName = resolveEntityWorld(playerId);
+        if (worldName == null) {
+            return false;
+        }
+        WorldAccess world = worldAccessFactory.access(worldName);
+        if (world == null) {
+            return false;
+        }
+        return world.openInventory(playerId, inventory);
+    }
+
+    /**
+     * Sets the resource pack URL for the player with the given unique id.
+     */
+    public void setResourcePack(UUID playerId, String url) {
+        String worldName = resolveEntityWorld(playerId);
+        if (worldName == null) {
+            return;
+        }
+        WorldAccess world = worldAccessFactory.access(worldName);
+        if (world == null) {
+            return;
+        }
+        world.setResourcePack(playerId, url);
+    }
+
+    /**
+     * Returns whether the player with the given unique id is sneaking.
+     */
+    public boolean isSneaking(UUID playerId) {
+        String worldName = resolveEntityWorld(playerId);
+        if (worldName == null) {
+            return false;
+        }
+        WorldAccess world = requireWorld(worldName);
+        Location location = getEntityLocation(playerId);
+        if (location == null) {
+            return false;
+        }
+        RegionKey key = regionKeyFor(worldName, location.getBlockX(), location.getBlockZ());
+        try {
+            return lockFor(key).read(() -> world.isSneaking(playerId));
+        } catch (Exception error) {
+            throw new RuntimeException("Failed to read sneaking state for player " + playerId, error);
+        }
+    }
+
+    /**
+     * Sets whether the player with the given unique id is sneaking.
+     */
+    public void setSneaking(UUID playerId, boolean sneaking) {
+        String worldName = resolveEntityWorld(playerId);
+        if (worldName == null) {
+            return;
+        }
+        WorldAccess world = requireWorld(worldName);
+        Location location = getEntityLocation(playerId);
+        if (location == null) {
+            return;
+        }
+        RegionKey key = regionKeyFor(worldName, location.getBlockX(), location.getBlockZ());
+        try {
+            lockFor(key).write(() -> {
+                world.setSneaking(playerId, sneaking);
+                activeRegions.add(key);
+            });
+        } catch (Exception error) {
+            throw new RuntimeException("Failed to set sneaking state for player " + playerId, error);
+        }
+    }
+
+    /**
+     * Returns whether the player with the given unique id is sprinting.
+     */
+    public boolean isSprinting(UUID playerId) {
+        String worldName = resolveEntityWorld(playerId);
+        if (worldName == null) {
+            return false;
+        }
+        WorldAccess world = requireWorld(worldName);
+        Location location = getEntityLocation(playerId);
+        if (location == null) {
+            return false;
+        }
+        RegionKey key = regionKeyFor(worldName, location.getBlockX(), location.getBlockZ());
+        try {
+            return lockFor(key).read(() -> world.isSprinting(playerId));
+        } catch (Exception error) {
+            throw new RuntimeException("Failed to read sprinting state for player " + playerId, error);
+        }
+    }
+
+    /**
+     * Sets whether the player with the given unique id is sprinting.
+     */
+    public void setSprinting(UUID playerId, boolean sprinting) {
+        String worldName = resolveEntityWorld(playerId);
+        if (worldName == null) {
+            return;
+        }
+        WorldAccess world = requireWorld(worldName);
+        Location location = getEntityLocation(playerId);
+        if (location == null) {
+            return;
+        }
+        RegionKey key = regionKeyFor(worldName, location.getBlockX(), location.getBlockZ());
+        try {
+            lockFor(key).write(() -> {
+                world.setSprinting(playerId, sprinting);
+                activeRegions.add(key);
+            });
+        } catch (Exception error) {
+            throw new RuntimeException("Failed to set sprinting state for player " + playerId, error);
+        }
+    }
+
+    /**
+     * Returns the armor contents of the player with the given unique id.
+     */
+    public org.bukkit.inventory.ItemStack[] getPlayerArmor(UUID playerId) {
+        String worldName = resolveEntityWorld(playerId);
+        if (worldName == null) {
+            return new org.bukkit.inventory.ItemStack[4];
+        }
+        WorldAccess world = requireWorld(worldName);
+        Location location = getEntityLocation(playerId);
+        if (location == null) {
+            return new org.bukkit.inventory.ItemStack[4];
+        }
+        RegionKey key = regionKeyFor(worldName, location.getBlockX(), location.getBlockZ());
+        try {
+            return lockFor(key).read(() -> world.getPlayerArmor(playerId));
+        } catch (Exception error) {
+            throw new RuntimeException("Failed to read armor for player " + playerId, error);
+        }
+    }
+
+    /**
+     * Sets the armor contents of the player with the given unique id.
+     */
+    public void setPlayerArmor(UUID playerId, org.bukkit.inventory.ItemStack[] armor) {
+        String worldName = resolveEntityWorld(playerId);
+        if (worldName == null) {
+            return;
+        }
+        WorldAccess world = requireWorld(worldName);
+        Location location = getEntityLocation(playerId);
+        if (location == null) {
+            return;
+        }
+        RegionKey key = regionKeyFor(worldName, location.getBlockX(), location.getBlockZ());
+        try {
+            lockFor(key).write(() -> {
+                world.setPlayerArmor(playerId, armor);
+                activeRegions.add(key);
+            });
+        } catch (Exception error) {
+            throw new RuntimeException("Failed to set armor for player " + playerId, error);
+        }
+    }
+
+    /**
+     * Returns the off-hand item of the player with the given unique id.
+     */
+    public org.bukkit.inventory.ItemStack getPlayerOffHand(UUID playerId) {
+        String worldName = resolveEntityWorld(playerId);
+        if (worldName == null) {
+            return null;
+        }
+        WorldAccess world = requireWorld(worldName);
+        Location location = getEntityLocation(playerId);
+        if (location == null) {
+            return null;
+        }
+        RegionKey key = regionKeyFor(worldName, location.getBlockX(), location.getBlockZ());
+        try {
+            return lockFor(key).read(() -> world.getPlayerOffHand(playerId));
+        } catch (Exception error) {
+            throw new RuntimeException("Failed to read off-hand item for player " + playerId, error);
+        }
+    }
+
+    /**
+     * Sets the off-hand item of the player with the given unique id.
+     */
+    public void setPlayerOffHand(UUID playerId, org.bukkit.inventory.ItemStack item) {
+        String worldName = resolveEntityWorld(playerId);
+        if (worldName == null) {
+            return;
+        }
+        WorldAccess world = requireWorld(worldName);
+        Location location = getEntityLocation(playerId);
+        if (location == null) {
+            return;
+        }
+        RegionKey key = regionKeyFor(worldName, location.getBlockX(), location.getBlockZ());
+        try {
+            lockFor(key).write(() -> {
+                world.setPlayerOffHand(playerId, item);
+                activeRegions.add(key);
+            });
+        } catch (Exception error) {
+            throw new RuntimeException("Failed to set off-hand item for player " + playerId, error);
+        }
+    }
+
+    /**
+     * Returns the currently selected hotbar slot of the player with the given
+     * unique id.
+     */
+    public int getPlayerHeldSlot(UUID playerId) {
+        String worldName = resolveEntityWorld(playerId);
+        if (worldName == null) {
+            return 0;
+        }
+        WorldAccess world = requireWorld(worldName);
+        Location location = getEntityLocation(playerId);
+        if (location == null) {
+            return 0;
+        }
+        RegionKey key = regionKeyFor(worldName, location.getBlockX(), location.getBlockZ());
+        try {
+            return lockFor(key).read(() -> world.getPlayerHeldSlot(playerId));
+        } catch (Exception error) {
+            throw new RuntimeException("Failed to read held slot for player " + playerId, error);
+        }
+    }
+
+    /**
+     * Sets the currently selected hotbar slot of the player with the given
+     * unique id.
+     */
+    public void setPlayerHeldSlot(UUID playerId, int slot) {
+        String worldName = resolveEntityWorld(playerId);
+        if (worldName == null) {
+            return;
+        }
+        WorldAccess world = requireWorld(worldName);
+        Location location = getEntityLocation(playerId);
+        if (location == null) {
+            return;
+        }
+        RegionKey key = regionKeyFor(worldName, location.getBlockX(), location.getBlockZ());
+        try {
+            lockFor(key).write(() -> {
+                world.setPlayerHeldSlot(playerId, slot);
+                activeRegions.add(key);
+            });
+        } catch (Exception error) {
+            throw new RuntimeException("Failed to set held slot for player " + playerId, error);
+        }
+    }
+
+    /**
      * Deals damage to the entity with the given unique id.
      *
      * <p>Fires an {@link EntityDamageEvent} before applying damage. If the event
@@ -518,9 +1561,7 @@ public final class RegionExecutionService {
                 if (event.cancelled()) {
                     return;
                 }
-                if (entity instanceof org.bukkit.entity.LivingEntity living) {
-                    living.damage(event.getDamage());
-                }
+                world.damageEntity(entityId, event.getDamage());
                 activeRegions.add(key);
             });
         } catch (Exception error) {
@@ -528,7 +1569,14 @@ public final class RegionExecutionService {
         }
     }
 
-    private org.bukkit.entity.Entity resolveEntity(UUID entityId) {
+    /**
+     * Resolves a tracked entity to its appropriate Bukkit view.
+     *
+     * <p>Players become {@code HyperCorePlayer}, living mobs become
+     * {@code HyperCoreLivingEntity}, and everything else becomes a plain
+     * {@code HyperCoreEntity}.
+     */
+    public org.bukkit.entity.Entity resolveEntity(UUID entityId) {
         org.bukkit.entity.EntityType type = getEntityType(entityId);
         if (type == null) {
             return null;
@@ -536,7 +1584,18 @@ public final class RegionExecutionService {
         if (type == org.bukkit.entity.EntityType.PLAYER) {
             return resolvePlayer(entityId);
         }
+        if (isLivingEntityType(type)) {
+            return new HyperCoreLivingEntity(this, entityId);
+        }
         return new HyperCoreEntity(this, entityId);
+    }
+
+    private static boolean isLivingEntityType(org.bukkit.entity.EntityType type) {
+        return switch (type) {
+            case ZOMBIE, SKELETON, CREEPER, SPIDER, CAVE_SPIDER, ENDERMAN, WITCH,
+                 VILLAGER, PIG, COW, SHEEP, CHICKEN, HORSE -> true;
+            default -> false;
+        };
     }
 
     /**
@@ -631,6 +1690,68 @@ public final class RegionExecutionService {
     private int getEntityZ(UUID entityId) {
         Location location = getEntityLocation(entityId);
         return location == null ? 0 : location.getBlockZ();
+    }
+
+    private org.bukkit.block.Biome toBukkitBiome(String biomeKey) {
+        if (biomeKey == null) {
+            return org.bukkit.block.Biome.CUSTOM;
+        }
+        String key = biomeKey.toLowerCase(java.util.Locale.ROOT);
+        return switch (key) {
+            case "minecraft:ocean" -> org.bukkit.block.Biome.OCEAN;
+            case "minecraft:plains" -> org.bukkit.block.Biome.PLAINS;
+            case "minecraft:desert" -> org.bukkit.block.Biome.DESERT;
+            case "minecraft:windswept_hills" -> org.bukkit.block.Biome.WINDSWEPT_HILLS;
+            case "minecraft:forest" -> org.bukkit.block.Biome.FOREST;
+            case "minecraft:taiga" -> org.bukkit.block.Biome.TAIGA;
+            case "minecraft:swamp" -> org.bukkit.block.Biome.SWAMP;
+            case "minecraft:river" -> org.bukkit.block.Biome.RIVER;
+            case "minecraft:nether_wastes" -> org.bukkit.block.Biome.NETHER_WASTES;
+            case "minecraft:the_end" -> org.bukkit.block.Biome.THE_END;
+            case "minecraft:frozen_ocean" -> org.bukkit.block.Biome.FROZEN_OCEAN;
+            case "minecraft:frozen_river" -> org.bukkit.block.Biome.FROZEN_RIVER;
+            case "minecraft:snowy_plains" -> org.bukkit.block.Biome.SNOWY_PLAINS;
+            case "minecraft:mushroom_fields" -> org.bukkit.block.Biome.MUSHROOM_FIELDS;
+            case "minecraft:beach" -> org.bukkit.block.Biome.BEACH;
+            case "minecraft:jungle" -> org.bukkit.block.Biome.JUNGLE;
+            case "minecraft:birch_forest" -> org.bukkit.block.Biome.BIRCH_FOREST;
+            case "minecraft:dark_forest" -> org.bukkit.block.Biome.DARK_FOREST;
+            case "minecraft:savanna" -> org.bukkit.block.Biome.SAVANNA;
+            case "minecraft:badlands" -> org.bukkit.block.Biome.BADLANDS;
+            case "minecraft:wooded_badlands" -> org.bukkit.block.Biome.WOODED_BADLANDS;
+            case "minecraft:meadow" -> org.bukkit.block.Biome.MEADOW;
+            case "minecraft:cherry_grove" -> org.bukkit.block.Biome.CHERRY_GROVE;
+            default -> org.bukkit.block.Biome.CUSTOM;
+        };
+    }
+
+    private String toBiomeKey(org.bukkit.block.Biome biome) {
+        return switch (biome) {
+            case OCEAN -> "minecraft:ocean";
+            case PLAINS -> "minecraft:plains";
+            case DESERT -> "minecraft:desert";
+            case WINDSWEPT_HILLS -> "minecraft:windswept_hills";
+            case FOREST -> "minecraft:forest";
+            case TAIGA -> "minecraft:taiga";
+            case SWAMP -> "minecraft:swamp";
+            case RIVER -> "minecraft:river";
+            case NETHER_WASTES -> "minecraft:nether_wastes";
+            case THE_END -> "minecraft:the_end";
+            case FROZEN_OCEAN -> "minecraft:frozen_ocean";
+            case FROZEN_RIVER -> "minecraft:frozen_river";
+            case SNOWY_PLAINS -> "minecraft:snowy_plains";
+            case MUSHROOM_FIELDS -> "minecraft:mushroom_fields";
+            case BEACH -> "minecraft:beach";
+            case JUNGLE -> "minecraft:jungle";
+            case BIRCH_FOREST -> "minecraft:birch_forest";
+            case DARK_FOREST -> "minecraft:dark_forest";
+            case SAVANNA -> "minecraft:savanna";
+            case BADLANDS -> "minecraft:badlands";
+            case WOODED_BADLANDS -> "minecraft:wooded_badlands";
+            case MEADOW -> "minecraft:meadow";
+            case CHERRY_GROVE -> "minecraft:cherry_grove";
+            case CUSTOM -> "minecraft:plains";
+        };
     }
 
     private WorldAccess requireWorld(String worldName) {

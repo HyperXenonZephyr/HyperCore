@@ -16,13 +16,16 @@ import org.bukkit.block.BlockState;
 import org.bukkit.command.PluginCommand;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.EntityType;
+import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
+import org.bukkit.util.Vector;
 import org.bukkit.event.Listener;
 import org.bukkit.event.block.BlockPlaceEvent;
 import org.bukkit.event.entity.EntityDamageEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
 import org.bukkit.inventory.Inventory;
+import org.bukkit.inventory.ItemMeta;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.permissions.Permission;
@@ -88,12 +91,20 @@ public final class GametestBukkitPlugin extends JavaPlugin implements Listener {
             }
             return switch (args[0]) {
                 case "block" -> runBlockTest(args);
+                case "blockdata" -> runBlockDataTest(args);
+                case "blocklight" -> runBlockLightTest(args);
                 case "entity" -> runEntityTest(args);
+                case "entityproperties" -> runEntityPropertiesTest(args);
                 case "player" -> runPlayerTest(args);
+                case "playerexclusive" -> runPlayerExclusiveTest(args);
                 case "inventory" -> runInventoryTest(args);
+                case "inventorymeta" -> runInventoryMetaTest(args);
+                case "playerarmor" -> runPlayerArmorTest();
                 case "event" -> runEventTest(args);
                 case "permission" -> runPermissionTest();
                 case "world" -> runWorldTest();
+                case "worldstate" -> runWorldStateTest();
+                case "biome" -> runBiomeTest(args);
                 case "parallel" -> runParallelTest(args);
                 default -> false;
             };
@@ -156,6 +167,64 @@ public final class GametestBukkitPlugin extends JavaPlugin implements Listener {
         return true;
     }
 
+    private boolean runBlockDataTest(String[] args) {
+        if (args.length != 4) {
+            throw new IllegalArgumentException("Usage: /hypercore-gametest blockdata <x> <y> <z>");
+        }
+        int x = Integer.parseInt(args[1]);
+        int y = Integer.parseInt(args[2]);
+        int z = Integer.parseInt(args[3]);
+
+        World world = firstWorld();
+        Block block = world.getBlockAt(x, y, z);
+        block.setType(Material.STONE);
+
+        Block relative = block.getRelative(org.bukkit.block.BlockFace.UP);
+        if (relative.getY() != y + 1) {
+            throw new IllegalStateException("Relative block did not compute correct coordinates");
+        }
+
+        org.bukkit.block.data.BlockData data = block.getBlockData();
+        if (data == null || data.getMaterial() != Material.STONE) {
+            throw new IllegalStateException("BlockData material mismatch: " + data);
+        }
+
+        BlockState state = block.getState();
+        state.setType(Material.DIRT);
+        if (!state.update(true, false)) {
+            throw new IllegalStateException("BlockState update returned false");
+        }
+        if (block.getType() != Material.DIRT) {
+            throw new IllegalStateException("Expected DIRT after BlockData update at " + x + "," + y + "," + z);
+        }
+
+        return true;
+    }
+
+    private boolean runBlockLightTest(String[] args) {
+        if (args.length != 4) {
+            throw new IllegalArgumentException("Usage: /hypercore-gametest blocklight <x> <y> <z>");
+        }
+        int x = Integer.parseInt(args[1]);
+        int y = Integer.parseInt(args[2]);
+        int z = Integer.parseInt(args[3]);
+
+        World world = firstWorld();
+        Block block = world.getBlockAt(x, y, z);
+
+        // Light values should be non-negative and within the Minecraft range.
+        int light = block.getLightLevel();
+        if (light < 0 || light > 15) {
+            throw new IllegalStateException("Block light out of range: " + light);
+        }
+        int sky = block.getLightFromSky();
+        if (sky < 0 || sky > 15) {
+            throw new IllegalStateException("Sky light out of range: " + sky);
+        }
+
+        return true;
+    }
+
     private boolean runEntityTest(String[] args) {
         if (args.length != 4) {
             throw new IllegalArgumentException("Usage: /hypercore-gametest entity <x> <y> <z>");
@@ -202,6 +271,88 @@ public final class GametestBukkitPlugin extends JavaPlugin implements Listener {
         return true;
     }
 
+    private boolean runEntityPropertiesTest(String[] args) {
+        if (args.length != 4) {
+            throw new IllegalArgumentException("Usage: /hypercore-gametest entityproperties <x> <y> <z>");
+        }
+        double x = Double.parseDouble(args[1]);
+        double y = Double.parseDouble(args[2]);
+        double z = Double.parseDouble(args[3]);
+
+        World world = firstWorld();
+        Location spawn = new Location(world, x, y, z);
+        Entity entity = world.spawnEntity(spawn, EntityType.ZOMBIE);
+        if (entity == null) {
+            throw new IllegalStateException("Failed to spawn zombie at " + spawn);
+        }
+        if (!(entity instanceof LivingEntity living)) {
+            throw new IllegalStateException("Spawned zombie is not a LivingEntity: " + entity.getClass());
+        }
+
+        Vector velocity = new Vector(1.0, 2.0, 3.0);
+        living.setVelocity(velocity);
+        Vector readVelocity = living.getVelocity();
+        if (readVelocity == null
+            || Math.abs(readVelocity.getX() - velocity.getX()) > 0.01
+            || Math.abs(readVelocity.getY() - velocity.getY()) > 0.01
+            || Math.abs(readVelocity.getZ() - velocity.getZ()) > 0.01) {
+            throw new IllegalStateException("Velocity mismatch: " + readVelocity);
+        }
+
+        living.setFallDistance(5.0f);
+        if (Math.abs(living.getFallDistance() - 5.0f) > 0.01f) {
+            throw new IllegalStateException("Fall distance mismatch: " + living.getFallDistance());
+        }
+
+        living.setFireTicks(100);
+        if (living.getFireTicks() != 100) {
+            throw new IllegalStateException("Fire ticks mismatch: " + living.getFireTicks());
+        }
+
+        double originalMaxHealth = living.getMaxHealth();
+        if (originalMaxHealth <= 0.0) {
+            throw new IllegalStateException("Invalid original max health: " + originalMaxHealth);
+        }
+
+        living.setMaxHealth(30.0);
+        if (Math.abs(living.getMaxHealth() - 30.0) > 0.01) {
+            throw new IllegalStateException("Max health mismatch: " + living.getMaxHealth());
+        }
+
+        living.setHealth(10.0);
+        if (Math.abs(living.getHealth() - 10.0) > 0.01) {
+            throw new IllegalStateException("Health mismatch: " + living.getHealth());
+        }
+
+        if (!living.hasAI()) {
+            throw new IllegalStateException("AI should be enabled by default");
+        }
+        living.setAI(false);
+        if (living.hasAI()) {
+            throw new IllegalStateException("AI was not disabled");
+        }
+        living.setAI(true);
+
+        Entity passenger = world.spawnEntity(new Location(world, x, y + 1, z), EntityType.CHICKEN);
+        if (passenger == null) {
+            throw new IllegalStateException("Failed to spawn chicken passenger");
+        }
+        if (!living.addPassenger(passenger)) {
+            throw new IllegalStateException("Failed to add passenger");
+        }
+        if (!living.getPassengers().contains(passenger)) {
+            throw new IllegalStateException("Passenger not reported: " + living.getPassengers());
+        }
+        living.removePassenger(passenger);
+        if (!living.getPassengers().isEmpty()) {
+            throw new IllegalStateException("Passenger was not removed: " + living.getPassengers());
+        }
+
+        passenger.remove();
+        entity.remove();
+        return true;
+    }
+
     private boolean runPlayerTest(String[] args) {
         if (args.length != 4) {
             throw new IllegalArgumentException("Usage: /hypercore-gametest player <x> <y> <z>");
@@ -243,6 +394,36 @@ public final class GametestBukkitPlugin extends JavaPlugin implements Listener {
         return true;
     }
 
+    private boolean runPlayerExclusiveTest(String[] args) {
+        if (args.length != 4) {
+            throw new IllegalArgumentException("Usage: /hypercore-gametest playerexclusive <x> <y> <z>");
+        }
+        Player player = Bukkit.getOnlinePlayers().isEmpty() ? null : Bukkit.getOnlinePlayers().iterator().next();
+        if (player == null) {
+            getLogger().warning("No online player available; skipping player-exclusive API test");
+            return true;
+        }
+
+        player.setSneaking(true);
+        if (!player.isSneaking()) {
+            throw new IllegalStateException("Player sneaking state was not set");
+        }
+        player.setSneaking(false);
+
+        player.setSprinting(true);
+        if (!player.isSprinting()) {
+            throw new IllegalStateException("Player sprinting state was not set");
+        }
+        player.setSprinting(false);
+
+        player.sendTitle("GameTest Title", "GameTest Subtitle", 10, 70, 20);
+        player.resetTitle();
+        player.updateInventory();
+        player.setResourcePack("https://example.com/resourcepack.zip");
+
+        return true;
+    }
+
     private boolean runInventoryTest(String[] args) {
         if (args.length != 4) {
             throw new IllegalArgumentException("Usage: /hypercore-gametest inventory <x> <y> <z>");
@@ -277,6 +458,85 @@ public final class GametestBukkitPlugin extends JavaPlugin implements Listener {
         return true;
     }
 
+    private boolean runInventoryMetaTest(String[] args) {
+        if (args.length != 4) {
+            throw new IllegalArgumentException("Usage: /hypercore-gametest inventorymeta <x> <y> <z>");
+        }
+        int x = Integer.parseInt(args[1]);
+        int y = Integer.parseInt(args[2]);
+        int z = Integer.parseInt(args[3]);
+
+        World world = firstWorld();
+        Block block = world.getBlockAt(x, y, z);
+        block.setType(Material.CHEST);
+
+        BlockState state = block.getState();
+        Inventory inventory = state.getInventory();
+        if (inventory == null) {
+            throw new IllegalStateException("Chest at " + x + "," + y + "," + z + " did not expose an inventory");
+        }
+
+        ItemStack item = new ItemStack(Material.DIAMOND_SWORD);
+        ItemMeta meta = item.getItemMetaOrCreate();
+        meta.setDisplayName("GameTest Sword");
+        meta.setLore(List.of("Line 1", "Line 2"));
+        meta.addEnchant(org.bukkit.enchantments.Enchantment.SHARPNESS, 3, true);
+        item.setItemMeta(meta);
+
+        inventory.setItem(0, item);
+        ItemStack read = inventory.getItem(0);
+        if (read == null || read.getType() != Material.DIAMOND_SWORD) {
+            throw new IllegalStateException("Inventory meta write/read mismatch: " + read);
+        }
+        ItemMeta readMeta = read.getItemMeta();
+        if (readMeta == null) {
+            throw new IllegalStateException("Read item meta is null");
+        }
+        if (!"GameTest Sword".equals(readMeta.getDisplayName())) {
+            throw new IllegalStateException("Display name mismatch: " + readMeta.getDisplayName());
+        }
+        if (readMeta.getLore() == null || readMeta.getLore().size() != 2) {
+            throw new IllegalStateException("Lore mismatch: " + readMeta.getLore());
+        }
+        if (readMeta.getEnchantLevel(org.bukkit.enchantments.Enchantment.SHARPNESS) != 3) {
+            throw new IllegalStateException("Enchantment mismatch: " + readMeta.getEnchants());
+        }
+
+        return true;
+    }
+
+    private boolean runPlayerArmorTest() {
+        Player player = Bukkit.getOnlinePlayers().isEmpty() ? null : Bukkit.getOnlinePlayers().iterator().next();
+        if (player == null) {
+            getLogger().warning("No online player available; skipping player armor test");
+            return true;
+        }
+
+        org.bukkit.inventory.PlayerInventory inventory = player.getInventory();
+        ItemStack[] originalArmor = inventory.getArmorContents();
+
+        ItemStack helmet = new ItemStack(Material.DIAMOND);
+        ItemMeta meta = helmet.getItemMetaOrCreate();
+        meta.setDisplayName("GameTest Helmet");
+        helmet.setItemMeta(meta);
+
+        ItemStack[] armor = new ItemStack[4];
+        armor[3] = helmet;
+        inventory.setArmorContents(armor);
+
+        ItemStack[] updated = inventory.getArmorContents();
+        if (updated[3] == null || updated[3].getType() != Material.DIAMOND) {
+            throw new IllegalStateException("Armor contents were not set: " + updated[3]);
+        }
+        ItemMeta updatedMeta = updated[3].getItemMeta();
+        if (updatedMeta == null || !"GameTest Helmet".equals(updatedMeta.getDisplayName())) {
+            throw new IllegalStateException("Armor meta was not preserved: " + updatedMeta);
+        }
+
+        inventory.setArmorContents(originalArmor);
+        return true;
+    }
+
     private boolean runPermissionTest() {
         Permission permission = Bukkit.getPluginManager().getPermission("hypercore.gametest.admin");
         if (permission == null) {
@@ -307,6 +567,59 @@ public final class GametestBukkitPlugin extends JavaPlugin implements Listener {
         if (nether == null) {
             throw new IllegalStateException("WorldCreator did not return the nether");
         }
+        return true;
+    }
+
+    private boolean runWorldStateTest() {
+        World world = firstWorld();
+
+        long originalTime = world.getTime();
+        world.setTime(6000);
+        if (world.getTime() != 6000) {
+            throw new IllegalStateException("World time was not set: " + world.getTime());
+        }
+        world.setTime(originalTime);
+
+        boolean originalStorm = world.hasStorm();
+        world.setStorm(true);
+        if (!world.hasStorm()) {
+            throw new IllegalStateException("World storm was not set");
+        }
+        world.setStorm(originalStorm);
+
+        Location spawn = world.getSpawnLocation();
+        if (spawn == null) {
+            throw new IllegalStateException("World spawn location is null");
+        }
+        Location newSpawn = new Location(world, spawn.getX() + 1, spawn.getY(), spawn.getZ() + 1);
+        world.setSpawnLocation(newSpawn);
+        Location updatedSpawn = world.getSpawnLocation();
+        if (updatedSpawn == null
+            || updatedSpawn.getBlockX() != newSpawn.getBlockX()
+            || updatedSpawn.getBlockZ() != newSpawn.getBlockZ()) {
+            throw new IllegalStateException("World spawn location was not updated: " + updatedSpawn);
+        }
+        world.setSpawnLocation(spawn);
+
+        return true;
+    }
+
+    private boolean runBiomeTest(String[] args) {
+        if (args.length != 4) {
+            throw new IllegalArgumentException("Usage: /hypercore-gametest biome <x> <y> <z>");
+        }
+        int x = Integer.parseInt(args[1]);
+        int y = Integer.parseInt(args[2]);
+        int z = Integer.parseInt(args[3]);
+
+        World world = firstWorld();
+        org.bukkit.block.Biome originalBiome = world.getBiome(x, y, z);
+        world.setBiome(x, y, z, org.bukkit.block.Biome.PLAINS);
+        org.bukkit.block.Biome updatedBiome = world.getBiome(x, y, z);
+        if (updatedBiome != org.bukkit.block.Biome.PLAINS) {
+            throw new IllegalStateException("Biome was not set to PLAINS: " + updatedBiome);
+        }
+        world.setBiome(x, y, z, originalBiome);
         return true;
     }
 

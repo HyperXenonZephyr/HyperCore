@@ -14,9 +14,11 @@ import java.util.List;
  */
 final class FabricPlayerInventory implements PlayerInventory {
     private final net.minecraft.world.entity.player.Inventory inventory;
+    private final FabricWorldAccess worldAccess;
 
-    FabricPlayerInventory(Player player) {
+    FabricPlayerInventory(Player player, FabricWorldAccess worldAccess) {
         this.inventory = player.getInventory();
+        this.worldAccess = worldAccess;
     }
 
     @Override
@@ -37,7 +39,7 @@ final class FabricPlayerInventory implements PlayerInventory {
         if (index < 0 || index >= getSize()) {
             return;
         }
-        inventory.setItem(index, FabricWorldAccess.toMinecraft(item));
+        inventory.setItem(index, worldAccess.toMinecraft(item));
     }
 
     @Override

@@ -58,6 +58,20 @@ public final class HyperCoreGameTests {
     }
 
     @GameTest(template = "forge:empty3x3x3")
+    public static void bukkitBlockDataApi(GameTestHelper helper) {
+        BlockPos blockPos = helper.absolutePos(new BlockPos(1, 1, 1));
+        runCommand(helper, "hypercore-gametest blockdata " + blockPos.getX() + " " + blockPos.getY() + " " + blockPos.getZ());
+        helper.succeed();
+    }
+
+    @GameTest(template = "forge:empty3x3x3")
+    public static void bukkitBlockLightApi(GameTestHelper helper) {
+        BlockPos blockPos = helper.absolutePos(new BlockPos(1, 1, 1));
+        runCommand(helper, "hypercore-gametest blocklight " + blockPos.getX() + " " + blockPos.getY() + " " + blockPos.getZ());
+        helper.succeed();
+    }
+
+    @GameTest(template = "forge:empty3x3x3")
     public static void bukkitPlayerEntityApis(GameTestHelper helper) {
         Vec3 entityPos = helper.absoluteVec(new Vec3(1.5, 2.0, 1.5));
         runCommand(helper, "hypercore-gametest entity " + entityPos.x() + " " + entityPos.y() + " " + entityPos.z());
@@ -68,9 +82,36 @@ public final class HyperCoreGameTests {
     }
 
     @GameTest(template = "forge:empty3x3x3")
+    public static void bukkitPlayerExclusiveApi(GameTestHelper helper) {
+        Vec3 playerPos = helper.absoluteVec(new Vec3(2.5, 2.0, 2.5));
+        runCommand(helper, "hypercore-gametest playerexclusive " + playerPos.x() + " " + playerPos.y() + " " + playerPos.z());
+        helper.succeed();
+    }
+
+    @GameTest(template = "forge:empty3x3x3")
+    public static void bukkitEntityPropertiesApi(GameTestHelper helper) {
+        Vec3 entityPos = helper.absoluteVec(new Vec3(1.5, 2.0, 1.5));
+        runCommand(helper, "hypercore-gametest entityproperties " + entityPos.x() + " " + entityPos.y() + " " + entityPos.z());
+        helper.succeed();
+    }
+
+    @GameTest(template = "forge:empty3x3x3")
     public static void bukkitInventoryApi(GameTestHelper helper) {
         BlockPos blockPos = helper.absolutePos(new BlockPos(1, 1, 1));
         runCommand(helper, "hypercore-gametest inventory " + blockPos.getX() + " " + blockPos.getY() + " " + blockPos.getZ());
+        helper.succeed();
+    }
+
+    @GameTest(template = "forge:empty3x3x3")
+    public static void bukkitInventoryMetaApi(GameTestHelper helper) {
+        BlockPos blockPos = helper.absolutePos(new BlockPos(1, 1, 1));
+        runCommand(helper, "hypercore-gametest inventorymeta " + blockPos.getX() + " " + blockPos.getY() + " " + blockPos.getZ());
+        helper.succeed();
+    }
+
+    @GameTest(template = "forge:empty3x3x3")
+    public static void bukkitPlayerArmorApi(GameTestHelper helper) {
+        runCommand(helper, "hypercore-gametest playerarmor");
         helper.succeed();
     }
 
@@ -90,6 +131,19 @@ public final class HyperCoreGameTests {
     @GameTest(template = "forge:empty3x3x3")
     public static void bukkitWorldCreator(GameTestHelper helper) {
         runCommand(helper, "hypercore-gametest world");
+        helper.succeed();
+    }
+
+    @GameTest(template = "forge:empty3x3x3")
+    public static void bukkitWorldStateApi(GameTestHelper helper) {
+        runCommand(helper, "hypercore-gametest worldstate");
+        helper.succeed();
+    }
+
+    @GameTest(template = "forge:empty3x3x3")
+    public static void bukkitBiomeApi(GameTestHelper helper) {
+        BlockPos blockPos = helper.absolutePos(new BlockPos(1, 1, 1));
+        runCommand(helper, "hypercore-gametest biome " + blockPos.getX() + " " + blockPos.getY() + " " + blockPos.getZ());
         helper.succeed();
     }
 

@@ -2,10 +2,11 @@ package org.bukkit.block;
 
 import org.bukkit.Material;
 import org.bukkit.World;
+import org.bukkit.block.data.BlockData;
 import org.bukkit.inventory.Inventory;
 
 /**
- * Minimal stub of the Bukkit {@code BlockState} interface.
+ * Stub of the Bukkit {@code BlockState} interface.
  *
  * <p>A block state is a snapshot of a block that can be modified independently
  * and then written back to the world through {@link #update()}.
@@ -48,6 +49,25 @@ public interface BlockState {
     void setType(Material type);
 
     /**
+     * Returns the block data captured in this state.
+     */
+    default BlockData getBlockData() {
+        return new BlockData() {
+            @Override
+            public Material getMaterial() {
+                return BlockState.this.getType();
+            }
+        };
+    }
+
+    /**
+     * Sets the block data in this state snapshot.
+     */
+    default void setBlockData(BlockData data) {
+        setType(data.getMaterial());
+    }
+
+    /**
      * Writes this state back to the world.
      *
      * @return {@code true} if the world was modified
@@ -66,6 +86,10 @@ public interface BlockState {
         if (!force && getBlock().getType() != getType()) {
             // The real block has changed and force is disabled: do not overwrite.
             return false;
+        }
+        if (applyPhysics) {
+            getBlock().setType(getType(), true);
+            return true;
         }
         return update();
     }

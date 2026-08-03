@@ -13,10 +13,12 @@ import java.util.List;
  * {@link Inventory}.
  */
 final class ForgeContainerInventory implements Inventory {
-    private final Container container;
+    final Container container;
+    private final ForgeWorldAccess worldAccess;
 
-    ForgeContainerInventory(Container container) {
+    ForgeContainerInventory(Container container, ForgeWorldAccess worldAccess) {
         this.container = container;
+        this.worldAccess = worldAccess;
     }
 
     @Override
@@ -37,7 +39,7 @@ final class ForgeContainerInventory implements Inventory {
         if (index < 0 || index >= getSize()) {
             return;
         }
-        container.setItem(index, ForgeWorldAccess.toMinecraft(item));
+        container.setItem(index, worldAccess.toMinecraft(item));
     }
 
     @Override

@@ -29,6 +29,15 @@ public interface LivingEntity extends Entity {
     }
 
     /**
+     * Sets the maximum health of this living entity.
+     *
+     * @param maxHealth the new maximum health value
+     */
+    default void setMaxHealth(double maxHealth) {
+        // No-op in this minimal stub.
+    }
+
+    /**
      * Deals the given amount of damage to this living entity.
      *
      * @param amount the amount of damage
@@ -45,5 +54,33 @@ public interface LivingEntity extends Entity {
      */
     default void damage(double amount, Entity source) {
         damage(amount);
+    }
+
+    /**
+     * Returns whether this living entity has AI.
+     */
+    default boolean hasAI() {
+        return true;
+    }
+
+    /**
+     * Sets whether this living entity has AI.
+     */
+    default void setAI(boolean ai) {
+        // No-op in this minimal stub.
+    }
+
+    /**
+     * Returns whether this living entity is collidable.
+     */
+    default boolean isCollidable() {
+        return true;
+    }
+
+    /**
+     * Sets whether this living entity is collidable.
+     */
+    default void setCollidable(boolean collidable) {
+        // No-op in this minimal stub.
     }
 }

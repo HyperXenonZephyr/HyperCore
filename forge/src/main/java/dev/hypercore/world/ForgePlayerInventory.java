@@ -14,9 +14,11 @@ import java.util.List;
  */
 final class ForgePlayerInventory implements PlayerInventory {
     private final net.minecraft.world.entity.player.Inventory inventory;
+    private final ForgeWorldAccess worldAccess;
 
-    ForgePlayerInventory(Player player) {
+    ForgePlayerInventory(Player player, ForgeWorldAccess worldAccess) {
         this.inventory = player.getInventory();
+        this.worldAccess = worldAccess;
     }
 
     @Override
@@ -37,7 +39,7 @@ final class ForgePlayerInventory implements PlayerInventory {
         if (index < 0 || index >= getSize()) {
             return;
         }
-        inventory.setItem(index, ForgeWorldAccess.toMinecraft(item));
+        inventory.setItem(index, worldAccess.toMinecraft(item));
     }
 
     @Override

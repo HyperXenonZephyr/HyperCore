@@ -112,6 +112,13 @@ All notable changes to HyperCore are documented in this file. The format is base
 - Added a JMH-based `benchmarkRegionParallel` Gradle task and `RegionParallelBenchmarkMain` measuring region-tick scheduling throughput across 1/2/4/8/16 active regions.
 - Extended `GametestBukkitPlugin` with `player`, `permission`, and `world` commands, and added matching `bukkitPlayerEntityApis`, `bukkitPermissionRegistration`, and `bukkitWorldCreator` GameTests to both Forge and Fabric suites.
 - Added `RegionExecutionService.activateRegion(...)` as a low-overhead diagnostics hook to include a region in the next tick without performing world I/O.
+- Added Bukkit `Entity`/`LivingEntity` property API conformance: `Entity.getVelocity`/`setVelocity`, `getFallDistance`/`setFallDistance`, `getFireTicks`/`setFireTicks`, `getPassengers`/`addPassenger`/`removePassenger`, `LivingEntity.getHealth`/`setHealth`, `getMaxHealth`/`setMaxHealth`, `hasAI`/`setAI`, and `isCollidable`/`setCollidable` are wired through `RegionExecutionService` and `WorldAccess`.
+- Added `HyperCoreLivingEntity` adapter implementing `org.bukkit.entity.LivingEntity`, and updated `HyperCoreWorld` to resolve spawned/tracked entities to the correct Bukkit view (`HyperCorePlayer`, `HyperCoreLivingEntity`, or `HyperCoreEntity`).
+- Added `bukkitEntityPropertiesApi` GameTests to both Forge and Fabric dedicated-server suites, verifying zombie velocity, fall distance, fire ticks, health, max health, AI, and passenger add/remove in real servers.
+- Added Bukkit Player exclusive API conformance: `Player.kickPlayer`, `Player.sendTitle`/`resetTitle`, `Player.performCommand`, `Player.updateInventory`, `Player.openInventory`, `Player.setResourcePack`, `Player.isSneaking`/`setSneaking`, and `Player.isSprinting`/`setSprinting` are wired through `RegionExecutionService` and `WorldAccess`.
+- Added `HyperCorePlayer` adapter delegating Player-specific methods to `RegionExecutionService`.
+- Extended `WorldAccess` with Player-specific methods (`kickPlayer`, `sendTitle`, `resetTitle`, `performCommand`, `updateInventory`, `openInventory`, `setResourcePack`, `isSneaking`, `setSneaking`, `isSprinting`, `setSprinting`) and implemented them in `ForgeWorldAccess` and `FabricWorldAccess`.
+- Extended `GametestBukkitPlugin` with `playerexclusive` command and added `bukkitPlayerExclusiveApi` GameTests to both Forge and Fabric suites.
 
 ### Fixed
 

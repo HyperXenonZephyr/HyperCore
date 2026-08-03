@@ -6,7 +6,10 @@ import org.bukkit.Location;
 import org.bukkit.World;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.EntityType;
+import org.bukkit.util.Vector;
 
+import java.util.Collection;
+import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
 
@@ -64,6 +67,66 @@ public class HyperCoreEntity implements Entity {
     @Override
     public boolean teleport(Location location) {
         return execution.teleportEntity(entityId, location);
+    }
+
+    @Override
+    public org.bukkit.util.Vector getVelocity() {
+        return execution.getEntityVelocity(entityId);
+    }
+
+    @Override
+    public void setVelocity(org.bukkit.util.Vector velocity) {
+        execution.setEntityVelocity(entityId, velocity);
+    }
+
+    @Override
+    public float getFallDistance() {
+        return execution.getEntityFallDistance(entityId);
+    }
+
+    @Override
+    public void setFallDistance(float distance) {
+        execution.setEntityFallDistance(entityId, distance);
+    }
+
+    @Override
+    public int getFireTicks() {
+        return execution.getEntityFireTicks(entityId);
+    }
+
+    @Override
+    public void setFireTicks(int ticks) {
+        execution.setEntityFireTicks(entityId, ticks);
+    }
+
+    @Override
+    public List<Entity> getPassengers() {
+        return execution.getEntityPassengers(entityId);
+    }
+
+    @Override
+    public boolean addPassenger(Entity passenger) {
+        return execution.addEntityPassenger(entityId, passenger);
+    }
+
+    @Override
+    public void removePassenger(Entity passenger) {
+        execution.removeEntityPassenger(entityId, passenger);
+    }
+
+    @Override
+    public boolean isInsideVehicle() {
+        return execution.isEntityInsideVehicle(entityId);
+    }
+
+    @Override
+    public void leaveVehicle() {
+        execution.leaveVehicle(entityId);
+    }
+
+    @Override
+    public Entity getVehicle() {
+        return execution.getEntityVehicle(entityId);
     }
 
     @Override

@@ -1,5 +1,6 @@
 package org.bukkit.inventory;
 
+import org.bukkit.Material;
 import org.bukkit.entity.HumanEntity;
 
 import java.util.Collections;
@@ -8,7 +9,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Minimal stub of the Bukkit {@code Inventory} interface.
+ * Stub of the Bukkit {@code Inventory} interface.
  */
 public interface Inventory {
 
@@ -17,6 +18,70 @@ public interface Inventory {
      */
     default int getSize() {
         return 0;
+    }
+
+    /**
+     * Returns the first empty slot, or {@code -1} if the inventory is full.
+     */
+    default int firstEmpty() {
+        for (int i = 0; i < getSize(); i++) {
+            if (getItem(i) == null || getItem(i).isEmpty()) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    /**
+     * Returns the first slot containing the given item, or {@code -1} if none.
+     */
+    default int first(ItemStack item) {
+        if (item == null) {
+            return firstEmpty();
+        }
+        for (int i = 0; i < getSize(); i++) {
+            ItemStack existing = getItem(i);
+            if (existing != null && existing.isSimilar(item)) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    /**
+     * Returns the first slot containing the given material, or {@code -1} if none.
+     */
+    default int first(Material material) {
+        for (int i = 0; i < getSize(); i++) {
+            ItemStack existing = getItem(i);
+            if (existing != null && !existing.isEmpty() && existing.getType() == material) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    /**
+     * Returns whether this inventory contains at least one of the given material.
+     */
+    default boolean contains(Material material) {
+        return first(material) >= 0;
+    }
+
+    /**
+     * Returns whether this inventory contains the given item.
+     */
+    default boolean contains(ItemStack item) {
+        return first(item) >= 0;
+    }
+
+    /**
+     * Clears this inventory.
+     */
+    default void clear() {
+        for (int i = 0; i < getSize(); i++) {
+            setItem(i, null);
+        }
     }
 
     /**

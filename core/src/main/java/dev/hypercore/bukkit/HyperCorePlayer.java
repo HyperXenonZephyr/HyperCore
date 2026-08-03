@@ -20,7 +20,7 @@ import java.util.UUID;
  * It does not attempt to create a Minecraft player; callers obtain instances
  * through world or server lookups once the player is already present.
  */
-public final class HyperCorePlayer extends HyperCoreEntity implements Player {
+public final class HyperCorePlayer extends HyperCoreLivingEntity implements Player {
     private final String name;
     private String displayName;
 
@@ -77,6 +77,65 @@ public final class HyperCorePlayer extends HyperCoreEntity implements Player {
     public void setGameMode(GameMode gameMode) {
         Objects.requireNonNull(gameMode, "gameMode");
         execution.setPlayerGameMode(getUniqueId(), gameMode);
+    }
+
+    @Override
+    public void kickPlayer(String message) {
+        execution.kickPlayer(getUniqueId(), message);
+    }
+
+    @Override
+    public void sendTitle(String title, String subtitle, int fadeIn, int stay, int fadeOut) {
+        execution.sendTitle(getUniqueId(), title, subtitle, fadeIn, stay, fadeOut);
+    }
+
+    @Override
+    public void resetTitle() {
+        execution.resetTitle(getUniqueId());
+    }
+
+    @Override
+    public boolean performCommand(String command) {
+        return execution.performCommand(getUniqueId(), command);
+    }
+
+    @Override
+    public void updateInventory() {
+        execution.updateInventory(getUniqueId());
+    }
+
+    @Override
+    public org.bukkit.inventory.InventoryView openInventory(org.bukkit.inventory.Inventory inventory) {
+        boolean opened = execution.openInventory(getUniqueId(), inventory);
+        if (!opened) {
+            return null;
+        }
+        return new HyperCoreInventoryView(this, inventory, inventory instanceof org.bukkit.inventory.PlayerInventory ? "Inventory" : null);
+    }
+
+    @Override
+    public void setResourcePack(String url) {
+        execution.setResourcePack(getUniqueId(), url);
+    }
+
+    @Override
+    public boolean isSneaking() {
+        return execution.isSneaking(getUniqueId());
+    }
+
+    @Override
+    public void setSneaking(boolean sneaking) {
+        execution.setSneaking(getUniqueId(), sneaking);
+    }
+
+    @Override
+    public boolean isSprinting() {
+        return execution.isSprinting(getUniqueId());
+    }
+
+    @Override
+    public void setSprinting(boolean sprinting) {
+        execution.setSprinting(getUniqueId(), sprinting);
     }
 
     @Override

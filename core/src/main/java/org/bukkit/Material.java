@@ -67,4 +67,11 @@ public enum Material {
     ZOMBIE_SPAWN_EGG,
     SKELETON_SPAWN_EGG,
     CREEPER_SPAWN_EGG;
+
+    /**
+     * Returns the resource key for this material in the {@code minecraft} namespace.
+     */
+    public NamespacedKey getKey() {
+        return new NamespacedKey(name().toLowerCase());
+    }
 }

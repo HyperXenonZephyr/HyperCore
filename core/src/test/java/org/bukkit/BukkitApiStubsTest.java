@@ -281,6 +281,54 @@ class BukkitApiStubsTest {
             public boolean hasPermission(Permission perm) {
                 return false;
             }
+
+            @Override
+            public void kickPlayer(String message) {
+            }
+
+            @Override
+            public void sendTitle(String title, String subtitle, int fadeIn, int stay, int fadeOut) {
+            }
+
+            @Override
+            public void resetTitle() {
+            }
+
+            @Override
+            public boolean performCommand(String command) {
+                return false;
+            }
+
+            @Override
+            public void updateInventory() {
+            }
+
+            @Override
+            public org.bukkit.inventory.InventoryView openInventory(org.bukkit.inventory.Inventory inventory) {
+                return null;
+            }
+
+            @Override
+            public void setResourcePack(String url) {
+            }
+
+            @Override
+            public boolean isSneaking() {
+                return false;
+            }
+
+            @Override
+            public void setSneaking(boolean sneaking) {
+            }
+
+            @Override
+            public boolean isSprinting() {
+                return false;
+            }
+
+            @Override
+            public void setSprinting(boolean sprinting) {
+            }
         };
 
         assertNotNull(player.getUniqueId());

@@ -13,10 +13,12 @@ import java.util.List;
  * {@link Inventory}.
  */
 final class FabricContainerInventory implements Inventory {
-    private final Container container;
+    final Container container;
+    private final FabricWorldAccess worldAccess;
 
-    FabricContainerInventory(Container container) {
+    FabricContainerInventory(Container container, FabricWorldAccess worldAccess) {
         this.container = container;
+        this.worldAccess = worldAccess;
     }
 
     @Override
@@ -37,7 +39,7 @@ final class FabricContainerInventory implements Inventory {
         if (index < 0 || index >= getSize()) {
             return;
         }
-        container.setItem(index, FabricWorldAccess.toMinecraft(item));
+        container.setItem(index, worldAccess.toMinecraft(item));
     }
 
     @Override

@@ -4,6 +4,8 @@ import org.bukkit.Location;
 import org.bukkit.World;
 import org.bukkit.util.Vector;
 
+import java.util.Collection;
+import java.util.List;
 import java.util.UUID;
 
 /**
@@ -77,10 +79,96 @@ public interface Entity {
     }
 
     /**
-     * Returns a zero velocity vector.
+     * Returns the current velocity of this entity.
      */
     default Vector getVelocity() {
         return new Vector();
+    }
+
+    /**
+     * Sets the velocity of this entity.
+     */
+    default void setVelocity(Vector velocity) {
+        // No-op in this minimal stub.
+    }
+
+    /**
+     * Returns the distance this entity has fallen.
+     */
+    default float getFallDistance() {
+        return 0.0f;
+    }
+
+    /**
+     * Sets the distance this entity has fallen.
+     */
+    default void setFallDistance(float distance) {
+        // No-op in this minimal stub.
+    }
+
+    /**
+     * Returns the number of ticks this entity is on fire.
+     */
+    default int getFireTicks() {
+        return 0;
+    }
+
+    /**
+     * Sets the number of ticks this entity is on fire.
+     */
+    default void setFireTicks(int ticks) {
+        // No-op in this minimal stub.
+    }
+
+    /**
+     * Returns the passengers of this entity.
+     */
+    default List<Entity> getPassengers() {
+        return List.of();
+    }
+
+    /**
+     * Adds a passenger to this entity.
+     *
+     * @return {@code true} if the passenger was added
+     */
+    default boolean addPassenger(Entity passenger) {
+        return false;
+    }
+
+    /**
+     * Removes a passenger from this entity.
+     */
+    default void removePassenger(Entity passenger) {
+        // No-op in this minimal stub.
+    }
+
+    /**
+     * Returns whether this entity is inside a vehicle.
+     */
+    default boolean isInsideVehicle() {
+        return false;
+    }
+
+    /**
+     * Makes this entity leave its vehicle.
+     */
+    default void leaveVehicle() {
+        // No-op in this minimal stub.
+    }
+
+    /**
+     * Returns the vehicle this entity is riding, or {@code null} if none.
+     */
+    default Entity getVehicle() {
+        return null;
+    }
+
+    /**
+     * Returns nearby entities within the given box centered on this entity.
+     */
+    default Collection<Entity> getNearbyEntities(double x, double y, double z) {
+        return List.of();
     }
 
     /**

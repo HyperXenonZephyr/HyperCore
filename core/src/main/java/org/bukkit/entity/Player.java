@@ -56,9 +56,7 @@ public interface Player extends HumanEntity {
      *
      * @param message the kick message
      */
-    default void kickPlayer(String message) {
-        // No-op in this minimal stub.
-    }
+    void kickPlayer(String message);
 
     /**
      * Returns whether this player is currently online.
@@ -68,30 +66,67 @@ public interface Player extends HumanEntity {
     }
 
     /**
+     * Sends a title and optional subtitle to this player.
+     *
+     * @param title    the title text, or {@code null} to clear
+     * @param subtitle the subtitle text, or {@code null} to clear
+     * @param fadeIn   ticks to fade in
+     * @param stay     ticks to stay on screen
+     * @param fadeOut  ticks to fade out
+     */
+    void sendTitle(String title, String subtitle, int fadeIn, int stay, int fadeOut);
+
+    /**
+     * Clears any title and subtitle currently shown to this player and resets
+     * title timings.
+     */
+    void resetTitle();
+
+    /**
+     * Executes a command as this player.
+     *
+     * @param command the command line without leading slash
+     * @return {@code true} if the command was found and executed
+     */
+    boolean performCommand(String command);
+
+    /**
+     * Sends the player's current inventory contents to the client.
+     */
+    void updateInventory();
+
+    /**
+     * Opens an inventory window for this player.
+     *
+     * @param inventory the inventory to open
+     * @return the inventory view, or {@code null} if it could not be opened
+     */
+    org.bukkit.inventory.InventoryView openInventory(org.bukkit.inventory.Inventory inventory);
+
+    /**
+     * Sets the resource pack URL for this player.
+     *
+     * @param url the resource pack URL
+     */
+    void setResourcePack(String url);
+
+    /**
      * Returns whether this player is sneaking.
      */
-    default boolean isSneaking() {
-        return false;
-    }
+    boolean isSneaking();
 
     /**
      * Sets whether this player is sneaking.
      */
-    default void setSneaking(boolean sneaking) {
-        // No-op in this minimal stub.
-    }
+    void setSneaking(boolean sneaking);
 
     /**
      * Returns whether this player is sprinting.
      */
-    default boolean isSprinting() {
-        return false;
-    }
+    boolean isSprinting();
 
     /**
      * Sets whether this player is sprinting.
      */
-    default void setSprinting(boolean sprinting) {
-        // No-op in this minimal stub.
-    }
+    void setSprinting(boolean sprinting);
 }

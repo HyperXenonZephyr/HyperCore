@@ -1,19 +1,26 @@
 package org.bukkit.inventory;
 
-import org.bukkit.Material;
+import dev.hypercore.bukkit.HyperCoreItemMeta;
 
+import org.bukkit.Material;
+import org.bukkit.enchantments.Enchantment;
+
+import java.util.Collections;
+import java.util.Map;
 import java.util.Objects;
 
 /**
  * Minimal stub of the Bukkit {@code ItemStack} class.
  *
- * <p>Tracks material type and amount. Item meta, durability, and NBT are left
- * for later expansion.
+ * <p>Tracks material type, amount, and item meta. Loader-specific wrappers
+ * such as {@code ForgeItemStack} and {@code FabricItemStack} synchronize the
+ * meta fields with the native Minecraft item NBT.
  */
 public class ItemStack implements Cloneable {
 
     private Material type;
     private int amount;
+    private ItemMeta itemMeta;
 
     /**
      * Creates an empty item stack.
@@ -112,10 +119,82 @@ public class ItemStack implements Cloneable {
         return 64;
     }
 
+    /**
+     * Returns the item meta for this stack, or {@code null} if it has none.
+     *
+     * <p>The returned instance is a clone; modifying it does not affect this
+     * stack until {@link #setItemMeta(ItemMeta)} is called.
+     */
+    public ItemMeta getItemMeta() {
+        return itemMeta == null ? null : itemMeta.clone();
+    }
+
+    /**
+     * Returns a mutable item meta for this stack, creating one if necessary.
+     */
+    public ItemMeta getItemMetaOrCreate() {
+        if (itemMeta == null) {
+            itemMeta = new HyperCoreItemMeta();
+        }
+        return itemMeta.clone();
+    }
+
+    /**
+     * Sets the item meta for this stack.
+     *
+     * @param meta the new meta, or {@code null} to clear
+     * @return {@code true} if the meta was applied
+     */
+    public boolean setItemMeta(ItemMeta meta) {
+        this.itemMeta = meta == null ? null : meta.clone();
+        return true;
+    }
+
+    /**
+     * Returns whether this stack has item meta.
+     */
+    public boolean hasItemMeta() {
+        return itemMeta != null && (itemMeta.hasDisplayName() || itemMeta.hasLore() || !itemMeta.getEnchants().isEmpty());
+    }
+
+    /**
+     * Returns the enchantments on this stack.
+     */
+    public Map<Enchantment, Integer> getEnchantments() {
+        if (itemMeta == null) {
+            return Collections.emptyMap();
+        }
+        return itemMeta.getEnchants();
+    }
+
+    /**
+     * Adds an unsafe enchantment to this stack, ignoring level restrictions.
+     */
+    public void addUnsafeEnchantment(Enchantment enchantment, int level) {
+        Objects.requireNonNull(enchantment, "enchantment");
+        if (itemMeta == null) {
+            itemMeta = new HyperCoreItemMeta();
+        }
+        itemMeta.addEnchant(enchantment, level, true);
+    }
+
+    /**
+     * Removes the given enchantment from this stack.
+     */
+    public void removeEnchantment(Enchantment enchantment) {
+        if (itemMeta != null) {
+            itemMeta.removeEnchant(enchantment);
+        }
+    }
+
     @Override
     public ItemStack clone() {
         try {
-            return (ItemStack) super.clone();
+            ItemStack clone = (ItemStack) super.clone();
+            if (itemMeta != null) {
+                clone.itemMeta = itemMeta.clone();
+            }
+            return clone;
         } catch (CloneNotSupportedException error) {
             throw new AssertionError(error);
         }
@@ -129,12 +208,15 @@ public class ItemStack implements Cloneable {
         if (!(object instanceof ItemStack other)) {
             return false;
         }
-        return amount == other.amount && type == other.type;
+        if (amount != other.amount || type != other.type) {
+            return false;
+        }
+        return Objects.equals(itemMeta, other.itemMeta);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(type, amount);
+        return Objects.hash(type, amount, itemMeta);
     }
 
     @Override
