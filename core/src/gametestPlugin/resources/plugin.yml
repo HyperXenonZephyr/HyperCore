@@ -5,6 +5,9 @@ commands:
   hypercore-gametest:
     description: HyperCore dedicated-server GameTest command
     usage: /hypercore-gametest [block|entity|player|inventory|event|permission|world|parallel]
+  hypercore-coexistence:
+    description: HyperCore Forge/Fabric coexistence probe command
+    usage: /hypercore-coexistence [set|break|spawn|move|cancelbreak|forgeonly]
 permissions:
   hypercore.gametest.admin:
     description: Admin permission for the GameTest plugin

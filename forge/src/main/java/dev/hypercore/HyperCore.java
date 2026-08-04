@@ -1,6 +1,7 @@
 package dev.hypercore;
 
 import com.mojang.logging.LogUtils;
+import dev.hypercore.bridge.ForgeBridgeEndpoint;
 import dev.hypercore.bukkit.BukkitEventBridge;
 import dev.hypercore.command.HyperCoreCommands;
 import dev.hypercore.compute.AdaptiveSpatialComputeBackend;
@@ -33,6 +34,7 @@ public final class HyperCore {
     private static final Logger LOGGER = LogUtils.getLogger();
     private final HyperCoreRuntime runtime = new HyperCoreRuntime();
     private BukkitEventBridge bukkitEventBridge;
+    private ForgeBridgeEndpoint bridgeEndpoint;
 
     public HyperCore(FMLJavaModLoadingContext context) {
         context.registerConfig(ModConfig.Type.COMMON, HyperCoreConfig.SPEC);
@@ -43,9 +45,15 @@ public final class HyperCore {
     @SubscribeEvent
     public void onServerAboutToStart(ServerAboutToStartEvent event) {
         runtime.start(HyperCoreConfig.settings(), Path.of("plugins"));
-        runtime.registerWorldAccessFactory(new ForgeWorldAccessFactory(event.getServer()));
         bukkitEventBridge = new BukkitEventBridge(runtime.plugins());
         bukkitEventBridge.attach();
+        // Register the real world access factory before opening the bridge so
+        // the bridge's delta sink is installed on the live RegionExecutionService
+        // rather than the placeholder created during startup.
+        runtime.registerWorldAccessFactory(new ForgeWorldAccessFactory(event.getServer()));
+        // Opens the cross-process bridge when running as an orchestrated Forge
+        // host; returns null (and is inert) in standalone mode.
+        bridgeEndpoint = ForgeBridgeEndpoint.open(runtime, event.getServer());
         // Plugin commands are loaded after RegisterCommandsEvent fires, so re-
         // register them against the live server dispatcher now that plugins are
         // available.
@@ -60,7 +68,10 @@ public final class HyperCore {
 
     @SubscribeEvent
     public void onRegisterCommands(RegisterCommandsEvent event) {
-        HyperCoreCommands.register(event.getDispatcher(), runtime);
+        dev.hypercore.bridge.BridgeStatusView bridgeStatus = bridgeEndpoint == null
+            ? dev.hypercore.bridge.BridgeStatusView.NONE
+            : bridgeEndpoint.bridge().statusView();
+        HyperCoreCommands.register(event.getDispatcher(), runtime, bridgeStatus);
         ForgePluginCommandBridge.register(event.getDispatcher(), runtime.plugins());
     }
 
@@ -121,11 +132,20 @@ public final class HyperCore {
             } catch (RuntimeException error) {
                 LOGGER.error("Region tick failed", error);
             }
+            // Ship locally-produced world deltas to the orchestrator once per
+            // server tick so they arrive within one bridge tick.
+            if (bridgeEndpoint != null) {
+                bridgeEndpoint.flush();
+            }
         }
     }
 
     @SubscribeEvent
     public void onServerStopped(ServerStoppedEvent event) {
+        if (bridgeEndpoint != null) {
+            bridgeEndpoint.close();
+            bridgeEndpoint = null;
+        }
         runtime.close();
         LOGGER.info("HyperCore runtime stopped");
     }

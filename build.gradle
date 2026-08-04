@@ -2,4 +2,6 @@
 // Each subproject (core/forge/fabric) applies its own plugins and configures
 // its own toolchain, dependencies, and tasks. The root intentionally has no
 // plugins or subprojects {} block so ForgeGradle and fabric-loom never share
-// configuration scope.
+// configuration scope. The unified distribution is assembled by the
+// :core:assembleDistribution task (see core/build.gradle), which collects the
+// orchestrator JAR and both host templates into one directory.

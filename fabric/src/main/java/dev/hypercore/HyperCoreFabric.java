@@ -1,6 +1,7 @@
 package dev.hypercore;
 
 import com.mojang.logging.LogUtils;
+import dev.hypercore.bridge.FabricBridgeEndpoint;
 import dev.hypercore.bukkit.BukkitEventBridge;
 import dev.hypercore.command.HyperCoreCommands;
 import dev.hypercore.compute.AdaptiveSpatialComputeBackend;
@@ -36,6 +37,7 @@ public final class HyperCoreFabric implements DedicatedServerModInitializer {
     private static final Logger LOGGER = LogUtils.getLogger();
     private final HyperCoreRuntime runtime = new HyperCoreRuntime();
     private BukkitEventBridge bukkitEventBridge;
+    private FabricBridgeEndpoint bridgeEndpoint;
 
     @Override
     public void onInitializeServer() {
@@ -45,7 +47,10 @@ public final class HyperCoreFabric implements DedicatedServerModInitializer {
         ServerTickEvents.START_SERVER_TICK.register(this::onServerTickStart);
         ServerTickEvents.END_SERVER_TICK.register(this::onServerTickEnd);
         CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) -> {
-            HyperCoreCommands.register(dispatcher, runtime);
+            dev.hypercore.bridge.BridgeStatusView bridgeStatus = bridgeEndpoint == null
+                ? dev.hypercore.bridge.BridgeStatusView.NONE
+                : bridgeEndpoint.bridge().statusView();
+            HyperCoreCommands.register(dispatcher, runtime, bridgeStatus);
             FabricPluginCommandBridge.register(dispatcher, runtime.plugins());
         });
 
@@ -61,6 +66,9 @@ public final class HyperCoreFabric implements DedicatedServerModInitializer {
         runtime.registerWorldAccessFactory(new FabricWorldAccessFactory(server));
         bukkitEventBridge = new BukkitEventBridge(runtime.plugins());
         bukkitEventBridge.attach();
+        // Opens the cross-process bridge when running as an orchestrated Fabric
+        // host; returns null (and is inert) in standalone mode.
+        bridgeEndpoint = FabricBridgeEndpoint.open(runtime, server);
         // Plugin commands are loaded after CommandRegistrationCallback fires, so
         // re-register them against the live server dispatcher now that plugins
         // are available.
@@ -132,9 +140,18 @@ public final class HyperCoreFabric implements DedicatedServerModInitializer {
         } catch (RuntimeException error) {
             LOGGER.error("Region tick failed", error);
         }
+        // Ship locally-produced world deltas to the orchestrator once per
+        // server tick so they arrive within one bridge tick.
+        if (bridgeEndpoint != null) {
+            bridgeEndpoint.flush();
+        }
     }
 
     private void onServerStopping(MinecraftServer server) {
+        if (bridgeEndpoint != null) {
+            bridgeEndpoint.close();
+            bridgeEndpoint = null;
+        }
         runtime.close();
         LOGGER.info("HyperCore runtime stopped");
     }

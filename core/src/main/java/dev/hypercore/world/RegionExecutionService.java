@@ -1,5 +1,9 @@
 package dev.hypercore.world;
 
+import dev.hypercore.bridge.world.BlockDelta;
+import dev.hypercore.bridge.world.EntityMoveDelta;
+import dev.hypercore.bridge.world.EntityRemoveDelta;
+import dev.hypercore.bridge.world.EntitySpawnDelta;
 import dev.hypercore.bukkit.HyperCorePlayer;
 import dev.hypercore.bukkit.HyperCoreWorld;
 import dev.hypercore.plugin.PluginEventBus;
@@ -58,6 +62,7 @@ public final class RegionExecutionService {
     private final ConcurrentHashMap<UUID, String> entityWorlds = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<RegionKey, RegionLock> locks = new ConcurrentHashMap<>();
     private final Set<RegionKey> activeRegions = ConcurrentHashMap.newKeySet();
+    private volatile DeltaSink deltaSink = DeltaSink.NOOP;
 
     public RegionExecutionService(WorldAccessFactory worldAccessFactory, RegionTaskCoordinator coordinator) {
         this(worldAccessFactory, coordinator, new PluginEventBus());
@@ -71,6 +76,21 @@ public final class RegionExecutionService {
         this.worldAccessFactory = Objects.requireNonNull(worldAccessFactory, "worldAccessFactory");
         this.coordinator = Objects.requireNonNull(coordinator, "coordinator");
         this.eventBus = Objects.requireNonNull(eventBus, "eventBus");
+    }
+
+    /**
+     * Installs the delta sink that mirrors successful mutations to the remote
+     * host in bridge mode. A null argument resets to the no-op sink.
+     */
+    public void setDeltaSink(DeltaSink deltaSink) {
+        this.deltaSink = deltaSink == null ? DeltaSink.NOOP : deltaSink;
+    }
+
+    /**
+     * Returns the currently installed delta sink.
+     */
+    public DeltaSink deltaSink() {
+        return deltaSink;
     }
 
     /**
@@ -241,6 +261,7 @@ public final class RegionExecutionService {
             lockFor(key).write(() -> {
                 world.setBlockData(x, y, z, blockData);
                 activeRegions.add(key);
+                deltaSink.publish(new BlockDelta(worldName, x, y, z, blockData));
             });
         } catch (Exception error) {
             throw new RuntimeException("Failed to write block data at " + x + "," + y + "," + z, error);
@@ -376,6 +397,7 @@ public final class RegionExecutionService {
                 }
                 world.setBlockType(x, y, z, type);
                 activeRegions.add(key);
+                deltaSink.publish(new BlockDelta(worldName, x, y, z, type.name()));
             });
         } catch (Exception error) {
             throw new RuntimeException("Failed to write block type at " + x + "," + y + "," + z, error);
@@ -420,6 +442,7 @@ public final class RegionExecutionService {
                 if (entityId != null) {
                     entityWorlds.put(entityId, worldName);
                     activeRegions.add(key);
+                    deltaSink.publish(new EntitySpawnDelta(worldName, entityId, type.name(), position.x(), position.y(), position.z()));
                 }
                 return entityId;
             });
@@ -512,6 +535,7 @@ public final class RegionExecutionService {
                     boolean success = world.teleportEntity(entityId, position);
                     if (success) {
                         activeRegions.add(targetKey);
+                        deltaSink.publish(new EntityMoveDelta(targetWorld, entityId, position.x(), position.y(), position.z()));
                     }
                     return success;
                 });
@@ -532,6 +556,7 @@ public final class RegionExecutionService {
             if (targetWorldAccess.teleportEntity(entityId, position)) {
                 entityWorlds.put(entityId, targetWorld);
                 activeRegions.add(targetKey);
+                deltaSink.publish(new EntityMoveDelta(targetWorld, entityId, position.x(), position.y(), position.z()));
             }
         });
         return false;
@@ -643,6 +668,7 @@ public final class RegionExecutionService {
                 boolean removed = world.removeEntity(entityId);
                 if (removed) {
                     entityWorlds.remove(entityId);
+                    deltaSink.publish(new EntityRemoveDelta(worldName, entityId));
                 }
                 return removed;
             });

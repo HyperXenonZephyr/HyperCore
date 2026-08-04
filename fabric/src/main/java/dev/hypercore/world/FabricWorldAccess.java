@@ -172,6 +172,10 @@ public final class FabricWorldAccess implements WorldAccess {
     @Override
     public void setBlockType(int x, int y, int z, Material type) {
         Block block = toBlock(type);
+        // Bukkit block writes are expected to make the chunk exist; loading it
+        // synchronously also makes the cross-process mirror reliable in chunks
+        // that have not been generated yet.
+        level.getChunk(x >> 4, z >> 4);
         level.setBlock(new BlockPos(x, y, z), block.defaultBlockState(), 3);
     }
 
@@ -836,7 +840,7 @@ public final class FabricWorldAccess implements WorldAccess {
     }
 
     @SuppressWarnings("unchecked")
-    private static EntityType<? extends Entity> toEntityType(org.bukkit.entity.EntityType type) {
+    static EntityType<? extends Entity> toEntityType(org.bukkit.entity.EntityType type) {
         return switch (type) {
             case ZOMBIE -> (EntityType<? extends Entity>) EntityType.ZOMBIE;
             case SKELETON -> (EntityType<? extends Entity>) EntityType.SKELETON;

@@ -18,7 +18,8 @@
       "dev.hypercore.HyperCoreFabric"
     ],
     "fabric-gametest": [
-      "dev.hypercore.gametest.HyperCoreFabricGameTests"
+      "dev.hypercore.gametest.HyperCoreFabricGameTests",
+      "dev.hypercore.gametest.HyperCoreFabricCoexistenceGameTests"
     ]
   },
   "depends": {

@@ -115,6 +115,19 @@ tasks.matching { it.name == 'runServer' || it.name == 'runGameTestServer' }.conf
     dependsOn tasks.named('prepareGametestPlugins')
 }
 
+// Copies the mod JAR and the GameTest Bukkit plugin into a host template that
+// the root assembleDistribution task collects into the unified distribution.
+tasks.register('prepareHostTemplate', Copy) {
+    group = 'distribution'
+    description = 'Prepares the Fabric host template for the unified distribution.'
+    dependsOn tasks.named('remapJar')
+    dependsOn gametestPluginJarTask
+    from tasks.named('remapJar').flatMap { it.archiveFile }
+    into layout.buildDirectory.dir('host-template/mods')
+    from gametestPluginJarTask.flatMap { it.archiveFile }
+    into layout.buildDirectory.dir('host-template/plugins')
+}
+
 // Expand the mod version into fabric.mod.json.
 processResources {
     inputs.property 'version', project.version

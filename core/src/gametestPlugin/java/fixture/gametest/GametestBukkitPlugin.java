@@ -80,6 +80,9 @@ public final class GametestBukkitPlugin extends JavaPlugin implements Listener {
         LIFECYCLE.add("enable");
         Bukkit.getPluginManager().registerEvents(this, this);
 
+        CoexistenceProbe coexistenceProbe = new CoexistenceProbe();
+        Bukkit.getPluginManager().registerEvents(coexistenceProbe, this);
+
         PluginCommand command = getCommand("hypercore-gametest");
         if (command == null) {
             throw new IllegalStateException("hypercore-gametest command was not registered from plugin.yml");
@@ -109,6 +112,12 @@ public final class GametestBukkitPlugin extends JavaPlugin implements Listener {
                 default -> false;
             };
         });
+
+        PluginCommand coexistence = getCommand("hypercore-coexistence");
+        if (coexistence == null) {
+            throw new IllegalStateException("hypercore-coexistence command was not registered from plugin.yml");
+        }
+        coexistence.setExecutor((sender, cmd, label, args) -> coexistenceProbe.execute(sender, label, args));
     }
 
     @Override

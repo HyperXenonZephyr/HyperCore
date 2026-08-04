@@ -1,5 +1,6 @@
 package dev.hypercore.runtime;
 
+import dev.hypercore.bridge.BridgeCoordinator;
 import dev.hypercore.compute.AdaptiveSpatialComputeBackend;
 import dev.hypercore.compute.CpuBackendSelector;
 import dev.hypercore.compute.GpuOffloadPolicy;
@@ -11,6 +12,8 @@ import dev.hypercore.config.HyperCoreSettings;
 import dev.hypercore.hardware.RuntimeCapabilities;
 import dev.hypercore.hardware.VulkanRuntimeProbe;
 import dev.hypercore.metrics.TickMetrics;
+import dev.hypercore.orchestrator.HyperCoreRole;
+import dev.hypercore.orchestrator.OrchestratorRuntime;
 import dev.hypercore.region.RegionTaskCoordinator;
 import dev.hypercore.world.NoOpWorldAccessFactory;
 import dev.hypercore.world.RegionExecutionService;
@@ -57,6 +60,21 @@ public final class HyperCoreRuntime implements AutoCloseable {
             externalPlugins.load();
         }
         RegionTaskCoordinator regionTasks = new RegionTaskCoordinator(executor, workers);
+        OrchestratorRuntime orchestrator = null;
+        BridgeCoordinator bridge = null;
+        if (HyperCoreRole.current() == HyperCoreRole.ORCHESTRATOR) {
+            orchestrator = new OrchestratorRuntime(
+                settings.orchestrator(),
+                Path.of(System.getProperty("hypercore.orchestrator.root", "."))
+            );
+            orchestrator.start();
+            bridge = new BridgeCoordinator(
+                settings.orchestrator().orchestratorPort(),
+                settings.orchestrator().hostPort(HyperCoreRole.FABRIC_HOST),
+                settings.orchestrator().bridgeTickMillis()
+            );
+            bridge.start();
+        }
         state = new State(
             executor,
             new TickMetrics(settings.tickSampleWindow()),
@@ -67,7 +85,9 @@ public final class HyperCoreRuntime implements AutoCloseable {
             gpuOffloadPolicy,
             computeBackend,
             new SpatialQueryEngine(computeBackend),
-            externalPlugins
+            externalPlugins,
+            orchestrator,
+            bridge
         );
         plugins.enableAll();
     }
@@ -104,6 +124,7 @@ public final class HyperCoreRuntime implements AutoCloseable {
     public synchronized void registerWorldAccessFactory(WorldAccessFactory factory) {
         State current = requireState();
         RegionExecutionService execution = new RegionExecutionService(factory, current.regionTasks(), plugins.events());
+        execution.setDeltaSink(current.regionExecution().deltaSink());
         BukkitServerAccess.installRegionExecution(execution);
         state = new State(
             current.executor(),
@@ -115,7 +136,9 @@ public final class HyperCoreRuntime implements AutoCloseable {
             current.gpuOffloadPolicy(),
             current.computeBackend(),
             current.spatialQueries(),
-            current.externalPlugins()
+            current.externalPlugins(),
+            current.orchestrator(),
+            current.bridge()
         );
     }
 
@@ -125,6 +148,22 @@ public final class HyperCoreRuntime implements AutoCloseable {
 
     public ExternalPluginLoader externalPlugins() {
         return requireState().externalPlugins();
+    }
+
+    /**
+     * Returns the orchestrator runtime when this process runs in
+     * {@code ORCHESTRATOR} role, or {@code null} otherwise.
+     */
+    public OrchestratorRuntime orchestrator() {
+        return requireState().orchestrator();
+    }
+
+    /**
+     * Returns the orchestrator bridge coordinator when this process runs in
+     * {@code ORCHESTRATOR} role, or {@code null} otherwise.
+     */
+    public BridgeCoordinator bridge() {
+        return requireState().bridge();
     }
 
     public VulkanRuntimeProbe.Result vulkan() {
@@ -178,6 +217,14 @@ public final class HyperCoreRuntime implements AutoCloseable {
             current.spatialQueries().close();
             current.computeBackend().close();
             current.executor().close();
+            // Stop the bridge first so any remaining deltas are flushed or
+            // dropped cleanly before the orchestrator terminates the hosts.
+            if (current.bridge() != null) {
+                current.bridge().close();
+            }
+            if (current.orchestrator() != null) {
+                current.orchestrator().close();
+            }
         }
     }
 
@@ -199,7 +246,9 @@ public final class HyperCoreRuntime implements AutoCloseable {
         GpuOffloadPolicy gpuOffloadPolicy,
         AdaptiveSpatialComputeBackend computeBackend,
         SpatialQueryEngine spatialQueries,
-        ExternalPluginLoader externalPlugins
+        ExternalPluginLoader externalPlugins,
+        OrchestratorRuntime orchestrator,
+        BridgeCoordinator bridge
     ) {
     }
 

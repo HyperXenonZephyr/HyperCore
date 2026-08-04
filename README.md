@@ -18,9 +18,9 @@
 HyperCore is an experimental high-performance Minecraft Java server project targeting multi-loader mod execution. Its long-term goals are simultaneous Forge mod and Fabric mod execution alongside Bukkit/Paper plugin interoperability, safe multi-core execution, optional GPU compute acceleration, and measurable server-side optimization.
 
 > [!IMPORTANT]
-> HyperCore is at an early prototype stage. It is not currently a Bukkit/Paper-compatible production server, and it does not yet move Minecraft world simulation onto the GPU.
+> HyperCore is in active development. It is not yet a drop-in Bukkit/Paper production server, but its Bukkit/Paper adapter is now validated in dedicated-server GameTests under both Forge and Fabric. Minecraft world simulation remains on the CPU; GPU acceleration is limited to spatial query backends.
 >
-> The runtime is split into a loader-agnostic `:core` consumed by separate `:forge` and `:fabric` adapter subprojects, both of which build self-contained server-side mod JARs. HyperCore loads under either loader; running Forge and Fabric mods simultaneously in one process is a future objective and is not yet implemented.
+> The runtime is split into a loader-agnostic `:core` consumed by separate `:forge` and `:fabric` adapter subprojects, both of which build self-contained server-side mod JARs. HyperCore loads under either loader. Simultaneous Forge and Fabric mod execution is implemented through an **orchestrated dual-server deployment**: a `:core`-based Orchestrator launches one Forge host and one Fabric host as child processes and keeps their worlds consistent through a cross-process world-state bridge, so both loaders run unmodified in their native environments.
 
 ## Current status
 
@@ -40,6 +40,7 @@ The project is a multi-loader Gradle build: a loader-agnostic `:core` runtime co
 - GPU support now includes Vulkan loader/API detection, device selection, two compiled SPIR-V compute pipelines, device-local position buffers with host-visible staging, direct, resident-snapshot, and 33-query chunking correctness self-tests, and a configurable batch-size offload policy. Runtime execution uses `cpu-scalar` while Vulkan initializes, switches atomically to `adaptive-vulkan` when ready, and falls back to CPU after a later dispatch failure.
 - An immutable structure-of-arrays position snapshot and radius-query service now uses a GPU-generated packed match mask instead of reading every distance back to CPU. Repeated queries over the same `PositionBatch` retain one Vulkan position upload, while `withinRadii` records up to 32 radius dispatches in one command buffer and one fence wait before transparently chunking larger groups. Query, candidate, match, snapshot, multi-query batch, mask, readback-byte, initialization, and CPU/GPU counters are exposed through `/hypercore capabilities`.
 - A deterministic `:core:benchmarkCompute` Gradle task measures complete scalar/vector/Vulkan calls, resident snapshot calls, and eight-query individual-versus-batched submission. The current RTX 4060 report is recorded in [BENCHMARKS.md](BENCHMARKS.md); batching improved p50 between `1.33x` and `7.56x` from 4K through 1M candidates in the latest run, while the 4M compute-dominated case measured `1.19x`.
+- An **orchestrated dual-server deployment** enables simultaneous Forge and Fabric mod execution. The `:core`-based Orchestrator (`OrchestratorMain`) launches a Forge host and a Fabric host as child JVMs, injects each host's role/IPC port/vector module flag automatically, and monitors their health. A versioned length-prefixed IPC bridge (handshake, heartbeats, acknowledgements) connects the hosts to the orchestrator, which owns a single logical world timeline: host world mutations are captured by `RegionExecutionService`, shipped as binary deltas, conflict-resolved (Forge-priority for equal block targets, spawn ownership for entities, connected-host authority for players), and broadcast to both hosts for mirror application on the server thread. Commands are mirrored across hosts under a prefix (`xforge_*` / `xfabric_*`), block-event cancellations propagate both ways, and player ownership is tracked. `/hypercore bridge status` and `/hypercore bridge peers` report connectivity, latency, delta counts, and mirrored commands. `:core:assembleDistribution` produces `distributions/hypercore-<version>/` with the orchestrator JAR, both host templates, and launch scripts.
 
 ## Build
 
@@ -180,13 +181,13 @@ The main class must implement `dev.hypercore.plugin.HyperPlugin` and have an acc
 
 Forge and Fabric command registration is bridged into this SPI. A Bukkit/Paper compatibility layer discovers JARs using `plugin.yml`, translates the descriptor into the HyperCore SPI, wraps `JavaPlugin` main classes with a lifecycle/command/scheduler adapter, and bridges `plugin.yml`-defined commands, aliases, tab completion, permissions (with child-node inheritance), and sync scheduling through the HyperCore registry. It exposes a generated `org.bukkit.event.*` skeleton that covers the full package tree, with hand-written core infrastructure (`Event`, `Cancellable`, `HandlerList`) and generated event shells for the remaining types. Selected HyperCore internal events are forwarded as Bukkit events, and Bukkit events fired through the adapter are bridged back to the HyperCore event bus where a counterpart exists. Plugins can discover each other through `Bukkit.getPluginManager().getPlugin(name)`.
 
-The adapter now implements a targeted subset of `org.bukkit.*` for world, block, block-entity, inventory, item meta, entity mutation, and Player-exclusive APIs; these pass dedicated-server GameTests under both Forge and Fabric. It is still not binary-compatible with the entire Bukkit/Paper API surface. See [COMPATIBILITY.md](COMPATIBILITY.md) for the current behavior matrix and explicit unsupported areas.
+The adapter now implements a targeted subset of `org.bukkit.*` for world, block, block-entity, inventory, item meta, entity mutation, and Player-exclusive APIs; these pass dedicated-server GameTests under both Forge and Fabric. It does not yet claim full binary compatibility with the entire Bukkit/Paper API surface. See [COMPATIBILITY.md](COMPATIBILITY.md) for the current behavior matrix and explicit unsupported areas.
 
 ## Roadmap
 
 - [x] Forge 1.21.1 project foundation
 - [x] Fabric loader adapter subproject (buildable; not simultaneous with Forge)
-- [ ] Simultaneous Forge mod and Fabric mod execution in one runtime (future objective)
+- [x] Simultaneous Forge and Fabric mod execution through an orchestrated dual-server deployment (orchestrator, IPC bridge, world-state bridge with conflict arbitration, command/event/player proxies, distribution packaging, and coexistence GameTests)
 - [x] Safe background executor and basic tick diagnostics
 - [x] Unit tests for metrics, isolated worker execution, and queue backpressure
 - [x] Automated Forge dedicated-server GameTest
@@ -208,6 +209,11 @@ The adapter now implements a targeted subset of `org.bukkit.*` for world, block,
 - [x] Bukkit/Paper `plugin.yml` descriptor translation and `JavaPlugin` lifecycle/command/scheduler bridge prototype (minimal `org.bukkit.*` stubs; not binary-compatible)
 - [x] Full `org.bukkit.event.*` skeleton with bidirectional event bridge, tab completion, `plugin.yml` permissions with children, and cross-plugin lookup (validated in Forge/Fabric GameTests)
 - [x] Bukkit/Paper world, block, block-entity, inventory, entity mutation, and Player-exclusive API conformance (validated in Forge/Fabric GameTests; see [COMPATIBILITY.md](COMPATIBILITY.md))
+- [x] Orchestrator runtime and host-launch contract (`HyperCoreRole`, `OrchestratorRuntime`, `ServerProcess`, `ProcessLauncher`)
+- [x] Versioned IPC bridge protocol (`PacketCodec`, `IpcChannel`, handshake/heartbeat/ack packets, `BridgeEndpoint`, `OrchestratorBridgeServer`)
+- [x] Dual-write world-state bridge with conflict arbitration (`WorldDelta` types, `ConflictResolver`, `WorldStateBridge`, `WorldDeltaSender`/`WorldDeltaApplier`)
+- [x] Cross-host command, event, and player proxies (`CommandProxy`, `RemoteCommandSender`, `EventProxy`, `PlayerProxy`)
+- [x] Distribution packaging (`:core:assembleDistribution`) and coexistence GameTests (`crossProcessBlockSync`, `crossProcessEntityMove`, `crossProcessCommandExecution`, `crossProcessEventPropagation`)
 
 See [CHANGELOG.md](CHANGELOG.md) for completed changes.
 

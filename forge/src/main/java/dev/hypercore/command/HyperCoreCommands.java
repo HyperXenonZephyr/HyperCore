@@ -2,6 +2,7 @@ package dev.hypercore.command;
 
 import com.mojang.brigadier.CommandDispatcher;
 import dev.hypercore.HyperCore;
+import dev.hypercore.bridge.BridgeStatusView;
 import dev.hypercore.compute.AdaptiveSpatialComputeBackend;
 import dev.hypercore.hardware.RuntimeCapabilities;
 import dev.hypercore.metrics.TickMetrics;
@@ -23,6 +24,14 @@ public final class HyperCoreCommands {
         CommandDispatcher<CommandSourceStack> dispatcher,
         HyperCoreRuntime runtime
     ) {
+        register(dispatcher, runtime, BridgeStatusView.NONE);
+    }
+
+    public static void register(
+        CommandDispatcher<CommandSourceStack> dispatcher,
+        HyperCoreRuntime runtime,
+        BridgeStatusView bridge
+    ) {
         dispatcher.register(literal("hypercore")
             .requires(source -> source.hasPermission(2))
             .then(literal("status").executes(context -> showStatus(context.getSource(), runtime)))
@@ -30,7 +39,29 @@ public final class HyperCoreCommands {
             .then(literal("capabilities").executes(context -> showCapabilities(context.getSource(), runtime)))
             .then(literal("regions").executes(context -> showRegions(context.getSource(), runtime)))
             .then(literal("plugins").executes(context -> showPlugins(context.getSource(), runtime)))
+            .then(literal("bridge")
+                .executes(context -> showBridgeStatus(context.getSource(), bridge))
+                .then(literal("status").executes(context -> showBridgeStatus(context.getSource(), bridge)))
+                .then(literal("peers").executes(context -> showBridgePeers(context.getSource(), bridge)))
+            )
         );
+    }
+
+    private static int showBridgeStatus(CommandSourceStack source, BridgeStatusView bridge) {
+        source.sendSuccess(() -> Component.literal(
+            "Bridge role=" + bridge.roleName()
+                + " | connected=" + bridge.connected()
+                + " | latency=" + bridge.latencyMillis() + " ms"
+                + " | deltasSent=" + bridge.publishedDeltas()
+                + " | deltasDropped=" + bridge.droppedDeltas()
+                + " | mirroredCommands=" + bridge.mirroredCommands()
+        ), false);
+        return bridge.connected() ? 1 : 0;
+    }
+
+    private static int showBridgePeers(CommandSourceStack source, BridgeStatusView bridge) {
+        source.sendSuccess(() -> Component.literal("Bridge peers: " + bridge.peerSummary()), false);
+        return bridge.connected() ? 1 : 0;
     }
 
     private static int showStatus(CommandSourceStack source, HyperCoreRuntime runtime) {

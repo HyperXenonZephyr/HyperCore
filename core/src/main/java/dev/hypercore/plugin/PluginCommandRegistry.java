@@ -88,6 +88,24 @@ public final class PluginCommandRegistry {
             .toList();
     }
 
+    /**
+     * Returns a serializable snapshot of all primary commands so the bridge can
+     * mirror this registry on the remote host. Executors and tab completers are
+     * intentionally excluded; they stay on the owning host.
+     */
+    public synchronized List<dev.hypercore.bridge.ipc.packet.CommandRegistrySnapshotPacket.CommandDescriptor> snapshot() {
+        return primaryCommands.values().stream()
+            .map(command -> new dev.hypercore.bridge.ipc.packet.CommandRegistrySnapshotPacket.CommandDescriptor(
+                command.definition().name(),
+                command.definition().aliases(),
+                command.definition().permission(),
+                command.definition().description(),
+                command.definition().usage(),
+                command.pluginId()
+            ))
+            .toList();
+    }
+
     public synchronized int registeredCommands() {
         return primaryCommands.size();
     }

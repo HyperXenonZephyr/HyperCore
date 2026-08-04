@@ -249,6 +249,45 @@ tasks.register('gametestPluginJar', Jar) {
     destinationDirectory = layout.buildDirectory.dir('libs')
 }
 
+// Assembles distributions/hypercore-<version>/ containing the orchestrator JAR,
+// the Forge host template, the Fabric host template, and launch scripts. Lives
+// in :core so the builder's classpath is resolved from this project's own
+// configurations (Gradle forbids resolving another project's configuration from
+// a task action). The builder logic itself is the unit-testable
+// HyperCoreDistributionBuilder class.
+tasks.register('assembleDistribution', JavaExec) {
+    group = 'distribution'
+    description = 'Assembles the unified HyperCore distribution (orchestrator + Forge/Fabric host templates).'
+    dependsOn tasks.named('jar')
+    dependsOn tasks.named('gametestPluginJar')
+    dependsOn project(':forge').tasks.named('prepareHostTemplate')
+    dependsOn project(':fabric').tasks.named('prepareHostTemplate')
+
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'dev.hypercore.orchestrator.packaging.HyperCoreDistributionBuilder'
+
+    def version = rootProject.findProperty('hypercoreVersion') ?: '0.1.0-SNAPSHOT'
+    def minecraftVersion = rootProject.findProperty('minecraftVersion') ?: '1.21.1'
+
+    doFirst {
+        def outputDir = rootProject.layout.buildDirectory.dir("distributions/hypercore-${version}").get().asFile
+        def orchestratorJar = tasks.named('jar').get().archiveFile.get().asFile
+        def forgeModJar = project(':forge').tasks.named('jar').get().archiveFile.get().asFile
+        def fabricModJar = project(':fabric').tasks.named('remapJar').get().archiveFile.get().asFile
+        def gametestPluginJar = tasks.named('gametestPluginJar').get().archiveFile.get().asFile
+        args(
+            outputDir.absolutePath,
+            orchestratorJar.absolutePath,
+            forgeModJar.absolutePath,
+            fabricModJar.absolutePath,
+            gametestPluginJar.absolutePath
+        )
+    }
+    systemProperty 'hypercore.minecraftVersion', minecraftVersion
+
+    outputs.dir rootProject.layout.buildDirectory.dir("distributions/hypercore-${version}")
+}
+
 jar {
     from sourceSets.vector.output
     manifest {
