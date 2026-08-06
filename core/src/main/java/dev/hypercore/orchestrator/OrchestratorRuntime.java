@@ -67,7 +67,9 @@ public final class OrchestratorRuntime implements AutoCloseable {
     }
 
     /**
-     * Launches both hosts and starts health monitoring. Idempotent.
+     * Launches both hosts and starts health monitoring.
+     *
+     * @throws IllegalStateException if this runtime has already been started
      */
     public synchronized void start() {
         if (!started.compareAndSet(false, true)) {

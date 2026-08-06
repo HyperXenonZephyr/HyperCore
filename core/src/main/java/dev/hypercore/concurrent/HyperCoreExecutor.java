@@ -23,6 +23,7 @@ public final class HyperCoreExecutor implements AutoCloseable {
     private final int queueCapacity;
     private final LongAdder submittedTasks = new LongAdder();
     private final LongAdder completedTasks = new LongAdder();
+    private final LongAdder failedTasks = new LongAdder();
     private final LongAdder rejectedTasks = new LongAdder();
     private final LongAdder cancelledTasks = new LongAdder();
 
@@ -100,6 +101,14 @@ public final class HyperCoreExecutor implements AutoCloseable {
         return completedTasks.sum();
     }
 
+    /**
+     * Returns the number of tasks whose supplier threw. Failed tasks are not
+     * counted as completed.
+     */
+    public long failedTasks() {
+        return failedTasks.sum();
+    }
+
     public long rejectedTasks() {
         return rejectedTasks.sum();
     }
@@ -134,7 +143,7 @@ public final class HyperCoreExecutor implements AutoCloseable {
                 completedTasks.increment();
                 future.complete(result);
             } catch (Throwable error) {
-                completedTasks.increment();
+                failedTasks.increment();
                 future.completeExceptionally(error);
             }
         }

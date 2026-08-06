@@ -5,6 +5,7 @@ logs/
 out/
 run/
 run-data/
-.trae/
 *.iml
 *.log
+bin/
+*.launch

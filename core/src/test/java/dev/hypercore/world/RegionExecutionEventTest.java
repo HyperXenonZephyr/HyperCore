@@ -142,6 +142,15 @@ class RegionExecutionEventTest {
         assertTrue(result.complete());
     }
 
+    @Test
+    void fullTimeIsIndependentFromTimeOfDay() {
+        service.setTime("world", 6000L);
+        service.setFullTime("world", 123456789L);
+
+        assertEquals(6000L, service.getTime("world"));
+        assertEquals(123456789L, service.getFullTime("world"));
+    }
+
     private static final class MemoryWorldAccessFactory implements WorldAccessFactory {
         private final MemoryWorldAccess world = new MemoryWorldAccess("world");
 
@@ -160,6 +169,8 @@ class RegionExecutionEventTest {
         private final String worldName;
         private final ConcurrentHashMap<Long, Material> blocks = new ConcurrentHashMap<>();
         private final ConcurrentHashMap<UUID, Position> entities = new ConcurrentHashMap<>();
+        private long time;
+        private long fullTime;
 
         MemoryWorldAccess(String worldName) {
             this.worldName = worldName;
@@ -168,6 +179,26 @@ class RegionExecutionEventTest {
         @Override
         public String worldName() {
             return worldName;
+        }
+
+        @Override
+        public long getTime() {
+            return time;
+        }
+
+        @Override
+        public void setTime(long time) {
+            this.time = time;
+        }
+
+        @Override
+        public long getFullTime() {
+            return fullTime;
+        }
+
+        @Override
+        public void setFullTime(long time) {
+            this.fullTime = time;
         }
 
         @Override

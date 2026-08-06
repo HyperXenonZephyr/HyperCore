@@ -29,6 +29,7 @@ import org.bukkit.inventory.Inventory;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashSet;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
@@ -159,7 +160,7 @@ public final class RegionExecutionService {
      */
     public long getFullTime(String worldName) {
         WorldAccess world = requireWorld(worldName);
-        return world.getTime();
+        return world.getFullTime();
     }
 
     /**
@@ -167,7 +168,7 @@ public final class RegionExecutionService {
      */
     public void setFullTime(String worldName, long time) {
         WorldAccess world = requireWorld(worldName);
-        world.setTime(time);
+        world.setFullTime(time);
     }
 
     /**
@@ -514,7 +515,17 @@ public final class RegionExecutionService {
             return false;
         }
         String targetWorld = location.getWorld() == null ? sourceWorld : location.getWorld().getName();
-        RegionKey sourceKey = regionKeyFor(sourceWorld, getEntityX(entityId), getEntityZ(entityId));
+        // Read the source position once so the X and Z coordinates can never
+        // come from two different positions of a concurrently moving entity.
+        WorldAccess.Position sourcePosition = requireWorld(sourceWorld).getEntityPosition(entityId);
+        if (sourcePosition == null) {
+            return false;
+        }
+        RegionKey sourceKey = regionKeyFor(
+            sourceWorld,
+            (int) Math.floor(sourcePosition.x()),
+            (int) Math.floor(sourcePosition.z())
+        );
         RegionKey targetKey = regionKeyFor(targetWorld, location.getBlockX(), location.getBlockZ());
 
         if (sourceWorld.equals(targetWorld) && sourceKey.equals(targetKey)) {
@@ -1648,8 +1659,15 @@ public final class RegionExecutionService {
      * tracking set so the next tick starts fresh.
      */
     public Set<RegionKey> activeRegions() {
-        Set<RegionKey> snapshot = new HashSet<>(activeRegions);
-        activeRegions.removeAll(snapshot);
+        // Drain through the weakly consistent iterator instead of a
+        // copy-then-removeAll pair: an element is only removed after it has
+        // been snapshotted, so regions added concurrently are either captured
+        // now or left for the next tick, but never lost.
+        Set<RegionKey> snapshot = new HashSet<>();
+        for (Iterator<RegionKey> iterator = activeRegions.iterator(); iterator.hasNext();) {
+            snapshot.add(iterator.next());
+            iterator.remove();
+        }
         snapshot.addAll(worldAccessFactory.loadedRegions(RegionTaskCoordinator.DEFAULT_REGION_SIZE_CHUNKS));
         for (String worldName : worldAccessFactory.worldNames()) {
             WorldAccess world = worldAccessFactory.access(worldName);
@@ -1702,20 +1720,13 @@ public final class RegionExecutionService {
         for (String worldName : worldAccessFactory.worldNames()) {
             WorldAccess world = worldAccessFactory.access(worldName);
             if (world != null && world.getPlayerInventory(playerId) != null) {
-                return new HyperCorePlayer(this, playerId, "Player");
+                // Fall back to a placeholder when the loader cannot supply a
+                // name so event construction never fails on a missing profile.
+                String name = world.getPlayerName(playerId);
+                return new HyperCorePlayer(this, playerId, name == null ? "Player" : name);
             }
         }
         return null;
-    }
-
-    private int getEntityX(UUID entityId) {
-        Location location = getEntityLocation(entityId);
-        return location == null ? 0 : location.getBlockX();
-    }
-
-    private int getEntityZ(UUID entityId) {
-        Location location = getEntityLocation(entityId);
-        return location == null ? 0 : location.getBlockZ();
     }
 
     private org.bukkit.block.Biome toBukkitBiome(String biomeKey) {

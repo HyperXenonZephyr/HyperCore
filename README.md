@@ -22,13 +22,16 @@ HyperCore is an experimental high-performance Minecraft Java server project targ
 >
 > The runtime is split into a loader-agnostic `:core` consumed by separate `:forge` and `:fabric` adapter subprojects, both of which build self-contained server-side mod JARs. HyperCore loads under either loader. Simultaneous Forge and Fabric mod execution is implemented through an **orchestrated dual-server deployment**: a `:core`-based Orchestrator launches one Forge host and one Fabric host as child processes and keeps their worlds consistent through a cross-process world-state bridge, so both loaders run unmodified in their native environments.
 
+> [!NOTE]
+> Portions of the adapter and bridge code have been AI-assisted during development to handle the large volume of repetitive cross-loader implementations. Core architecture, correctness-critical paths, concurrency primitives, and design decisions remain hand-written and human-reviewed.
+
 ## Current status
 
 The project is a multi-loader Gradle build: a loader-agnostic `:core` runtime consumed by `:forge` and `:fabric` adapter subprojects, both producing self-contained server-side mod JARs. The established foundation:
 
 - Minecraft 1.21.1 and Java 21 are pinned; Forge 52.1.16 and Fabric Loader 0.16.9 (Fabric API 0.115.1+1.21.1) are the current adapter targets.
 - HyperCore loads as a server-side component under Forge or under Fabric, each as a separate build (see the note above on simultaneous execution).
-- A bounded worker pool reserves one logical CPU for the main server thread and rejects excess work instead of growing an unbounded queue.
+- A bounded worker pool reserves one logical CPU for the main server thread and rejects excess work instead of growing an unbounded queue, with task metrics that distinguish completed, failed, rejected, and cancelled work.
 - A 200-tick latency window reports average, p95, and maximum tick duration.
 - Operator diagnostics are available through `/hypercore status`, `/hypercore timings`, `/hypercore capabilities`, and `/hypercore regions`.
 - Forge and Fabric GameTests both verify that HyperCore loads in a real dedicated-server environment and that a test Bukkit plugin is discovered, enabled, and executes its registered command.
@@ -181,7 +184,7 @@ The main class must implement `dev.hypercore.plugin.HyperPlugin` and have an acc
 
 Forge and Fabric command registration is bridged into this SPI. A Bukkit/Paper compatibility layer discovers JARs using `plugin.yml`, translates the descriptor into the HyperCore SPI, wraps `JavaPlugin` main classes with a lifecycle/command/scheduler adapter, and bridges `plugin.yml`-defined commands, aliases, tab completion, permissions (with child-node inheritance), and sync scheduling through the HyperCore registry. It exposes a generated `org.bukkit.event.*` skeleton that covers the full package tree, with hand-written core infrastructure (`Event`, `Cancellable`, `HandlerList`) and generated event shells for the remaining types. Selected HyperCore internal events are forwarded as Bukkit events, and Bukkit events fired through the adapter are bridged back to the HyperCore event bus where a counterpart exists. Plugins can discover each other through `Bukkit.getPluginManager().getPlugin(name)`.
 
-The adapter now implements a targeted subset of `org.bukkit.*` for world, block, block-entity, inventory, item meta, entity mutation, and Player-exclusive APIs; these pass dedicated-server GameTests under both Forge and Fabric. It does not yet claim full binary compatibility with the entire Bukkit/Paper API surface. See [COMPATIBILITY.md](COMPATIBILITY.md) for the current behavior matrix and explicit unsupported areas.
+The adapter now implements a targeted subset of `org.bukkit.*` for world, block, block-entity, inventory, item meta, entity mutation, and Player-exclusive APIs; these pass dedicated-server GameTests under both Forge and Fabric. World time-of-day and world-age (`getFullTime`/`setFullTime`) accesses are mapped to the corresponding vanilla level data, and player display names resolve through the game profile. It does not yet claim full binary compatibility with the entire Bukkit/Paper API surface. See [COMPATIBILITY.md](COMPATIBILITY.md) for the current behavior matrix and explicit unsupported areas.
 
 ## Roadmap
 

@@ -122,10 +122,7 @@ public final class ProcessLauncher {
             return bat;
         }
         if (Files.isRegularFile(sh)) {
-            return sh;
-        }
-        if (windows && Files.isRegularFile(sh)) {
-            // Windows with a POSIX script: rely on the operator using WSL or Git Bash.
+            // On Windows this relies on the operator using WSL or Git Bash.
             return sh;
         }
         return null;

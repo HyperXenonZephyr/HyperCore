@@ -217,8 +217,8 @@ public final class HyperCoreRuntime implements AutoCloseable {
             current.spatialQueries().close();
             current.computeBackend().close();
             current.executor().close();
-            // Stop the bridge first so any remaining deltas are flushed or
-            // dropped cleanly before the orchestrator terminates the hosts.
+            // Close the bridge before the orchestrator so any remaining deltas
+            // are flushed or dropped cleanly before the hosts are terminated.
             if (current.bridge() != null) {
                 current.bridge().close();
             }

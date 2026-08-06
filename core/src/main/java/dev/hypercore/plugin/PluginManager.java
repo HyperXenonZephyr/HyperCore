@@ -136,7 +136,9 @@ public final class PluginManager implements AutoCloseable {
         void onDisable(PluginDescriptor descriptor, HyperPlugin plugin);
     }
 
-    private LifecycleCallback lifecycleCallback;
+    // Written by adapter setup code outside the lifecycle monitor, so it must
+    // be volatile to stay visible to synchronized lifecycle methods.
+    private volatile LifecycleCallback lifecycleCallback;
 
     public void setLifecycleCallback(LifecycleCallback callback) {
         this.lifecycleCallback = callback;

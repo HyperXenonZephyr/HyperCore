@@ -50,6 +50,36 @@ public interface WorldAccess {
     }
 
     /**
+     * Returns the absolute age of this world in ticks.
+     *
+     * <p>The default implementation falls back to the time of day so existing
+     * implementations keep compiling; loader adapters should override this with
+     * the true world age.
+     */
+    default long getFullTime() {
+        return getTime();
+    }
+
+    /**
+     * Sets the absolute age of this world in ticks.
+     *
+     * <p>The default implementation falls back to the time of day so existing
+     * implementations keep compiling; loader adapters should override this with
+     * the true world age.
+     */
+    default void setFullTime(long time) {
+        setTime(time);
+    }
+
+    /**
+     * Returns the display name of the player with the given unique id,
+     * or {@code null} if the player is not present or the name is unknown.
+     */
+    default String getPlayerName(UUID playerId) {
+        return null;
+    }
+
+    /**
      * Returns whether it is currently raining in this world.
      */
     default boolean hasStorm() {

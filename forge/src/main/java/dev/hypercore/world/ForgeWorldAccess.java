@@ -74,6 +74,24 @@ public final class ForgeWorldAccess implements WorldAccess {
     }
 
     @Override
+    public long getFullTime() {
+        return level.getGameTime();
+    }
+
+    @Override
+    public void setFullTime(long time) {
+        if (level.getLevelData() instanceof net.minecraft.world.level.storage.ServerLevelData serverData) {
+            serverData.setGameTime(time);
+        }
+    }
+
+    @Override
+    public String getPlayerName(UUID playerId) {
+        Player player = level.getPlayerByUUID(playerId);
+        return player == null ? null : player.getGameProfile().getName();
+    }
+
+    @Override
     public boolean hasStorm() {
         return level.getLevelData().isRaining();
     }

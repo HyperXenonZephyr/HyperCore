@@ -43,6 +43,19 @@ class HyperCoreExecutorTest {
         }
     }
 
+    @Test
+    void failedTasksAreNotCountedAsCompleted() {
+        try (HyperCoreExecutor executor = HyperCoreExecutor.create(1, 8)) {
+            var failed = executor.submit(() -> {
+                throw new IllegalStateException("boom");
+            });
+
+            assertThrows(ExecutionException.class, () -> failed.get(5, TimeUnit.SECONDS));
+            assertEquals(1, executor.failedTasks());
+            assertEquals(0, executor.completedTasks());
+        }
+    }
+
     private static int await(CountDownLatch started, CountDownLatch release) {
         started.countDown();
         try {
