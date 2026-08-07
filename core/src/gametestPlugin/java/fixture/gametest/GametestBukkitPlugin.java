@@ -121,6 +121,7 @@ public final class GametestBukkitPlugin extends JavaPlugin implements Listener {
                 case "worldstate" -> runWorldStateTest();
                 case "biome" -> runBiomeTest(args);
                 case "parallel" -> runParallelTest(args);
+                case "workermutation" -> runWorkerMutationTest(args);
                 default -> false;
             };
         });
@@ -912,6 +913,80 @@ public final class GametestBukkitPlugin extends JavaPlugin implements Listener {
                 "Expected parallel region execution (ownersUsed >= 2) but got " + result.ownersUsed()
             );
         }
+
+        return true;
+    }
+
+    private boolean runWorkerMutationTest(String[] args) {
+        if (args.length != 4) {
+            throw new IllegalArgumentException("Usage: /hypercore-gametest workermutation <x> <y> <z>");
+        }
+        int x = Integer.parseInt(args[1]);
+        int y = Integer.parseInt(args[2]);
+        int z = Integer.parseInt(args[3]);
+
+        RegionExecutionService execution = BukkitServerAccess.regionExecution();
+        if (execution == null) {
+            throw new IllegalStateException("Region execution service is not available");
+        }
+
+        World world = firstWorld();
+        String worldName = world.getName();
+
+        // Place a block at the test position on the server thread. The mutation
+        // runs directly because the current thread is the server thread.
+        Block block = world.getBlockAt(x, y, z);
+        block.setType(Material.STONE);
+        if (block.getType() != Material.STONE) {
+            throw new IllegalStateException("Expected STONE at test position but got " + block.getType());
+        }
+
+        // Activate the region containing the test position so it is included in
+        // the next region tick.
+        execution.activateRegion(worldName, x, z);
+
+        // Run tickRegions with a custom RegionTickTask that mutates the block
+        // from the worker thread. Because the task runs on a HyperCore worker
+        // thread (not the server thread), the WorldAccess adapter enqueues the
+        // mutation instead of applying it synchronously.
+        AtomicInteger mutated = new AtomicInteger();
+        RegionTickTask task = (exec, region, tickId) -> {
+            if (mutated.compareAndSet(0, 1)) {
+                exec.setBlockType(worldName, x, y, z, Material.DIRT);
+            }
+        };
+
+        CompletableFuture<RegionTaskCoordinator.TickResult> tickFuture = execution.tickRegions(task);
+        try {
+            tickFuture.get(10, TimeUnit.SECONDS);
+        } catch (InterruptedException error) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("Worker mutation test interrupted", error);
+        } catch (Exception error) {
+            throw new IllegalStateException("Region tick failed", error);
+        }
+
+        if (mutated.get() == 0) {
+            throw new IllegalStateException("Worker mutation task did not execute");
+        }
+
+        // The mutation should still be queued (not yet applied) because the
+        // worker thread enqueued it for deferred execution on the server thread.
+        if (block.getType() != Material.STONE) {
+            throw new IllegalStateException("Block changed before flush: " + block.getType());
+        }
+
+        // Flush pending mutations on the server thread. This drains the queue
+        // and applies the deferred block change.
+        execution.flushAllPendingMutations();
+
+        // Verify the block was changed to DIRT by the queued mutation.
+        if (block.getType() != Material.DIRT) {
+            throw new IllegalStateException("Expected DIRT after flush but got " + block.getType());
+        }
+
+        // Clean up.
+        block.setType(Material.AIR);
 
         return true;
     }

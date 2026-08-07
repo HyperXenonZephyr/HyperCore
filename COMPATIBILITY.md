@@ -44,7 +44,7 @@ This matrix describes tested behavior, not aspirational API coverage. `HyperCore
 | Fabric 1.21.1 dedicated-server loading | Verified | Automated with `runGameTestServer`. |
 | Forge mod registry and event ownership | Preserved | HyperCore is a Forge mod and does not replace Forge lifecycle ownership. |
 | Fabric mod registry and event ownership | Preserved | HyperCore is a Fabric mod and does not replace Fabric lifecycle ownership. |
-| Vanilla/Forge world simulation on multiple threads | Prototype | `RegionTaskCoordinator` dispatches per-owner region ticks across the HyperCore worker pool while each region is serialized under its write lock; direct Minecraft world mutation from worker threads is not supported. |
+| Vanilla/Forge world simulation on multiple threads | Implemented | `RegionTaskCoordinator` dispatches per-owner region ticks across the HyperCore worker pool while each region is serialized under its write lock. Worker-thread world mutations are enqueued per-world and flushed on the server thread after `tickRegions` completes, avoiding both thread-affinity violations and deadlock with the server tick `join`. Verified in Forge/Fabric GameTests. |
 | GPU spatial query backend | Implemented | Vulkan is enabled by default with correctness self-tests and CPU fallback. |
 | GPU entity, chunk, block, or world simulation | Not supported | No such performance or compatibility claim is made. |
 

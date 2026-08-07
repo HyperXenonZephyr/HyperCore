@@ -39,6 +39,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentLinkedQueue;
 
 /**
  * Fabric implementation of {@link WorldAccess} backed by a Minecraft
@@ -47,10 +48,15 @@ import java.util.UUID;
  * <p>Block, item, and entity conversions are intentionally minimal: only the
  * materials and entity types needed for the current Bukkit API conformance
  * phase are mapped. Unknown mappings throw {@link UnsupportedOperationException}.
+ *
+ * <p>World mutations invoked from worker threads (inside region ticks) are
+ * queued and applied later on the server thread via {@link #flushPendingMutations()}
+ * to avoid violating Minecraft's single-threaded world access model.
  */
 public final class FabricWorldAccess implements WorldAccess {
     private final String worldName;
     private final ServerLevel level;
+    private final ConcurrentLinkedQueue<Runnable> pendingMutations = new ConcurrentLinkedQueue<>();
 
     public FabricWorldAccess(String worldName, ServerLevel level) {
         this.worldName = worldName;
@@ -62,6 +68,18 @@ public final class FabricWorldAccess implements WorldAccess {
         return worldName;
     }
 
+    /**
+     * Runs the given action directly if the current thread is the server thread,
+     * otherwise enqueues it for later execution via {@link #flushPendingMutations()}.
+     */
+    private void runOrQueue(Runnable action) {
+        if (Thread.currentThread() == level.getServer().getRunningThread()) {
+            action.run();
+        } else {
+            pendingMutations.add(action);
+        }
+    }
+
     @Override
     public long getTime() {
         return level.getDayTime();
@@ -69,7 +87,7 @@ public final class FabricWorldAccess implements WorldAccess {
 
     @Override
     public void setTime(long time) {
-        level.setDayTime(time);
+        runOrQueue(() -> level.setDayTime(time));
     }
 
     @Override
@@ -79,9 +97,11 @@ public final class FabricWorldAccess implements WorldAccess {
 
     @Override
     public void setFullTime(long time) {
-        if (level.getLevelData() instanceof net.minecraft.world.level.storage.ServerLevelData serverData) {
-            serverData.setGameTime(time);
-        }
+        runOrQueue(() -> {
+            if (level.getLevelData() instanceof net.minecraft.world.level.storage.ServerLevelData serverData) {
+                serverData.setGameTime(time);
+            }
+        });
     }
 
     @Override
@@ -97,7 +117,7 @@ public final class FabricWorldAccess implements WorldAccess {
 
     @Override
     public void setStorm(boolean storm) {
-        level.getLevelData().setRaining(storm);
+        runOrQueue(() -> level.getLevelData().setRaining(storm));
     }
 
     @Override
@@ -107,9 +127,11 @@ public final class FabricWorldAccess implements WorldAccess {
 
     @Override
     public void setThundering(boolean thundering) {
-        if (level.getLevelData() instanceof net.minecraft.world.level.storage.ServerLevelData serverData) {
-            serverData.setThundering(thundering);
-        }
+        runOrQueue(() -> {
+            if (level.getLevelData() instanceof net.minecraft.world.level.storage.ServerLevelData serverData) {
+                serverData.setThundering(thundering);
+            }
+        });
     }
 
     @Override
@@ -120,7 +142,7 @@ public final class FabricWorldAccess implements WorldAccess {
 
     @Override
     public void setSpawnLocation(Position position) {
-        level.setDefaultSpawnPos(new BlockPos((int) position.x(), (int) position.y(), (int) position.z()), 0);
+        runOrQueue(() -> level.setDefaultSpawnPos(new BlockPos((int) position.x(), (int) position.y(), (int) position.z()), 0));
     }
 
     @Override
@@ -131,10 +153,12 @@ public final class FabricWorldAccess implements WorldAccess {
 
     @Override
     public void setBiome(int x, int y, int z, String biomeKey) {
-        // Runtime biome mutation in 1.21.1 requires direct chunk biome container
-        // access, which is not exposed as a stable API on ServerLevel. This stub
-        // exists so the Bukkit call does not throw; dedicated servers typically
-        // do not mutate biomes at runtime through Bukkit.
+        runOrQueue(() -> {
+            // Runtime biome mutation in 1.21.1 requires direct chunk biome container
+            // access, which is not exposed as a stable API on ServerLevel. This stub
+            // exists so the Bukkit call does not throw; dedicated servers typically
+            // do not mutate biomes at runtime through Bukkit.
+        });
     }
 
     @Override
@@ -145,11 +169,13 @@ public final class FabricWorldAccess implements WorldAccess {
 
     @Override
     public void setBlockData(int x, int y, int z, String blockData) {
-        // Full block-state parsing (including property brackets such as
-        // [facing=north]) is not exposed as a stable single-method API in
-        // 1.21.1. The Bukkit BlockData adapter falls back to material-only
-        // updates; plugins that need exact state properties should use the
-        // native loader APIs until HyperCore provides a complete mapping.
+        runOrQueue(() -> {
+            // Full block-state parsing (including property brackets such as
+            // [facing=north]) is not exposed as a stable single-method API in
+            // 1.21.1. The Bukkit BlockData adapter falls back to material-only
+            // updates; plugins that need exact state properties should use the
+            // native loader APIs until HyperCore provides a complete mapping.
+        });
     }
 
     @Override
@@ -189,12 +215,14 @@ public final class FabricWorldAccess implements WorldAccess {
 
     @Override
     public void setBlockType(int x, int y, int z, Material type) {
-        Block block = toBlock(type);
-        // Bukkit block writes are expected to make the chunk exist; loading it
-        // synchronously also makes the cross-process mirror reliable in chunks
-        // that have not been generated yet.
-        level.getChunk(x >> 4, z >> 4);
-        level.setBlock(new BlockPos(x, y, z), block.defaultBlockState(), 3);
+        runOrQueue(() -> {
+            Block block = toBlock(type);
+            // Bukkit block writes are expected to make the chunk exist; loading it
+            // synchronously also makes the cross-process mirror reliable in chunks
+            // that have not been generated yet.
+            level.getChunk(x >> 4, z >> 4);
+            level.setBlock(new BlockPos(x, y, z), block.defaultBlockState(), 3);
+        });
     }
 
     @Override
@@ -208,16 +236,28 @@ public final class FabricWorldAccess implements WorldAccess {
 
     @Override
     public UUID spawnEntity(org.bukkit.entity.EntityType type, Position position) {
-        EntityType<?> mcType = toEntityType(type);
-        Entity entity = mcType.create(level);
-        if (entity == null) {
-            return null;
+        if (Thread.currentThread() == level.getServer().getRunningThread()) {
+            EntityType<?> mcType = toEntityType(type);
+            Entity entity = mcType.create(level);
+            if (entity == null) {
+                return null;
+            }
+            entity.setPos(position.x(), position.y(), position.z());
+            if (!level.addFreshEntity(entity)) {
+                return null;
+            }
+            return entity.getUUID();
         }
-        entity.setPos(position.x(), position.y(), position.z());
-        if (!level.addFreshEntity(entity)) {
-            return null;
-        }
-        return entity.getUUID();
+        pendingMutations.add(() -> {
+            EntityType<?> mcType = toEntityType(type);
+            Entity entity = mcType.create(level);
+            if (entity == null) {
+                return;
+            }
+            entity.setPos(position.x(), position.y(), position.z());
+            level.addFreshEntity(entity);
+        });
+        return null;
     }
 
     @Override
@@ -231,12 +271,22 @@ public final class FabricWorldAccess implements WorldAccess {
 
     @Override
     public boolean teleportEntity(UUID entityId, Position position) {
-        Entity entity = findEntity(entityId);
-        if (entity == null) {
-            return false;
+        if (Thread.currentThread() == level.getServer().getRunningThread()) {
+            Entity entity = findEntity(entityId);
+            if (entity == null) {
+                return false;
+            }
+            entity.teleportTo(position.x(), position.y(), position.z());
+            return true;
         }
-        entity.teleportTo(position.x(), position.y(), position.z());
-        return true;
+        pendingMutations.add(() -> {
+            Entity entity = findEntity(entityId);
+            if (entity == null) {
+                return;
+            }
+            entity.teleportTo(position.x(), position.y(), position.z());
+        });
+        return false;
     }
 
     @Override
@@ -284,12 +334,22 @@ public final class FabricWorldAccess implements WorldAccess {
 
     @Override
     public boolean setEntityCustomName(UUID entityId, String name) {
-        Entity entity = findEntity(entityId);
-        if (entity == null) {
-            return false;
+        if (Thread.currentThread() == level.getServer().getRunningThread()) {
+            Entity entity = findEntity(entityId);
+            if (entity == null) {
+                return false;
+            }
+            entity.setCustomName(name == null ? null : net.minecraft.network.chat.Component.literal(name));
+            return true;
         }
-        entity.setCustomName(name == null ? null : net.minecraft.network.chat.Component.literal(name));
-        return true;
+        pendingMutations.add(() -> {
+            Entity entity = findEntity(entityId);
+            if (entity == null) {
+                return;
+            }
+            entity.setCustomName(name == null ? null : net.minecraft.network.chat.Component.literal(name));
+        });
+        return false;
     }
 
     @Override
@@ -300,12 +360,22 @@ public final class FabricWorldAccess implements WorldAccess {
 
     @Override
     public boolean removeEntity(UUID entityId) {
-        Entity entity = findEntity(entityId);
-        if (entity == null) {
-            return false;
+        if (Thread.currentThread() == level.getServer().getRunningThread()) {
+            Entity entity = findEntity(entityId);
+            if (entity == null) {
+                return false;
+            }
+            entity.remove(Entity.RemovalReason.DISCARDED);
+            return true;
         }
-        entity.remove(Entity.RemovalReason.DISCARDED);
-        return true;
+        pendingMutations.add(() -> {
+            Entity entity = findEntity(entityId);
+            if (entity == null) {
+                return;
+            }
+            entity.remove(Entity.RemovalReason.DISCARDED);
+        });
+        return false;
     }
 
     @Override
@@ -319,108 +389,167 @@ public final class FabricWorldAccess implements WorldAccess {
 
     @Override
     public boolean setPlayerGameMode(UUID playerId, org.bukkit.GameMode gameMode) {
-        Player player = level.getPlayerByUUID(playerId);
-        if (!(player instanceof ServerPlayer serverPlayer)) {
-            return false;
+        if (Thread.currentThread() == level.getServer().getRunningThread()) {
+            Player player = level.getPlayerByUUID(playerId);
+            if (!(player instanceof ServerPlayer serverPlayer)) {
+                return false;
+            }
+            serverPlayer.setGameMode(toMinecraftGameMode(gameMode));
+            return true;
         }
-        serverPlayer.setGameMode(toMinecraftGameMode(gameMode));
-        return true;
+        pendingMutations.add(() -> {
+            Player player = level.getPlayerByUUID(playerId);
+            if (!(player instanceof ServerPlayer serverPlayer)) {
+                return;
+            }
+            serverPlayer.setGameMode(toMinecraftGameMode(gameMode));
+        });
+        return false;
     }
 
     @Override
     public void kickPlayer(UUID playerId, String message) {
-        Player player = level.getPlayerByUUID(playerId);
-        if (!(player instanceof ServerPlayer serverPlayer) || serverPlayer.connection == null) {
-            return;
-        }
-        serverPlayer.connection.disconnect(Component.literal(message));
+        runOrQueue(() -> {
+            Player player = level.getPlayerByUUID(playerId);
+            if (!(player instanceof ServerPlayer serverPlayer) || serverPlayer.connection == null) {
+                return;
+            }
+            serverPlayer.connection.disconnect(Component.literal(message));
+        });
     }
 
     @Override
     public void sendTitle(UUID playerId, String title, String subtitle, int fadeIn, int stay, int fadeOut) {
-        Player player = level.getPlayerByUUID(playerId);
-        if (!(player instanceof ServerPlayer serverPlayer) || serverPlayer.connection == null) {
-            return;
-        }
-        if (title != null) {
-            serverPlayer.connection.send(new ClientboundSetTitleTextPacket(Component.literal(title)));
-        }
-        if (subtitle != null) {
-            serverPlayer.connection.send(new ClientboundSetSubtitleTextPacket(Component.literal(subtitle)));
-        }
-        serverPlayer.connection.send(new ClientboundSetTitlesAnimationPacket(fadeIn, stay, fadeOut));
+        runOrQueue(() -> {
+            Player player = level.getPlayerByUUID(playerId);
+            if (!(player instanceof ServerPlayer serverPlayer) || serverPlayer.connection == null) {
+                return;
+            }
+            if (title != null) {
+                serverPlayer.connection.send(new ClientboundSetTitleTextPacket(Component.literal(title)));
+            }
+            if (subtitle != null) {
+                serverPlayer.connection.send(new ClientboundSetSubtitleTextPacket(Component.literal(subtitle)));
+            }
+            serverPlayer.connection.send(new ClientboundSetTitlesAnimationPacket(fadeIn, stay, fadeOut));
+        });
     }
 
     @Override
     public void resetTitle(UUID playerId) {
-        Player player = level.getPlayerByUUID(playerId);
-        if (!(player instanceof ServerPlayer serverPlayer) || serverPlayer.connection == null) {
-            return;
-        }
-        serverPlayer.connection.send(new ClientboundClearTitlesPacket(true));
+        runOrQueue(() -> {
+            Player player = level.getPlayerByUUID(playerId);
+            if (!(player instanceof ServerPlayer serverPlayer) || serverPlayer.connection == null) {
+                return;
+            }
+            serverPlayer.connection.send(new ClientboundClearTitlesPacket(true));
+        });
     }
 
     @Override
     public boolean performCommand(UUID playerId, String command) {
-        Player player = level.getPlayerByUUID(playerId);
-        if (!(player instanceof ServerPlayer serverPlayer)) {
-            return false;
+        if (Thread.currentThread() == level.getServer().getRunningThread()) {
+            Player player = level.getPlayerByUUID(playerId);
+            if (!(player instanceof ServerPlayer serverPlayer)) {
+                return false;
+            }
+            CommandSourceStack source = serverPlayer.createCommandSourceStack();
+            try {
+                level.getServer().getCommands().getDispatcher().execute(command, source);
+                return true;
+            } catch (CommandSyntaxException error) {
+                return false;
+            }
         }
-        CommandSourceStack source = serverPlayer.createCommandSourceStack();
-        try {
-            level.getServer().getCommands().getDispatcher().execute(command, source);
-            return true;
-        } catch (CommandSyntaxException error) {
-            return false;
-        }
+        pendingMutations.add(() -> {
+            Player player = level.getPlayerByUUID(playerId);
+            if (!(player instanceof ServerPlayer serverPlayer)) {
+                return;
+            }
+            CommandSourceStack source = serverPlayer.createCommandSourceStack();
+            try {
+                level.getServer().getCommands().getDispatcher().execute(command, source);
+            } catch (CommandSyntaxException error) {
+                // Ignore command failures for deferred execution.
+            }
+        });
+        return false;
     }
 
     @Override
     public void updateInventory(UUID playerId) {
-        Player player = level.getPlayerByUUID(playerId);
-        if (!(player instanceof ServerPlayer serverPlayer)) {
-            return;
-        }
-        serverPlayer.inventoryMenu.sendAllDataToRemote();
+        runOrQueue(() -> {
+            Player player = level.getPlayerByUUID(playerId);
+            if (!(player instanceof ServerPlayer serverPlayer)) {
+                return;
+            }
+            serverPlayer.inventoryMenu.sendAllDataToRemote();
+        });
     }
 
     @Override
     public boolean openInventory(UUID playerId, org.bukkit.inventory.Inventory inventory) {
-        Player player = level.getPlayerByUUID(playerId);
-        if (!(player instanceof ServerPlayer serverPlayer)) {
-            return false;
+        if (Thread.currentThread() == level.getServer().getRunningThread()) {
+            Player player = level.getPlayerByUUID(playerId);
+            if (!(player instanceof ServerPlayer serverPlayer)) {
+                return false;
+            }
+            if (!(inventory instanceof FabricContainerInventory fabricInventory)) {
+                return false;
+            }
+            Container container = fabricInventory.container;
+            net.minecraft.world.MenuProvider provider = new net.minecraft.world.SimpleMenuProvider(
+                (id, playerInventory, ignored) -> new net.minecraft.world.inventory.ChestMenu(
+                    net.minecraft.world.inventory.MenuType.GENERIC_9x3,
+                    id,
+                    playerInventory,
+                    container,
+                    container.getContainerSize() / 9
+                ),
+                Component.literal("Chest")
+            );
+            serverPlayer.openMenu(provider);
+            return true;
         }
-        if (!(inventory instanceof FabricContainerInventory fabricInventory)) {
-            return false;
-        }
-        Container container = fabricInventory.container;
-        net.minecraft.world.MenuProvider provider = new net.minecraft.world.SimpleMenuProvider(
-            (id, playerInventory, ignored) -> new net.minecraft.world.inventory.ChestMenu(
-                net.minecraft.world.inventory.MenuType.GENERIC_9x3,
-                id,
-                playerInventory,
-                container,
-                container.getContainerSize() / 9
-            ),
-            Component.literal("Chest")
-        );
-        serverPlayer.openMenu(provider);
-        return true;
+        pendingMutations.add(() -> {
+            Player player = level.getPlayerByUUID(playerId);
+            if (!(player instanceof ServerPlayer serverPlayer)) {
+                return;
+            }
+            if (!(inventory instanceof FabricContainerInventory fabricInventory)) {
+                return;
+            }
+            Container container = fabricInventory.container;
+            net.minecraft.world.MenuProvider provider = new net.minecraft.world.SimpleMenuProvider(
+                (id, playerInventory, ignored) -> new net.minecraft.world.inventory.ChestMenu(
+                    net.minecraft.world.inventory.MenuType.GENERIC_9x3,
+                    id,
+                    playerInventory,
+                    container,
+                    container.getContainerSize() / 9
+                ),
+                Component.literal("Chest")
+            );
+            serverPlayer.openMenu(provider);
+        });
+        return false;
     }
 
     @Override
     public void setResourcePack(UUID playerId, String url) {
-        Player player = level.getPlayerByUUID(playerId);
-        if (!(player instanceof ServerPlayer serverPlayer) || serverPlayer.connection == null) {
-            return;
-        }
-        serverPlayer.connection.send(new ClientboundResourcePackPushPacket(
-            java.util.UUID.randomUUID(),
-            url,
-            "",
-            false,
-            java.util.Optional.empty()
-        ));
+        runOrQueue(() -> {
+            Player player = level.getPlayerByUUID(playerId);
+            if (!(player instanceof ServerPlayer serverPlayer) || serverPlayer.connection == null) {
+                return;
+            }
+            serverPlayer.connection.send(new ClientboundResourcePackPushPacket(
+                java.util.UUID.randomUUID(),
+                url,
+                "",
+                false,
+                java.util.Optional.empty()
+            ));
+        });
     }
 
     @Override
@@ -431,11 +560,13 @@ public final class FabricWorldAccess implements WorldAccess {
 
     @Override
     public void setSneaking(UUID playerId, boolean sneaking) {
-        Player player = level.getPlayerByUUID(playerId);
-        if (player == null) {
-            return;
-        }
-        player.setShiftKeyDown(sneaking);
+        runOrQueue(() -> {
+            Player player = level.getPlayerByUUID(playerId);
+            if (player == null) {
+                return;
+            }
+            player.setShiftKeyDown(sneaking);
+        });
     }
 
     @Override
@@ -446,11 +577,13 @@ public final class FabricWorldAccess implements WorldAccess {
 
     @Override
     public void setSprinting(UUID playerId, boolean sprinting) {
-        Player player = level.getPlayerByUUID(playerId);
-        if (player == null) {
-            return;
-        }
-        player.setSprinting(sprinting);
+        runOrQueue(() -> {
+            Player player = level.getPlayerByUUID(playerId);
+            if (player == null) {
+                return;
+            }
+            player.setSprinting(sprinting);
+        });
     }
 
     @Override
@@ -465,12 +598,22 @@ public final class FabricWorldAccess implements WorldAccess {
 
     @Override
     public boolean setEntityVelocity(UUID entityId, Vector3 velocity) {
-        Entity entity = findEntity(entityId);
-        if (entity == null) {
-            return false;
+        if (Thread.currentThread() == level.getServer().getRunningThread()) {
+            Entity entity = findEntity(entityId);
+            if (entity == null) {
+                return false;
+            }
+            entity.setDeltaMovement(new net.minecraft.world.phys.Vec3(velocity.x(), velocity.y(), velocity.z()));
+            return true;
         }
-        entity.setDeltaMovement(new net.minecraft.world.phys.Vec3(velocity.x(), velocity.y(), velocity.z()));
-        return true;
+        pendingMutations.add(() -> {
+            Entity entity = findEntity(entityId);
+            if (entity == null) {
+                return;
+            }
+            entity.setDeltaMovement(new net.minecraft.world.phys.Vec3(velocity.x(), velocity.y(), velocity.z()));
+        });
+        return false;
     }
 
     @Override
@@ -481,12 +624,22 @@ public final class FabricWorldAccess implements WorldAccess {
 
     @Override
     public boolean setEntityFallDistance(UUID entityId, float distance) {
-        Entity entity = findEntity(entityId);
-        if (entity == null) {
-            return false;
+        if (Thread.currentThread() == level.getServer().getRunningThread()) {
+            Entity entity = findEntity(entityId);
+            if (entity == null) {
+                return false;
+            }
+            entity.fallDistance = distance;
+            return true;
         }
-        entity.fallDistance = distance;
-        return true;
+        pendingMutations.add(() -> {
+            Entity entity = findEntity(entityId);
+            if (entity == null) {
+                return;
+            }
+            entity.fallDistance = distance;
+        });
+        return false;
     }
 
     @Override
@@ -497,12 +650,22 @@ public final class FabricWorldAccess implements WorldAccess {
 
     @Override
     public boolean setEntityFireTicks(UUID entityId, int ticks) {
-        Entity entity = findEntity(entityId);
-        if (entity == null) {
-            return false;
+        if (Thread.currentThread() == level.getServer().getRunningThread()) {
+            Entity entity = findEntity(entityId);
+            if (entity == null) {
+                return false;
+            }
+            entity.setRemainingFireTicks(ticks);
+            return true;
         }
-        entity.setRemainingFireTicks(ticks);
-        return true;
+        pendingMutations.add(() -> {
+            Entity entity = findEntity(entityId);
+            if (entity == null) {
+                return;
+            }
+            entity.setRemainingFireTicks(ticks);
+        });
+        return false;
     }
 
     @Override
@@ -520,26 +683,51 @@ public final class FabricWorldAccess implements WorldAccess {
 
     @Override
     public boolean addEntityPassenger(UUID entityId, UUID passengerId) {
-        Entity entity = findEntity(entityId);
-        Entity passenger = findEntity(passengerId);
-        if (entity == null || passenger == null) {
-            return false;
+        if (Thread.currentThread() == level.getServer().getRunningThread()) {
+            Entity entity = findEntity(entityId);
+            Entity passenger = findEntity(passengerId);
+            if (entity == null || passenger == null) {
+                return false;
+            }
+            return passenger.startRiding(entity, true);
         }
-        return passenger.startRiding(entity, true);
+        pendingMutations.add(() -> {
+            Entity entity = findEntity(entityId);
+            Entity passenger = findEntity(passengerId);
+            if (entity == null || passenger == null) {
+                return;
+            }
+            passenger.startRiding(entity, true);
+        });
+        return false;
     }
 
     @Override
     public boolean removeEntityPassenger(UUID entityId, UUID passengerId) {
-        Entity passenger = findEntity(passengerId);
-        if (passenger == null) {
-            return false;
+        if (Thread.currentThread() == level.getServer().getRunningThread()) {
+            Entity passenger = findEntity(passengerId);
+            if (passenger == null) {
+                return false;
+            }
+            Entity vehicle = passenger.getVehicle();
+            if (vehicle == null || !vehicle.getUUID().equals(entityId)) {
+                return false;
+            }
+            passenger.stopRiding();
+            return true;
         }
-        Entity vehicle = passenger.getVehicle();
-        if (vehicle == null || !vehicle.getUUID().equals(entityId)) {
-            return false;
-        }
-        passenger.stopRiding();
-        return true;
+        pendingMutations.add(() -> {
+            Entity passenger = findEntity(passengerId);
+            if (passenger == null) {
+                return;
+            }
+            Entity vehicle = passenger.getVehicle();
+            if (vehicle == null || !vehicle.getUUID().equals(entityId)) {
+                return;
+            }
+            passenger.stopRiding();
+        });
+        return false;
     }
 
     @Override
@@ -560,12 +748,22 @@ public final class FabricWorldAccess implements WorldAccess {
 
     @Override
     public boolean leaveVehicle(UUID entityId) {
-        Entity entity = findEntity(entityId);
-        if (entity == null || !entity.isPassenger()) {
-            return false;
+        if (Thread.currentThread() == level.getServer().getRunningThread()) {
+            Entity entity = findEntity(entityId);
+            if (entity == null || !entity.isPassenger()) {
+                return false;
+            }
+            entity.stopRiding();
+            return true;
         }
-        entity.stopRiding();
-        return true;
+        pendingMutations.add(() -> {
+            Entity entity = findEntity(entityId);
+            if (entity == null || !entity.isPassenger()) {
+                return;
+            }
+            entity.stopRiding();
+        });
+        return false;
     }
 
     @Override
@@ -579,12 +777,22 @@ public final class FabricWorldAccess implements WorldAccess {
 
     @Override
     public boolean setEntityHealth(UUID entityId, double health) {
-        Entity entity = findEntity(entityId);
-        if (!(entity instanceof net.minecraft.world.entity.LivingEntity living)) {
-            return false;
+        if (Thread.currentThread() == level.getServer().getRunningThread()) {
+            Entity entity = findEntity(entityId);
+            if (!(entity instanceof net.minecraft.world.entity.LivingEntity living)) {
+                return false;
+            }
+            living.setHealth((float) health);
+            return true;
         }
-        living.setHealth((float) health);
-        return true;
+        pendingMutations.add(() -> {
+            Entity entity = findEntity(entityId);
+            if (!(entity instanceof net.minecraft.world.entity.LivingEntity living)) {
+                return;
+            }
+            living.setHealth((float) health);
+        });
+        return false;
     }
 
     @Override
@@ -598,27 +806,45 @@ public final class FabricWorldAccess implements WorldAccess {
 
     @Override
     public boolean setEntityMaxHealth(UUID entityId, double maxHealth) {
-        Entity entity = findEntity(entityId);
-        if (!(entity instanceof net.minecraft.world.entity.LivingEntity living)) {
-            return false;
+        if (Thread.currentThread() == level.getServer().getRunningThread()) {
+            Entity entity = findEntity(entityId);
+            if (!(entity instanceof net.minecraft.world.entity.LivingEntity living)) {
+                return false;
+            }
+            net.minecraft.world.entity.ai.attributes.AttributeInstance attribute = living.getAttribute(
+                net.minecraft.world.entity.ai.attributes.Attributes.MAX_HEALTH
+            );
+            if (attribute == null) {
+                return false;
+            }
+            attribute.setBaseValue(maxHealth);
+            return true;
         }
-        net.minecraft.world.entity.ai.attributes.AttributeInstance attribute = living.getAttribute(
-            net.minecraft.world.entity.ai.attributes.Attributes.MAX_HEALTH
-        );
-        if (attribute == null) {
-            return false;
-        }
-        attribute.setBaseValue(maxHealth);
-        return true;
+        pendingMutations.add(() -> {
+            Entity entity = findEntity(entityId);
+            if (!(entity instanceof net.minecraft.world.entity.LivingEntity living)) {
+                return;
+            }
+            net.minecraft.world.entity.ai.attributes.AttributeInstance attribute = living.getAttribute(
+                net.minecraft.world.entity.ai.attributes.Attributes.MAX_HEALTH
+            );
+            if (attribute == null) {
+                return;
+            }
+            attribute.setBaseValue(maxHealth);
+        });
+        return false;
     }
 
     @Override
     public void damageEntity(UUID entityId, double amount) {
-        Entity entity = findEntity(entityId);
-        if (!(entity instanceof net.minecraft.world.entity.LivingEntity living)) {
-            return;
-        }
-        living.hurt(level.damageSources().generic(), (float) amount);
+        runOrQueue(() -> {
+            Entity entity = findEntity(entityId);
+            if (!(entity instanceof net.minecraft.world.entity.LivingEntity living)) {
+                return;
+            }
+            living.hurt(level.damageSources().generic(), (float) amount);
+        });
     }
 
     @Override
@@ -632,12 +858,22 @@ public final class FabricWorldAccess implements WorldAccess {
 
     @Override
     public boolean setEntityAiEnabled(UUID entityId, boolean ai) {
-        Entity entity = findEntity(entityId);
-        if (!(entity instanceof net.minecraft.world.entity.Mob mob)) {
-            return false;
+        if (Thread.currentThread() == level.getServer().getRunningThread()) {
+            Entity entity = findEntity(entityId);
+            if (!(entity instanceof net.minecraft.world.entity.Mob mob)) {
+                return false;
+            }
+            mob.setNoAi(!ai);
+            return true;
         }
-        mob.setNoAi(!ai);
-        return true;
+        pendingMutations.add(() -> {
+            Entity entity = findEntity(entityId);
+            if (!(entity instanceof net.minecraft.world.entity.Mob mob)) {
+                return;
+            }
+            mob.setNoAi(!ai);
+        });
+        return false;
     }
 
     @Override
@@ -651,11 +887,23 @@ public final class FabricWorldAccess implements WorldAccess {
 
     @Override
     public boolean setEntityCollidable(UUID entityId, boolean collidable) {
-        // Minecraft 1.21.1 does not expose a setter for entity pushability under
-        // the official mappings. The Bukkit collidable flag is therefore read-only
-        // in this adapter; callers that need to disable collisions should use the
-        // native loader APIs or the noPhysics field directly.
+        if (Thread.currentThread() == level.getServer().getRunningThread()) {
+            // Minecraft 1.21.1 does not expose a setter for entity pushability under
+            // the official mappings. The Bukkit collidable flag is therefore read-only
+            // in this adapter; callers that need to disable collisions should use the
+            // native loader APIs or the noPhysics field directly.
+            return false;
+        }
+        pendingMutations.add(() -> { });
         return false;
+    }
+
+    @Override
+    public void flushPendingMutations() {
+        Runnable action;
+        while ((action = pendingMutations.poll()) != null) {
+            action.run();
+        }
     }
 
     private Entity findEntity(UUID entityId) {

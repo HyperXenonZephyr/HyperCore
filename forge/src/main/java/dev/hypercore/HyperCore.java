@@ -132,6 +132,7 @@ public final class HyperCore {
             } catch (RuntimeException error) {
                 LOGGER.error("Region tick failed", error);
             }
+            runtime.regionExecution().flushAllPendingMutations();
             // Ship locally-produced world deltas to the orchestrator once per
             // server tick so they arrive within one bridge tick.
             if (bridgeEndpoint != null) {

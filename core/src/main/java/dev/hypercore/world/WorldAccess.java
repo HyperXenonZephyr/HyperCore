@@ -622,4 +622,12 @@ public interface WorldAccess {
     default boolean setEntityCollidable(UUID entityId, boolean collidable) {
         throw new UnsupportedOperationException("setEntityCollidable");
     }
+
+    /**
+     * Flushes any pending world mutations queued by worker threads. Called on
+     * the server thread after region ticks complete. The default implementation
+     * is a no-op because the base contract applies mutations synchronously.
+     */
+    default void flushPendingMutations() {
+    }
 }

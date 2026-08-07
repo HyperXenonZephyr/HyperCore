@@ -1647,6 +1647,19 @@ public final class RegionExecutionService {
     }
 
     /**
+     * Flushes pending world mutations from worker threads for all known worlds.
+     * Must be called on the server thread after {@link #tickRegions} completes.
+     */
+    public void flushAllPendingMutations() {
+        for (String worldName : worldAccessFactory.worldNames()) {
+            WorldAccess access = worldAccessFactory.access(worldName);
+            if (access != null) {
+                access.flushPendingMutations();
+            }
+        }
+    }
+
+    /**
      * Returns the number of regions that are currently marked active without
      * clearing the tracking set.
      */
