@@ -20,9 +20,33 @@ base {
     archivesName = 'hypercore-fabric'
 }
 
+def devModDirectory = layout.buildDirectory.dir('dev-mod/hypercore')
 def lwjglVersion = rootProject.lwjglVersion
 
+sourceSets {
+    // Aggregated mod content for dev runs. Loom loads the hypercore mod from
+    // this source set; prepareDevMod populates it by merging :core (main classes,
+    // main resources including compiled .spv shaders, and vector output) with
+    // this project's main classes/resources. The LWJGL core jar is also unpacked
+    // here so the server-side mod classloader can resolve org.lwjgl.system.Configuration
+    // alongside the included lwjgl-vulkan classes.
+    devMod {
+        java.setSrcDirs([])
+        resources.setSrcDirs([])
+        output.dir(devModDirectory)
+    }
+}
+
 java.toolchain.languageVersion = JavaLanguageVersion.of(21)
+
+// The dev-mod directory must be on the JVM runtime classpath so the parent
+// classloader can resolve :core classes (e.g. RegionTickTask) referenced by
+// HyperCoreFabric. Without this, the parent classloader loads HyperCoreFabric
+// from the main source set output but cannot find :core classes (compileOnly),
+// causing ClassNotFoundException. The KnotClassLoader also has the dev-mod
+// directory, but parent-first delegation means the parent must be able to
+// resolve all references. This mirrors the Forge subproject's approach.
+sourceSets.main.runtimeClasspath = configurations.runtimeClasspath + files(devModDirectory)
 
 repositories {
     mavenCentral()
@@ -35,9 +59,10 @@ dependencies {
     modImplementation "net.fabricmc.fabric-api:fabric-api:${rootProject.fabricApiVersion}"
     modImplementation "net.fabricmc.fabric-api:fabric-gametest-api-v1:${rootProject.fabricGametestApiVersion}"
 
-    // core is a plain Java library (no Minecraft, no remap). Plain implementation
-    // is correct — do NOT use namedElements, core has no mappings to remap.
-    implementation project(':core')
+    // core is a plain Java library (no Minecraft, no remap). It is compile-only
+    // here because prepareDevMod merges its classes/resources into the devMod
+    // source set for dev runs; the production jar bundles them via `jar { from ... }`.
+    compileOnly project(':core')
 
     // OSHI/JNA are compile-only; Minecraft ships them at runtime. :core also
     // declares them compileOnly, so this mirrors core.
@@ -50,6 +75,12 @@ dependencies {
     implementation "org.lwjgl:lwjgl-vulkan:${lwjglVersion}"
     include "org.lwjgl:lwjgl-vulkan:${lwjglVersion}"
 
+    // LWJGL core (MemoryStack/MemoryUtil/Configuration) is bundled by Minecraft in
+    // production but must be declared explicitly so the Fabric mod classloader can
+    // resolve it during dev runs and in the packaged mod.
+    implementation "org.lwjgl:lwjgl:${lwjglVersion}"
+    include "org.lwjgl:lwjgl:${lwjglVersion}"
+
     // SnakeYAML: bundled via Loom include so the Bukkit plugin.yml parser works
     // at runtime without a separate install.
     implementation "org.yaml:snakeyaml:2.3"
@@ -57,8 +88,9 @@ dependencies {
 
     // The vector backend (core's vector source set) is loaded reflectively and is
     // not part of :core's runtimeElements, so add it to the dev-run classpath
-    // explicitly. The production jar picks it up via the `jar { from ... }` below.
-    runtimeOnly files(project(':core').sourceSets.vector.output)
+    // explicitly. Use classesDirs only because the vector source set has no resources.
+    // The production jar picks it up via the `jar { from ... }` below.
+    runtimeOnly files(project(':core').sourceSets.vector.output.classesDirs)
 
     testImplementation platform('org.junit:junit-bom:5.11.4')
     testImplementation 'org.junit.jupiter:junit-jupiter'
@@ -88,7 +120,7 @@ loom {
 
     mods {
         hypercore {
-            sourceSet sourceSets.main
+            sourceSet sourceSets.devMod
         }
     }
 }
@@ -102,6 +134,37 @@ tasks.named('test', Test).configure {
     useJUnitPlatform()
 }
 
+// Merges :core (main classes + main resources incl. compiled .spv + vector
+// output) with this project's main classes/resources into the dev-mod directory
+// Loom loads as the hypercore mod. Every class/resource the runtime reaches at
+// dev time must land here, otherwise server runs fail with ClassNotFoundException
+// or missing shader. The LWJGL core jar is also unpacked so the server-side mod
+// classloader can resolve org.lwjgl.system.Configuration alongside lwjgl-vulkan.
+tasks.register('prepareDevMod', Sync) {
+    dependsOn project(':core').tasks.named('classes')
+    dependsOn project(':core').tasks.named('processResources')
+    dependsOn project(':core').tasks.named('compileVectorJava')
+    dependsOn tasks.named('classes')
+    dependsOn tasks.named('processResources')
+
+    from project(':core').layout.buildDirectory.dir('classes/java/main')
+    from project(':core').layout.buildDirectory.dir('resources/main')
+    from project(':core').sourceSets.vector.output.classesDirs
+    from layout.buildDirectory.dir('classes/java/main')
+    from layout.buildDirectory.dir('resources/main')
+    into devModDirectory
+
+    doLast {
+        def lwjglCore = configurations.runtimeClasspath.find { it.name == "lwjgl-${lwjglVersion}.jar" }
+        if (lwjglCore != null) {
+            copy {
+                from zipTree(lwjglCore)
+                into devModDirectory
+            }
+        }
+    }
+}
+
 // Copy the dedicated-server GameTest Bukkit plugin into run/plugins so the
 // external plugin loader discovers it during runServer/runGameTestServer.
 def gametestPluginJarTask = project(':core').tasks.named('gametestPluginJar')
@@ -112,6 +175,7 @@ tasks.register('prepareGametestPlugins', Copy) {
 }
 
 tasks.matching { it.name == 'runServer' || it.name == 'runGameTestServer' }.configureEach {
+    dependsOn tasks.named('prepareDevMod')
     dependsOn tasks.named('prepareGametestPlugins')
 }
 

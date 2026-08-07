@@ -72,7 +72,11 @@ public final class AdaptiveSpatialComputeBackend implements SpatialComputeBacken
         }
         AdaptiveSpatialComputeBackend backend = new AdaptiveSpatialComputeBackend(
             policy, null, InitializationState.INITIALIZING, "", VulkanSpatialComputeBackend::create, cpu);
-        Thread initializer = new Thread(backend::initializeGpu, "HyperCore-Vulkan-Init");
+        ClassLoader contextLoader = Thread.currentThread().getContextClassLoader();
+        Thread initializer = new Thread(() -> {
+            Thread.currentThread().setContextClassLoader(contextLoader);
+            backend.initializeGpu();
+        }, "HyperCore-Vulkan-Init");
         initializer.setDaemon(true);
         backend.initializer = initializer;
         initializer.start();
@@ -99,7 +103,11 @@ public final class AdaptiveSpatialComputeBackend implements SpatialComputeBacken
         AdaptiveSpatialComputeBackend backend = new AdaptiveSpatialComputeBackend(
             policy, null, InitializationState.INITIALIZING, "",
             Objects.requireNonNull(gpuFactory, "gpuFactory"), cpu);
-        Thread initializer = new Thread(backend::initializeGpu, "HyperCore-Vulkan-Init-Test");
+        ClassLoader contextLoader = Thread.currentThread().getContextClassLoader();
+        Thread initializer = new Thread(() -> {
+            Thread.currentThread().setContextClassLoader(contextLoader);
+            backend.initializeGpu();
+        }, "HyperCore-Vulkan-Init-Test");
         initializer.setDaemon(true);
         backend.initializer = initializer;
         initializer.start();
@@ -481,7 +489,7 @@ public final class AdaptiveSpatialComputeBackend implements SpatialComputeBacken
                 }
             }
             if (!closed) {
-                LOGGER.warn("Vulkan compute initialization failed; using {}: {}", cpu.id(), reason);
+                LOGGER.warn("Vulkan compute initialization failed; using {}: {}", cpu.id(), reason, error);
             }
         } finally {
             initializationComplete.countDown();
