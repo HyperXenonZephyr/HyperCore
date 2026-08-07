@@ -184,6 +184,18 @@ final class HyperCoreBukkitPluginManager implements org.bukkit.plugin.PluginMana
         }
     }
 
+    @Override
+    public void disablePlugin(Plugin plugin) {
+        Objects.requireNonNull(plugin, "plugin");
+        plugins.unregister(plugin.getName());
+    }
+
+    @Override
+    public void enablePlugin(Plugin plugin) {
+        Objects.requireNonNull(plugin, "plugin");
+        throw new UnsupportedOperationException("Plugin reload is not supported by HyperCore");
+    }
+
     /**
      * Unregisters all listeners owned by the given plugin from every handler list.
      */

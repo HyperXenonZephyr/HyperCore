@@ -40,13 +40,14 @@ public interface WorldAccess {
      * Returns the current time of day in this world.
      */
     default long getTime() {
-        return 0;
+        throw new UnsupportedOperationException("getTime");
     }
 
     /**
      * Sets the current time of day in this world.
      */
     default void setTime(long time) {
+        throw new UnsupportedOperationException("setTime");
     }
 
     /**
@@ -76,59 +77,63 @@ public interface WorldAccess {
      * or {@code null} if the player is not present or the name is unknown.
      */
     default String getPlayerName(UUID playerId) {
-        return null;
+        throw new UnsupportedOperationException("getPlayerName");
     }
 
     /**
      * Returns whether it is currently raining in this world.
      */
     default boolean hasStorm() {
-        return false;
+        throw new UnsupportedOperationException("hasStorm");
     }
 
     /**
      * Sets whether it is currently raining in this world.
      */
     default void setStorm(boolean storm) {
+        throw new UnsupportedOperationException("setStorm");
     }
 
     /**
      * Returns whether it is currently thundering in this world.
      */
     default boolean isThundering() {
-        return false;
+        throw new UnsupportedOperationException("isThundering");
     }
 
     /**
      * Sets whether it is currently thundering in this world.
      */
     default void setThundering(boolean thundering) {
+        throw new UnsupportedOperationException("setThundering");
     }
 
     /**
      * Returns the spawn position of this world.
      */
     default Position getSpawnLocation() {
-        return null;
+        throw new UnsupportedOperationException("getSpawnLocation");
     }
 
     /**
      * Sets the spawn position of this world.
      */
     default void setSpawnLocation(Position position) {
+        throw new UnsupportedOperationException("setSpawnLocation");
     }
 
     /**
      * Returns the resource-key string of the biome at the given block coordinates.
      */
     default String getBiome(int x, int y, int z) {
-        return null;
+        throw new UnsupportedOperationException("getBiome");
     }
 
     /**
      * Sets the biome at the given block coordinates from a resource-key string.
      */
     default void setBiome(int x, int y, int z, String biomeKey) {
+        throw new UnsupportedOperationException("setBiome");
     }
 
     /**
@@ -136,41 +141,42 @@ public interface WorldAccess {
      * or {@code null} if it cannot be represented.
      */
     default String getBlockDataAsString(int x, int y, int z) {
-        return null;
+        throw new UnsupportedOperationException("getBlockDataAsString");
     }
 
     /**
      * Sets the block state from a string at the given block coordinates.
      */
     default void setBlockData(int x, int y, int z, String blockData) {
+        throw new UnsupportedOperationException("setBlockData");
     }
 
     /**
      * Returns the block light level at the given block coordinates.
      */
     default int getBlockLight(int x, int y, int z) {
-        return 0;
+        throw new UnsupportedOperationException("getBlockLight");
     }
 
     /**
      * Returns the sky light level at the given block coordinates.
      */
     default int getSkyLight(int x, int y, int z) {
-        return 0;
+        throw new UnsupportedOperationException("getSkyLight");
     }
 
     /**
      * Returns whether the block at the given coordinates is directly powered.
      */
     default boolean isBlockPowered(int x, int y, int z) {
-        return false;
+        throw new UnsupportedOperationException("isBlockPowered");
     }
 
     /**
      * Returns whether the block at the given coordinates is indirectly powered.
      */
     default boolean isBlockIndirectlyPowered(int x, int y, int z) {
-        return false;
+        throw new UnsupportedOperationException("isBlockIndirectlyPowered");
     }
 
     /**
@@ -178,7 +184,7 @@ public interface WorldAccess {
      * block coordinates.
      */
     default int getBlockPower(int x, int y, int z, String faceName) {
-        return 0;
+        throw new UnsupportedOperationException("getBlockPower");
     }
 
     /**
@@ -230,7 +236,7 @@ public interface WorldAccess {
      * Returns the unique ids of all players currently in this world.
      */
     default Collection<UUID> playerIds() {
-        return List.of();
+        throw new UnsupportedOperationException("playerIds");
     }
 
     /**
@@ -238,7 +244,7 @@ public interface WorldAccess {
      * or {@code null} if it is not present.
      */
     default EntityType getEntityType(UUID entityId) {
-        return null;
+        throw new UnsupportedOperationException("getEntityType");
     }
 
     /**
@@ -246,7 +252,7 @@ public interface WorldAccess {
      * or {@code null} if none or the entity is not present.
      */
     default String getEntityCustomName(UUID entityId) {
-        return null;
+        throw new UnsupportedOperationException("getEntityCustomName");
     }
 
     /**
@@ -255,7 +261,7 @@ public interface WorldAccess {
      * @return {@code true} if the entity was found and updated
      */
     default boolean setEntityCustomName(UUID entityId, String name) {
-        return false;
+        throw new UnsupportedOperationException("setEntityCustomName");
     }
 
     /**
@@ -271,7 +277,7 @@ public interface WorldAccess {
      * @return {@code true} if the entity was found and removed
      */
     default boolean removeEntity(UUID entityId) {
-        return false;
+        throw new UnsupportedOperationException("removeEntity");
     }
 
     /**
@@ -279,7 +285,7 @@ public interface WorldAccess {
      * or {@code null} if the player is not present.
      */
     default org.bukkit.GameMode getPlayerGameMode(UUID playerId) {
-        return null;
+        throw new UnsupportedOperationException("getPlayerGameMode");
     }
 
     /**
@@ -288,25 +294,28 @@ public interface WorldAccess {
      * @return {@code true} if the player was found and updated
      */
     default boolean setPlayerGameMode(UUID playerId, org.bukkit.GameMode gameMode) {
-        return false;
+        throw new UnsupportedOperationException("setPlayerGameMode");
     }
 
     /**
      * Disconnects the player with the given unique id from the server.
      */
     default void kickPlayer(UUID playerId, String message) {
+        throw new UnsupportedOperationException("kickPlayer");
     }
 
     /**
      * Sends a title to the player with the given unique id.
      */
     default void sendTitle(UUID playerId, String title, String subtitle, int fadeIn, int stay, int fadeOut) {
+        throw new UnsupportedOperationException("sendTitle");
     }
 
     /**
      * Resets the title currently displayed to the player with the given unique id.
      */
     default void resetTitle(UUID playerId) {
+        throw new UnsupportedOperationException("resetTitle");
     }
 
     /**
@@ -315,13 +324,14 @@ public interface WorldAccess {
      * @return {@code true} if the command was found and executed
      */
     default boolean performCommand(UUID playerId, String command) {
-        return false;
+        throw new UnsupportedOperationException("performCommand");
     }
 
     /**
      * Sends the current inventory contents to the player with the given unique id.
      */
     default void updateInventory(UUID playerId) {
+        throw new UnsupportedOperationException("updateInventory");
     }
 
     /**
@@ -330,39 +340,42 @@ public interface WorldAccess {
      * @return {@code true} if the inventory was opened
      */
     default boolean openInventory(UUID playerId, org.bukkit.inventory.Inventory inventory) {
-        return false;
+        throw new UnsupportedOperationException("openInventory");
     }
 
     /**
      * Sets the resource pack URL for the player with the given unique id.
      */
     default void setResourcePack(UUID playerId, String url) {
+        throw new UnsupportedOperationException("setResourcePack");
     }
 
     /**
      * Returns whether the player with the given unique id is sneaking.
      */
     default boolean isSneaking(UUID playerId) {
-        return false;
+        throw new UnsupportedOperationException("isSneaking");
     }
 
     /**
      * Sets whether the player with the given unique id is sneaking.
      */
     default void setSneaking(UUID playerId, boolean sneaking) {
+        throw new UnsupportedOperationException("setSneaking");
     }
 
     /**
      * Returns whether the player with the given unique id is sprinting.
      */
     default boolean isSprinting(UUID playerId) {
-        return false;
+        throw new UnsupportedOperationException("isSprinting");
     }
 
     /**
      * Sets whether the player with the given unique id is sprinting.
      */
     default void setSprinting(UUID playerId, boolean sprinting) {
+        throw new UnsupportedOperationException("setSprinting");
     }
 
     /**
@@ -438,7 +451,7 @@ public interface WorldAccess {
      * or {@code null} if the entity is not present.
      */
     default Vector3 getEntityVelocity(UUID entityId) {
-        return null;
+        throw new UnsupportedOperationException("getEntityVelocity");
     }
 
     /**
@@ -447,7 +460,7 @@ public interface WorldAccess {
      * @return {@code true} if the entity was found and updated
      */
     default boolean setEntityVelocity(UUID entityId, Vector3 velocity) {
-        return false;
+        throw new UnsupportedOperationException("setEntityVelocity");
     }
 
     /**
@@ -455,7 +468,7 @@ public interface WorldAccess {
      * or {@code 0.0f} if the entity is not present.
      */
     default float getEntityFallDistance(UUID entityId) {
-        return 0.0f;
+        throw new UnsupportedOperationException("getEntityFallDistance");
     }
 
     /**
@@ -464,7 +477,7 @@ public interface WorldAccess {
      * @return {@code true} if the entity was found and updated
      */
     default boolean setEntityFallDistance(UUID entityId, float distance) {
-        return false;
+        throw new UnsupportedOperationException("setEntityFallDistance");
     }
 
     /**
@@ -472,7 +485,7 @@ public interface WorldAccess {
      * or {@code 0} if the entity is not present.
      */
     default int getEntityFireTicks(UUID entityId) {
-        return 0;
+        throw new UnsupportedOperationException("getEntityFireTicks");
     }
 
     /**
@@ -481,7 +494,7 @@ public interface WorldAccess {
      * @return {@code true} if the entity was found and updated
      */
     default boolean setEntityFireTicks(UUID entityId, int ticks) {
-        return false;
+        throw new UnsupportedOperationException("setEntityFireTicks");
     }
 
     /**
@@ -489,7 +502,7 @@ public interface WorldAccess {
      * unique id.
      */
     default Collection<UUID> getEntityPassengers(UUID entityId) {
-        return List.of();
+        throw new UnsupportedOperationException("getEntityPassengers");
     }
 
     /**
@@ -498,7 +511,7 @@ public interface WorldAccess {
      * @return {@code true} if both entities were found and the passenger was added
      */
     default boolean addEntityPassenger(UUID entityId, UUID passengerId) {
-        return false;
+        throw new UnsupportedOperationException("addEntityPassenger");
     }
 
     /**
@@ -507,14 +520,14 @@ public interface WorldAccess {
      * @return {@code true} if both entities were found and the passenger was removed
      */
     default boolean removeEntityPassenger(UUID entityId, UUID passengerId) {
-        return false;
+        throw new UnsupportedOperationException("removeEntityPassenger");
     }
 
     /**
      * Returns whether the entity with the given unique id is inside a vehicle.
      */
     default boolean isEntityInsideVehicle(UUID entityId) {
-        return false;
+        throw new UnsupportedOperationException("isEntityInsideVehicle");
     }
 
     /**
@@ -522,7 +535,7 @@ public interface WorldAccess {
      * is riding, or {@code null} if none.
      */
     default UUID getEntityVehicle(UUID entityId) {
-        return null;
+        throw new UnsupportedOperationException("getEntityVehicle");
     }
 
     /**
@@ -531,7 +544,7 @@ public interface WorldAccess {
      * @return {@code true} if the entity was found and was inside a vehicle
      */
     default boolean leaveVehicle(UUID entityId) {
-        return false;
+        throw new UnsupportedOperationException("leaveVehicle");
     }
 
     /**
@@ -539,7 +552,7 @@ public interface WorldAccess {
      * or {@code 0.0} if the entity is not present or not alive.
      */
     default double getEntityHealth(UUID entityId) {
-        return 0.0;
+        throw new UnsupportedOperationException("getEntityHealth");
     }
 
     /**
@@ -548,7 +561,7 @@ public interface WorldAccess {
      * @return {@code true} if the entity was found and updated
      */
     default boolean setEntityHealth(UUID entityId, double health) {
-        return false;
+        throw new UnsupportedOperationException("setEntityHealth");
     }
 
     /**
@@ -556,7 +569,7 @@ public interface WorldAccess {
      * or {@code 0.0} if the entity is not present or not alive.
      */
     default double getEntityMaxHealth(UUID entityId) {
-        return 0.0;
+        throw new UnsupportedOperationException("getEntityMaxHealth");
     }
 
     /**
@@ -565,7 +578,7 @@ public interface WorldAccess {
      * @return {@code true} if the entity was found and updated
      */
     default boolean setEntityMaxHealth(UUID entityId, double maxHealth) {
-        return false;
+        throw new UnsupportedOperationException("setEntityMaxHealth");
     }
 
     /**
@@ -573,6 +586,7 @@ public interface WorldAccess {
      * unique id. Non-living entities are ignored.
      */
     default void damageEntity(UUID entityId, double amount) {
+        throw new UnsupportedOperationException("damageEntity");
     }
 
     /**
@@ -580,7 +594,7 @@ public interface WorldAccess {
      * or {@code true} if the entity is not present or not alive.
      */
     default boolean isEntityAiEnabled(UUID entityId) {
-        return true;
+        throw new UnsupportedOperationException("isEntityAiEnabled");
     }
 
     /**
@@ -589,7 +603,7 @@ public interface WorldAccess {
      * @return {@code true} if the entity was found and updated
      */
     default boolean setEntityAiEnabled(UUID entityId, boolean ai) {
-        return false;
+        throw new UnsupportedOperationException("setEntityAiEnabled");
     }
 
     /**
@@ -597,7 +611,7 @@ public interface WorldAccess {
      * or {@code true} if the entity is not present or not alive.
      */
     default boolean isEntityCollidable(UUID entityId) {
-        return true;
+        throw new UnsupportedOperationException("isEntityCollidable");
     }
 
     /**
@@ -606,6 +620,6 @@ public interface WorldAccess {
      * @return {@code true} if the entity was found and updated
      */
     default boolean setEntityCollidable(UUID entityId, boolean collidable) {
-        return false;
+        throw new UnsupportedOperationException("setEntityCollidable");
     }
 }

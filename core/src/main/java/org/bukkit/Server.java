@@ -49,4 +49,14 @@ public interface Server {
     default Collection<Player> getOnlinePlayers() {
         return List.of();
     }
+
+    /**
+     * Reloads the server, re-initializing all plugins and worlds.
+     *
+     * <p>HyperCore does not support server reload; this method always throws
+     * {@link UnsupportedOperationException}.
+     *
+     * @throws UnsupportedOperationException always
+     */
+    void reload();
 }

@@ -20,6 +20,7 @@ import java.util.Map;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
@@ -189,6 +190,54 @@ class BukkitPluginAdapterTest {
         org.bukkit.plugin.Plugin found = bukkitPlugin.getServer().getPluginManager().getPlugin(PLUGIN_NAME);
         assertEquals(bukkitPlugin, found, "Bukkit PluginManager should return the wrapped JavaPlugin by name");
         assertEquals(bukkitPlugin, org.bukkit.Bukkit.getPluginManager().getPlugin(PLUGIN_NAME));
+
+        manager.close();
+    }
+
+    @Test
+    void disablePluginDisablesAndCleansUp() {
+        PluginManager manager = new PluginManager();
+        ExampleBukkitPlugin bukkitPlugin = new ExampleBukkitPlugin();
+        BukkitPluginAdapter adapter = newAdapter(bukkitPlugin, manager);
+
+        manager.register(new PluginDescriptor(PLUGIN_ID, PLUGIN_NAME, "1.0"), adapter);
+        manager.enableAll();
+        assertTrue(bukkitPlugin.isEnabled(), "JavaPlugin should be enabled after enableAll");
+
+        org.bukkit.Bukkit.getPluginManager().disablePlugin(bukkitPlugin);
+
+        assertFalse(bukkitPlugin.isEnabled(), "JavaPlugin should be disabled after disablePlugin");
+        assertEquals(List.of("load", "enable", "disable"), bukkitPlugin.lifecycle);
+
+        manager.close();
+    }
+
+    @Test
+    void enablePluginRejectsReload() {
+        PluginManager manager = new PluginManager();
+        ExampleBukkitPlugin bukkitPlugin = new ExampleBukkitPlugin();
+        BukkitPluginAdapter adapter = newAdapter(bukkitPlugin, manager);
+
+        manager.register(new PluginDescriptor(PLUGIN_ID, PLUGIN_NAME, "1.0"), adapter);
+        manager.enableAll();
+        org.bukkit.Bukkit.getPluginManager().disablePlugin(bukkitPlugin);
+
+        assertThrows(UnsupportedOperationException.class,
+            () -> org.bukkit.Bukkit.getPluginManager().enablePlugin(bukkitPlugin));
+
+        manager.close();
+    }
+
+    @Test
+    void serverReloadThrowsUnsupported() {
+        PluginManager manager = new PluginManager();
+        ExampleBukkitPlugin bukkitPlugin = new ExampleBukkitPlugin();
+        BukkitPluginAdapter adapter = newAdapter(bukkitPlugin, manager);
+
+        manager.register(new PluginDescriptor(PLUGIN_ID, PLUGIN_NAME, "1.0"), adapter);
+        manager.enableAll();
+
+        assertThrows(UnsupportedOperationException.class, () -> org.bukkit.Bukkit.reload());
 
         manager.close();
     }

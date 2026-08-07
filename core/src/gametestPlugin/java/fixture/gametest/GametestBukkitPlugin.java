@@ -19,6 +19,8 @@ import org.bukkit.entity.EntityType;
 import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
+import org.bukkit.event.EventPriority;
+import org.bukkit.event.HandlerList;
 import org.bukkit.util.Vector;
 import org.bukkit.event.Listener;
 import org.bukkit.event.block.BlockPlaceEvent;
@@ -57,6 +59,15 @@ public final class GametestBukkitPlugin extends JavaPlugin implements Listener {
     private static volatile boolean captureInteractEvents;
     private static volatile EntityDamageEvent lastDamageEvent;
     private static volatile boolean captureDamageEvents;
+
+    // Conformance test event capture state. These fields track event priority
+    // ordering and cancellation propagation for the conformance subcommand.
+    private static volatile boolean captureConformanceEvents;
+    private static volatile boolean cancelConformancePlaceEvent;
+    private static volatile int conformanceOrderCounter;
+    private static volatile int lowestPriorityOrder;
+    private static volatile int highestPriorityOrder;
+    private static volatile boolean highestIgnoreCancelledFired;
 
     @Override
     protected void onLoad() {
@@ -105,6 +116,7 @@ public final class GametestBukkitPlugin extends JavaPlugin implements Listener {
                 case "playerarmor" -> runPlayerArmorTest();
                 case "event" -> runEventTest(args);
                 case "permission" -> runPermissionTest();
+                case "conformance" -> runConformanceTest();
                 case "world" -> runWorldTest();
                 case "worldstate" -> runWorldStateTest();
                 case "biome" -> runBiomeTest(args);
@@ -146,6 +158,39 @@ public final class GametestBukkitPlugin extends JavaPlugin implements Listener {
     public void onEntityDamage(EntityDamageEvent event) {
         if (captureDamageEvents) {
             lastDamageEvent = event;
+        }
+    }
+
+    // --- Conformance test event handlers ---
+    // These listeners verify event priority ordering and cancellation
+    // propagation. They only record state when captureConformanceEvents is
+    // true so they do not interfere with other subcommands.
+
+    @EventHandler(priority = EventPriority.LOWEST)
+    public void onBlockPlaceLowest(BlockPlaceEvent event) {
+        if (captureConformanceEvents) {
+            lowestPriorityOrder = conformanceOrderCounter++;
+        }
+    }
+
+    @EventHandler(priority = EventPriority.LOW)
+    public void onBlockPlaceLow(BlockPlaceEvent event) {
+        if (captureConformanceEvents && cancelConformancePlaceEvent) {
+            event.setCancelled(true);
+        }
+    }
+
+    @EventHandler(priority = EventPriority.HIGHEST)
+    public void onBlockPlaceHighest(BlockPlaceEvent event) {
+        if (captureConformanceEvents) {
+            highestPriorityOrder = conformanceOrderCounter++;
+        }
+    }
+
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+    public void onBlockPlaceHighestIgnoreCancelled(BlockPlaceEvent event) {
+        if (captureConformanceEvents) {
+            highestIgnoreCancelledFired = true;
         }
     }
 
@@ -663,6 +708,140 @@ public final class GametestBukkitPlugin extends JavaPlugin implements Listener {
 
         capturePlaceEvents = false;
         cancelNextPlaceEvent = false;
+        return true;
+    }
+
+    private boolean runConformanceTest() {
+        // Ensure legacy capture/cancel flags do not interfere with the
+        // conformance listeners.
+        capturePlaceEvents = false;
+        cancelNextPlaceEvent = false;
+
+        World world = firstWorld();
+        Block block = world.getBlockAt(0, 64, 0);
+
+        // --- Event conformance tests ---
+
+        // Test 1: Event priority ordering. The LOWEST priority listener must
+        // fire before the HIGHEST priority listener. A shared counter records
+        // the execution order of each listener.
+        captureConformanceEvents = false;
+        block.setType(Material.AIR);
+        captureConformanceEvents = true;
+        cancelConformancePlaceEvent = false;
+        conformanceOrderCounter = 0;
+        lowestPriorityOrder = -1;
+        highestPriorityOrder = -1;
+        highestIgnoreCancelledFired = false;
+        block.setType(Material.STONE);
+        if (lowestPriorityOrder < 0) {
+            throw new IllegalStateException("LOWEST priority listener did not fire");
+        }
+        if (highestPriorityOrder < 0) {
+            throw new IllegalStateException("HIGHEST priority listener did not fire");
+        }
+        if (lowestPriorityOrder >= highestPriorityOrder) {
+            throw new IllegalStateException(
+                "LOWEST listener did not fire before HIGHEST listener: lowest="
+                    + lowestPriorityOrder + " highest=" + highestPriorityOrder);
+        }
+        getLogger().info("Event priority ordering conformance verified");
+
+        // Test 2: Event cancellation propagation. A LOW priority listener
+        // cancels the BlockPlaceEvent. A HIGHEST listener with
+        // ignoreCancelled=true must NOT fire, while a HIGHEST listener without
+        // ignoreCancelled still fires. The block placement must be prevented.
+        captureConformanceEvents = false;
+        block.setType(Material.STONE);
+        captureConformanceEvents = true;
+        cancelConformancePlaceEvent = true;
+        conformanceOrderCounter = 0;
+        lowestPriorityOrder = -1;
+        highestPriorityOrder = -1;
+        highestIgnoreCancelledFired = false;
+        block.setType(Material.DIRT);
+        if (highestIgnoreCancelledFired) {
+            throw new IllegalStateException(
+                "HIGHEST ignoreCancelled listener fired despite cancellation");
+        }
+        if (highestPriorityOrder < 0) {
+            throw new IllegalStateException(
+                "HIGHEST listener (ignoreCancelled=false) did not fire after cancellation");
+        }
+        if (block.getType() != Material.STONE) {
+            throw new IllegalStateException(
+                "Cancelled BlockPlaceEvent did not prevent placement: " + block.getType());
+        }
+        getLogger().info("Event cancellation propagation conformance verified");
+
+        captureConformanceEvents = false;
+        cancelConformancePlaceEvent = false;
+
+        // Test 3: Event getHandlerList. BlockPlaceEvent.getHandlerList() must
+        // return a non-null HandlerList with at least one registered listener.
+        HandlerList handlerList = BlockPlaceEvent.getHandlerList();
+        if (handlerList == null) {
+            throw new IllegalStateException("BlockPlaceEvent.getHandlerList() returned null");
+        }
+        if (handlerList.getRegisteredListeners().isEmpty()) {
+            throw new IllegalStateException(
+                "BlockPlaceEvent.getHandlerList() has no registered listeners");
+        }
+        getLogger().info("Event getHandlerList conformance verified");
+
+        // --- Permission conformance tests ---
+
+        // Test 4: Permission default behavior. hypercore.gametest.admin is
+        // registered with PermissionDefault.OP, which is the Bukkit mechanism
+        // that grants the permission to OP players and denies it to non-OP
+        // players by default.
+        Permission adminPermission = Bukkit.getPluginManager().getPermission("hypercore.gametest.admin");
+        if (adminPermission == null) {
+            throw new IllegalStateException(
+                "Permission hypercore.gametest.admin was not registered");
+        }
+        if (adminPermission.getDefault() != PermissionDefault.OP) {
+            throw new IllegalStateException(
+                "Permission default is not OP: " + adminPermission.getDefault());
+        }
+        getLogger().info("Permission default behavior conformance verified");
+
+        // Test 5: Permission child inheritance. hypercore.gametest.use is
+        // registered and declared as a child of hypercore.gametest.admin.
+        Permission childPermission = Bukkit.getPluginManager().getPermission("hypercore.gametest.use");
+        if (childPermission == null) {
+            throw new IllegalStateException(
+                "Child permission hypercore.gametest.use was not registered");
+        }
+        if (!adminPermission.getChildren().containsKey("hypercore.gametest.use")) {
+            throw new IllegalStateException(
+                "Parent permission does not declare child hypercore.gametest.use");
+        }
+        getLogger().info("Permission child inheritance conformance verified");
+
+        // Test 6: Permission add/remove. A dynamically added permission is
+        // retrievable via getPermission and then removable via removePermission.
+        Permission testPermission = new Permission(
+            "hypercore.conformance.test", PermissionDefault.TRUE);
+        Bukkit.getPluginManager().addPermission(testPermission);
+        Permission retrieved = Bukkit.getPluginManager().getPermission("hypercore.conformance.test");
+        if (retrieved == null) {
+            throw new IllegalStateException(
+                "Permission was not returned by getPermission after addPermission");
+        }
+        if (retrieved.getDefault() != PermissionDefault.TRUE) {
+            throw new IllegalStateException(
+                "Added permission has wrong default: " + retrieved.getDefault());
+        }
+        Bukkit.getPluginManager().removePermission("hypercore.conformance.test");
+        Permission removed = Bukkit.getPluginManager().getPermission("hypercore.conformance.test");
+        if (removed != null) {
+            throw new IllegalStateException(
+                "Permission was still present after removePermission");
+        }
+        getLogger().info("Permission add/remove conformance verified");
+
+        getLogger().info("HyperCore Bukkit GameTest OK");
         return true;
     }
 

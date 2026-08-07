@@ -99,4 +99,9 @@ final class HyperCoreBukkitServer implements Server {
         }
         return List.copyOf(execution.onlinePlayers());
     }
+
+    @Override
+    public void reload() {
+        throw new UnsupportedOperationException("Server reload is not supported by HyperCore");
+    }
 }

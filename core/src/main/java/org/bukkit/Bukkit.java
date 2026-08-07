@@ -52,4 +52,13 @@ public final class Bukkit {
     public static Collection<Player> getOnlinePlayers() {
         return server == null ? Collections.emptyList() : server.getOnlinePlayers();
     }
+
+    /**
+     * Reloads the server. Delegates to {@link Server#reload()}.
+     *
+     * @throws UnsupportedOperationException always — HyperCore does not support reload
+     */
+    public static void reload() {
+        server.reload();
+    }
 }

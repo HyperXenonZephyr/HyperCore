@@ -221,6 +221,44 @@ class RegionExecutionServiceTest {
             this.sprinting.put(playerId, sprinting);
         }
 
+        // Connection-based operations are no-ops in the memory access but must
+        // not throw, so they are overridden explicitly rather than inherited
+        // from the WorldAccess defaults (which now throw).
+        @Override
+        public void kickPlayer(UUID playerId, String message) {
+            // No-op.
+        }
+
+        @Override
+        public void sendTitle(UUID playerId, String title, String subtitle, int fadeIn, int stay, int fadeOut) {
+            // No-op.
+        }
+
+        @Override
+        public void resetTitle(UUID playerId) {
+            // No-op.
+        }
+
+        @Override
+        public void updateInventory(UUID playerId) {
+            // No-op.
+        }
+
+        @Override
+        public void setResourcePack(UUID playerId, String url) {
+            // No-op.
+        }
+
+        @Override
+        public boolean performCommand(UUID playerId, String command) {
+            return false;
+        }
+
+        @Override
+        public boolean openInventory(UUID playerId, org.bukkit.inventory.Inventory inventory) {
+            return false;
+        }
+
         private static long key(int x, int y, int z) {
             return ((long) x & 0x1fffffL)
                 | (((long) y & 0x1fffffL) << 21)

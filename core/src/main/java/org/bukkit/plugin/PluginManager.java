@@ -87,4 +87,18 @@ public interface PluginManager {
      * Returns the permission with the given name, or {@code null} if not found.
      */
     Permission getPermission(String name);
+
+    /**
+     * Disables the given plugin. The plugin's onDisable callback is called and
+     * its registrations are cleaned up.
+     */
+    void disablePlugin(Plugin plugin);
+
+    /**
+     * Attempts to enable the given plugin. HyperCore does not support plugin
+     * reload; this method always throws {@link UnsupportedOperationException}.
+     *
+     * @throws UnsupportedOperationException always — reload is not supported
+     */
+    void enablePlugin(Plugin plugin);
 }
