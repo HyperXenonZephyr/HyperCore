@@ -78,3 +78,32 @@ These five runs predate CPU JIT priming, the vector backend, and device-local sn
 | 5 | 2.412 ms | 1.976 ms | 1.22x | 16.795 ms | 10.362 ms | 1.62x | 1,048,576 |
 
 Under the previous transfer mode, full-transfer calls had no crossover in any run and resident crossover appeared in three of five runs at different thresholds, so it remained process-sensitive and was not stable enough to tune `compute.gpuMinimumBatchSize`. Device-local storage removes the PCIe traversal from the resident dispatch, which is what makes the resident crossover repeatable across runs (65,536–262,144). The default `compute.gpuMinimumBatchSize` now has calibrated evidence for a resident-snapshot threshold; the full-call path still does not cross over and remains gated.
+
+## 3D Density Noise Compute
+
+Generated: 2026-08-08T10:27:59Z
+
+- GPU: `NVIDIA GeForce RTX 4060 Laptop GPU`
+- GPU transfer mode: `device-local-staged`
+- Java: `21.0.9`
+- OS: `Windows 11 amd64`
+- Logical processors: `32`
+- Warmups per backend and volume: `20`
+- Timed samples per backend and volume: `15`
+- Origin: `(-3.5, 2.0, -7.25)`
+- Frequency: `0.05`
+- Correctness tolerance: `1.0E-5`
+
+Each volume is a cube whose edge length determines the total voxel count (`edgeLength ^ 3`). CPU timings include the full scalar noise loop. GPU timings include staging upload, compute dispatch, fence wait, and density readback. Output arrays are allocated before timing.
+
+| Edge length | Voxels | CPU p50 | CPU p95 | GPU p50 | GPU p95 | Speedup | Readback |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 16 | 4,096 | 0.137 ms | 0.339 ms | 0.655 ms | 3.152 ms | 0.21x | 16,384 B |
+| 32 | 32,768 | 1.105 ms | 1.679 ms | 1.132 ms | 3.663 ms | 0.98x | 131,072 B |
+| 64 | 262,144 | 9.411 ms | 11.490 ms | 5.813 ms | 50.403 ms | 1.62x | 1,048,576 B |
+| 128 | 2,097,152 | 60.553 ms | 90.667 ms | 71.941 ms | 92.178 ms | 0.84x | 8,388,608 B |
+
+Conservative p50 crossover: none in the tested range.
+A crossover requires the GPU p50 to be at least 5% lower at that volume and every larger tested volume.
+
+The 3D value-noise workload is compute-light (one integer hash plus trilinear smoothstep interpolation per voxel), so per-dispatch overhead and density readback dominate at small and large volumes respectively. The GPU wins at 64³ (1.62x p50) where the 262K-voxel dispatch saturates the compute cores enough to amortize the 1 MB readback, but at 128³ the 8 MB readback and staging cost overtake the compute savings. At 16³ and 32³ the dispatch/fence floor exceeds the CPU loop cost. Unlike the spatial-query path, noise generation writes one `float` per voxel (4 bytes) rather than a packed 1-bit mask, so readback scales with volume and caps the large-volume speedup. The adaptive router retains the CPU fallback for batches below the offload threshold; the noise self-test verifies bit-exact CPU/GPU agreement within `1.0E-5`.

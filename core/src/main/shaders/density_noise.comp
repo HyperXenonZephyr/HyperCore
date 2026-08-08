@@ -1,0 +1,96 @@
+#version 450
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 4) in;
+
+layout(set = 0, binding = 0, std430) writeonly buffer Output {
+    float values[];
+} outputBuffer;
+
+layout(push_constant) uniform Parameters {
+    float originX;
+    float originY;
+    float originZ;
+    uint sizeX;
+    uint sizeY;
+    uint sizeZ;
+    float frequency;
+} params;
+
+// Deterministic 3D integer hash.  Constants and operations match the Java
+// ScalarNoiseComputeBackend.hash3d so CPU and GPU produce identical bits.
+// GLSL uint multiplication/addition wraps identically to Java int (two's
+// complement), and uint >> is the same as Java >>>.
+uint hash3d(uint x, uint y, uint z) {
+    uint h = x * 374761393u + y * 668265263u + z * 2147483647u;
+    h = (h ^ (h >> 13u)) * 1274126177u;
+    return h;
+}
+
+float hashFloat(uint x, uint y, uint z) {
+    return float(hash3d(x, y, z) & 0x00FFFFFFu) / float(0x01000000u);
+}
+
+float fade(float t) {
+    return t * t * (3.0 - 2.0 * t);
+}
+
+float lerp(float a, float b, float t) {
+    return a + (b - a) * t;
+}
+
+void main() {
+    uvec3 voxel = gl_GlobalInvocationID;
+
+    if (voxel.x >= params.sizeX || voxel.y >= params.sizeY || voxel.z >= params.sizeZ) {
+        return;
+    }
+
+    float px = (params.originX + float(voxel.x)) * params.frequency;
+    float py = (params.originY + float(voxel.y)) * params.frequency;
+    float pz = (params.originZ + float(voxel.z)) * params.frequency;
+
+    int ix0 = int(floor(px));
+    int iy0 = int(floor(py));
+    int iz0 = int(floor(pz));
+    int ix1 = ix0 + 1;
+    int iy1 = iy0 + 1;
+    int iz1 = iz0 + 1;
+
+    float fx = px - float(ix0);
+    float fy = py - float(iy0);
+    float fz = pz - float(iz0);
+
+    float fadeX = fade(fx);
+    float fadeY = fade(fy);
+    float fadeZ = fade(fz);
+
+    // Cast lattice coordinates to uint for hashing — bit patterns match Java int.
+    uint ux0 = uint(ix0);
+    uint uy0 = uint(iy0);
+    uint uz0 = uint(iz0);
+    uint ux1 = uint(ix1);
+    uint uy1 = uint(iy1);
+    uint uz1 = uint(iz1);
+
+    float v000 = hashFloat(ux0, uy0, uz0);
+    float v100 = hashFloat(ux1, uy0, uz0);
+    float v010 = hashFloat(ux0, uy1, uz0);
+    float v110 = hashFloat(ux1, uy1, uz0);
+    float v001 = hashFloat(ux0, uy0, uz1);
+    float v101 = hashFloat(ux1, uy0, uz1);
+    float v011 = hashFloat(ux0, uy1, uz1);
+    float v111 = hashFloat(ux1, uy1, uz1);
+
+    float x00 = lerp(v000, v100, fadeX);
+    float x10 = lerp(v010, v110, fadeX);
+    float x01 = lerp(v001, v101, fadeX);
+    float x11 = lerp(v011, v111, fadeX);
+
+    float y0 = lerp(x00, x10, fadeY);
+    float y1 = lerp(x01, x11, fadeY);
+
+    float result = lerp(y0, y1, fadeZ);
+
+    uint index = voxel.x + voxel.y * params.sizeX + voxel.z * params.sizeX * params.sizeY;
+    outputBuffer.values[index] = result;
+}

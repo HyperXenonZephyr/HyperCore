@@ -126,12 +126,19 @@ import static org.lwjgl.vulkan.VK10.vkUnmapMemory;
 import static org.lwjgl.vulkan.VK10.vkUpdateDescriptorSets;
 import static org.lwjgl.vulkan.VK10.vkWaitForFences;
 
-public final class VulkanSpatialComputeBackend implements ManagedSpatialComputeBackend {
+public final class VulkanSpatialComputeBackend implements ManagedSpatialComputeBackend, ManagedNoiseComputeBackend {
     public static final String ID = "gpu-vulkan";
 
     private static final String DISTANCE_SHADER_RESOURCE = "/assets/hypercore/shaders/squared_distances.spv";
     private static final String RADIUS_MASK_SHADER_RESOURCE = "/assets/hypercore/shaders/radius_mask.spv";
+    private static final String BATCH_RADIUS_MASK_SHADER_RESOURCE = "/assets/hypercore/shaders/batch_radius_mask.spv";
+    private static final String NOISE_SHADER_RESOURCE = "/assets/hypercore/shaders/density_noise.spv";
     private static final int LOCAL_SIZE = 256;
+    private static final int BATCH_LOCAL_SIZE_X = 16;
+    private static final int BATCH_LOCAL_SIZE_Y = 16;
+    private static final int NOISE_LOCAL_SIZE_X = 8;
+    private static final int NOISE_LOCAL_SIZE_Y = 8;
+    private static final int NOISE_LOCAL_SIZE_Z = 4;
     private static final int MAX_QUERIES_PER_SUBMISSION = 32;
     private static final long FENCE_TIMEOUT_NANOS = 30_000_000_000L;
 
@@ -164,6 +171,30 @@ public final class VulkanSpatialComputeBackend implements ManagedSpatialComputeB
     private boolean positionsDirty;
     private boolean closed;
 
+    private long batchDescriptorSetLayout;
+    private long batchPipelineLayout;
+    private long batchShaderModule;
+    private long batchPipeline;
+    private long batchDescriptorPool;
+    private long batchDescriptorSet;
+    private GpuBuffer batchOriginsX;
+    private GpuBuffer batchOriginsY;
+    private GpuBuffer batchOriginsZ;
+    private GpuBuffer batchSquaredRadii;
+    private GpuBuffer batchOutput;
+    private int batchQueryCapacity;
+    private int batchCandidateCapacity;
+    private int batchWordCapacity;
+
+    private long noiseDescriptorSetLayout;
+    private long noisePipelineLayout;
+    private long noiseShaderModule;
+    private long noisePipeline;
+    private long noiseDescriptorPool;
+    private long noiseDescriptorSet;
+    private GpuBuffer noiseOutput;
+    private int noiseCapacity;
+
     private VulkanSpatialComputeBackend() {
         VkInstance createdInstance = null;
         VkDevice createdDevice = null;
@@ -176,6 +207,16 @@ public final class VulkanSpatialComputeBackend implements ManagedSpatialComputeB
         long createdDescriptorPool = NULL;
         long createdCommandPool = NULL;
         long createdFence = NULL;
+        long createdBatchDescriptorSetLayout = NULL;
+        long createdBatchPipelineLayout = NULL;
+        long createdBatchShaderModule = NULL;
+        long createdBatchPipeline = NULL;
+        long createdBatchDescriptorPool = NULL;
+        long createdNoiseDescriptorSetLayout = NULL;
+        long createdNoisePipelineLayout = NULL;
+        long createdNoiseShaderModule = NULL;
+        long createdNoisePipeline = NULL;
+        long createdNoiseDescriptorPool = NULL;
         try {
             createdInstance = createInstance();
             DeviceCandidate selected = selectPhysicalDevice(createdInstance);
@@ -209,6 +250,28 @@ public final class VulkanSpatialComputeBackend implements ManagedSpatialComputeB
             commandBuffer = allocateCommandBuffer(device, commandPool);
             createdFence = createFence(device);
             fence = createdFence;
+            createdBatchDescriptorSetLayout = createBatchDescriptorSetLayout(device);
+            batchDescriptorSetLayout = createdBatchDescriptorSetLayout;
+            createdBatchPipelineLayout = createBatchPipelineLayout(device, batchDescriptorSetLayout);
+            batchPipelineLayout = createdBatchPipelineLayout;
+            createdBatchShaderModule = createShaderModule(device, BATCH_RADIUS_MASK_SHADER_RESOURCE);
+            batchShaderModule = createdBatchShaderModule;
+            createdBatchPipeline = createPipeline(device, batchPipelineLayout, batchShaderModule);
+            batchPipeline = createdBatchPipeline;
+            createdBatchDescriptorPool = createBatchDescriptorPool(device);
+            batchDescriptorPool = createdBatchDescriptorPool;
+            batchDescriptorSet = allocateDescriptorSet(device, batchDescriptorPool, batchDescriptorSetLayout);
+            createdNoiseShaderModule = createShaderModule(device, NOISE_SHADER_RESOURCE);
+            noiseShaderModule = createdNoiseShaderModule;
+            createdNoiseDescriptorSetLayout = createNoiseDescriptorSetLayout(device);
+            noiseDescriptorSetLayout = createdNoiseDescriptorSetLayout;
+            createdNoisePipelineLayout = createNoisePipelineLayout(device, noiseDescriptorSetLayout);
+            noisePipelineLayout = createdNoisePipelineLayout;
+            createdNoisePipeline = createPipeline(device, noisePipelineLayout, noiseShaderModule);
+            noisePipeline = createdNoisePipeline;
+            createdNoiseDescriptorPool = createNoiseDescriptorPool(device);
+            noiseDescriptorPool = createdNoiseDescriptorPool;
+            noiseDescriptorSet = allocateDescriptorSet(device, noiseDescriptorPool, noiseDescriptorSetLayout);
         } catch (RuntimeException | LinkageError error) {
             destroyPartial(
                 createdInstance,
@@ -221,7 +284,17 @@ public final class VulkanSpatialComputeBackend implements ManagedSpatialComputeB
                 createdRadiusMaskPipeline,
                 createdDescriptorPool,
                 createdCommandPool,
-                createdFence
+                createdFence,
+                createdBatchDescriptorSetLayout,
+                createdBatchPipelineLayout,
+                createdBatchShaderModule,
+                createdBatchPipeline,
+                createdBatchDescriptorPool,
+                createdNoiseDescriptorSetLayout,
+                createdNoisePipelineLayout,
+                createdNoiseShaderModule,
+                createdNoisePipeline,
+                createdNoiseDescriptorPool
             );
             throw error;
         }
@@ -351,6 +424,194 @@ public final class VulkanSpatialComputeBackend implements ManagedSpatialComputeB
     }
 
     @Override
+    public synchronized void batchRadiusMask(
+        float[] originsX, float[] originsY, float[] originsZ, float[] squaredRadii, int queryCount,
+        float[] positionsX, float[] positionsY, float[] positionsZ,
+        int[] outputWords
+    ) {
+        ensureOpen();
+        int size = validateMask(positionsX, positionsY, positionsZ, outputWords);
+        Objects.requireNonNull(originsX, "originsX");
+        Objects.requireNonNull(originsY, "originsY");
+        Objects.requireNonNull(originsZ, "originsZ");
+        Objects.requireNonNull(squaredRadii, "squaredRadii");
+        if (queryCount < 0) {
+            throw new IllegalArgumentException("queryCount cannot be negative");
+        }
+        if (originsX.length < queryCount || originsY.length < queryCount
+            || originsZ.length < queryCount || squaredRadii.length < queryCount) {
+            throw new IllegalArgumentException("Origin/radius arrays must have at least queryCount elements");
+        }
+        if (queryCount == 0 || size == 0) {
+            return;
+        }
+        validateRadiusBatchSize(size);
+        int wordCount = SpatialComputeBackend.maskWordCount(size);
+        long requiredWords = (long) wordCount * queryCount;
+        if (requiredWords > outputWords.length) {
+            throw new IllegalArgumentException("Output mask cannot fit every query result");
+        }
+        long outputBytes = requiredWords * Integer.BYTES;
+        if (outputBytes > maximumStorageBufferBytes) {
+            throw new BatchNotSupportedException("Batch output exceeds device storage buffer limit");
+        }
+
+        ensureCapacity(size);
+        uploadPositions(positionsX, positionsY, positionsZ, size);
+        ensureBatchCapacity(queryCount, size, wordCount);
+        uploadBatchOrigins(originsX, originsY, originsZ, squaredRadii, queryCount);
+        recordBatchRadiusMask(size, wordCount, queryCount);
+        submitAndWait();
+        downloadBatchMask(outputWords, queryCount, wordCount);
+    }
+
+    // ---- NoiseComputeBackend ----
+
+    @Override
+    public synchronized void generateDensity(
+        float originX, float originY, float originZ,
+        int sizeX, int sizeY, int sizeZ,
+        float frequency,
+        float[] output
+    ) {
+        ensureOpen();
+        int total = NoiseComputeBackend.validate(sizeX, sizeY, sizeZ, frequency, output);
+
+        long outputBytes = (long) total * Float.BYTES;
+        if (outputBytes > maximumStorageBufferBytes) {
+            throw new BatchNotSupportedException("Noise volume exceeds device storage buffer limit");
+        }
+        int workgroupsX = Math.ceilDiv(sizeX, NOISE_LOCAL_SIZE_X);
+        int workgroupsY = Math.ceilDiv(sizeY, NOISE_LOCAL_SIZE_Y);
+        int workgroupsZ = Math.ceilDiv(sizeZ, NOISE_LOCAL_SIZE_Z);
+        if (workgroupsX > maximumWorkgroupsX || workgroupsY > maximumWorkgroupsX || workgroupsZ > maximumWorkgroupsX) {
+            throw new BatchNotSupportedException("Noise dispatch exceeds device workgroup limit");
+        }
+
+        ensureNoiseCapacity(total);
+        recordNoise(originX, originY, originZ, sizeX, sizeY, sizeZ, frequency,
+            workgroupsX, workgroupsY, workgroupsZ);
+        submitAndWait();
+        download(noiseOutput, output, total);
+    }
+
+    private void ensureNoiseCapacity(int total) {
+        if (noiseOutput != null && noiseCapacity >= total) {
+            return;
+        }
+        int newCapacity = Math.max(1_024, Integer.highestOneBit(total - 1) << 1);
+        if (newCapacity < total) {
+            newCapacity = total;
+        }
+        vkDeviceWaitIdle(device);
+        if (noiseOutput != null) {
+            noiseOutput.close(device);
+        }
+        long sizeBytes = (long) newCapacity * Float.BYTES;
+        noiseOutput = GpuBuffer.create(device, physicalDevice, sizeBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+        noiseCapacity = newCapacity;
+        updateNoiseDescriptorSet();
+    }
+
+    private void updateNoiseDescriptorSet() {
+        try (MemoryStack stack = stackPush()) {
+            VkDescriptorBufferInfo.Buffer info = VkDescriptorBufferInfo.calloc(1, stack)
+                .buffer(noiseOutput.buffer())
+                .offset(0)
+                .range(noiseOutput.sizeBytes());
+            VkWriteDescriptorSet.Buffer write = VkWriteDescriptorSet.calloc(1, stack)
+                .sType$Default()
+                .dstSet(noiseDescriptorSet)
+                .dstBinding(0)
+                .descriptorType(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER)
+                .descriptorCount(1)
+                .pBufferInfo(info);
+            vkUpdateDescriptorSets(device, write, null);
+        }
+    }
+
+    private void recordNoise(
+        float originX, float originY, float originZ,
+        int sizeX, int sizeY, int sizeZ, float frequency,
+        int workgroupsX, int workgroupsY, int workgroupsZ
+    ) {
+        check(vkResetCommandBuffer(commandBuffer, VK_COMMAND_BUFFER_RESET_RELEASE_RESOURCES_BIT), "reset command buffer");
+        try (MemoryStack stack = stackPush()) {
+            VkCommandBufferBeginInfo beginInfo = VkCommandBufferBeginInfo.calloc(stack).sType$Default();
+            check(vkBeginCommandBuffer(commandBuffer, beginInfo), "begin command buffer");
+            vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, noisePipeline);
+            vkCmdBindDescriptorSets(
+                commandBuffer,
+                VK_PIPELINE_BIND_POINT_COMPUTE,
+                noisePipelineLayout,
+                0,
+                stack.longs(noiseDescriptorSet),
+                null
+            );
+            ByteBuffer parameters = stack.malloc(28).order(ByteOrder.nativeOrder());
+            parameters.putFloat(originX)
+                .putFloat(originY)
+                .putFloat(originZ)
+                .putInt(sizeX)
+                .putInt(sizeY)
+                .putInt(sizeZ)
+                .putFloat(frequency)
+                .flip();
+            vkCmdPushConstants(commandBuffer, noisePipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, parameters);
+            vkCmdDispatch(commandBuffer, workgroupsX, workgroupsY, workgroupsZ);
+            check(vkEndCommandBuffer(commandBuffer), "end command buffer");
+        }
+    }
+
+    private static long createNoiseDescriptorSetLayout(VkDevice device) {
+        try (MemoryStack stack = stackPush()) {
+            VkDescriptorSetLayoutBinding.Buffer bindings = VkDescriptorSetLayoutBinding.calloc(1, stack);
+            bindings.get(0)
+                .binding(0)
+                .descriptorType(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER)
+                .descriptorCount(1)
+                .stageFlags(VK_SHADER_STAGE_COMPUTE_BIT);
+            VkDescriptorSetLayoutCreateInfo createInfo = VkDescriptorSetLayoutCreateInfo.calloc(stack)
+                .sType$Default()
+                .pBindings(bindings);
+            LongBuffer handle = stack.mallocLong(1);
+            check(vkCreateDescriptorSetLayout(device, createInfo, null, handle), "create noise descriptor set layout");
+            return handle.get(0);
+        }
+    }
+
+    private static long createNoisePipelineLayout(VkDevice device, long descriptorSetLayout) {
+        try (MemoryStack stack = stackPush()) {
+            VkPushConstantRange.Buffer pushConstants = VkPushConstantRange.calloc(1, stack)
+                .stageFlags(VK_SHADER_STAGE_COMPUTE_BIT)
+                .offset(0)
+                .size(28);
+            VkPipelineLayoutCreateInfo createInfo = VkPipelineLayoutCreateInfo.calloc(stack)
+                .sType$Default()
+                .pSetLayouts(stack.longs(descriptorSetLayout))
+                .pPushConstantRanges(pushConstants);
+            LongBuffer handle = stack.mallocLong(1);
+            check(vkCreatePipelineLayout(device, createInfo, null, handle), "create noise pipeline layout");
+            return handle.get(0);
+        }
+    }
+
+    private static long createNoiseDescriptorPool(VkDevice device) {
+        try (MemoryStack stack = stackPush()) {
+            VkDescriptorPoolSize.Buffer poolSize = VkDescriptorPoolSize.calloc(1, stack)
+                .type(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER)
+                .descriptorCount(1);
+            VkDescriptorPoolCreateInfo createInfo = VkDescriptorPoolCreateInfo.calloc(stack)
+                .sType$Default()
+                .pPoolSizes(poolSize)
+                .maxSets(1);
+            LongBuffer handle = stack.mallocLong(1);
+            check(vkCreateDescriptorPool(device, createInfo, null, handle), "create noise descriptor pool");
+            return handle.get(0);
+        }
+    }
+
+    @Override
     public synchronized void close() {
         if (closed) {
             return;
@@ -360,6 +621,46 @@ public final class VulkanSpatialComputeBackend implements ManagedSpatialComputeB
         if (buffers != null) {
             buffers.close(device);
             buffers = null;
+        }
+        if (batchOriginsX != null) {
+            batchOriginsX.close(device);
+            batchOriginsY.close(device);
+            batchOriginsZ.close(device);
+            batchSquaredRadii.close(device);
+            batchOutput.close(device);
+        }
+        if (batchPipeline != NULL) {
+            vkDestroyPipeline(device, batchPipeline, null);
+        }
+        if (batchShaderModule != NULL) {
+            vkDestroyShaderModule(device, batchShaderModule, null);
+        }
+        if (batchPipelineLayout != NULL) {
+            vkDestroyPipelineLayout(device, batchPipelineLayout, null);
+        }
+        if (batchDescriptorPool != NULL) {
+            vkDestroyDescriptorPool(device, batchDescriptorPool, null);
+        }
+        if (batchDescriptorSetLayout != NULL) {
+            vkDestroyDescriptorSetLayout(device, batchDescriptorSetLayout, null);
+        }
+        if (noiseOutput != null) {
+            noiseOutput.close(device);
+        }
+        if (noisePipeline != NULL) {
+            vkDestroyPipeline(device, noisePipeline, null);
+        }
+        if (noiseShaderModule != NULL) {
+            vkDestroyShaderModule(device, noiseShaderModule, null);
+        }
+        if (noisePipelineLayout != NULL) {
+            vkDestroyPipelineLayout(device, noisePipelineLayout, null);
+        }
+        if (noiseDescriptorPool != NULL) {
+            vkDestroyDescriptorPool(device, noiseDescriptorPool, null);
+        }
+        if (noiseDescriptorSetLayout != NULL) {
+            vkDestroyDescriptorSetLayout(device, noiseDescriptorSetLayout, null);
         }
         vkDestroyFence(device, fence, null);
         vkDestroyCommandPool(device, commandPool, null);
@@ -398,6 +699,9 @@ public final class VulkanSpatialComputeBackend implements ManagedSpatialComputeB
         positionsDirty = false;
         if (previous != null) {
             previous.close(device);
+        }
+        if (batchOriginsX != null) {
+            updateBatchDescriptorSet();
         }
     }
 
@@ -719,6 +1023,119 @@ public final class VulkanSpatialComputeBackend implements ManagedSpatialComputeB
         }
     }
 
+    private void ensureBatchCapacity(int queryCount, int candidateCount, int wordCount) {
+        int neededQueryCapacity = Math.max(1_024, Integer.highestOneBit(queryCount - 1) << 1);
+        if (neededQueryCapacity < queryCount) {
+            neededQueryCapacity = queryCount;
+        }
+        long neededOutputWords = (long) neededQueryCapacity * wordCount;
+        long neededOutputBytes = neededOutputWords * Integer.BYTES;
+        if (batchOriginsX != null
+            && batchQueryCapacity >= neededQueryCapacity
+            && batchCandidateCapacity >= candidateCount
+            && batchWordCapacity >= wordCount
+            && batchOutput.sizeBytes() >= neededOutputBytes) {
+            return;
+        }
+        vkDeviceWaitIdle(device);
+        long originsBytes = (long) neededQueryCapacity * Float.BYTES;
+        if (batchOriginsX != null) {
+            batchOriginsX.close(device);
+            batchOriginsY.close(device);
+            batchOriginsZ.close(device);
+            batchSquaredRadii.close(device);
+            batchOutput.close(device);
+        }
+        batchOriginsX = GpuBuffer.create(device, physicalDevice, originsBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+        batchOriginsY = GpuBuffer.create(device, physicalDevice, originsBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+        batchOriginsZ = GpuBuffer.create(device, physicalDevice, originsBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+        batchSquaredRadii = GpuBuffer.create(device, physicalDevice, originsBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+        // Output buffer: queryCount * wordCount ints, but at least the standard output buffer size
+        long outputSizeBytes = Math.max(neededOutputBytes, (long) candidateCount * Float.BYTES);
+        if (outputSizeBytes > Integer.MAX_VALUE) {
+            throw new BatchNotSupportedException("Batch output buffer exceeds Java buffer capacity");
+        }
+        batchOutput = GpuBuffer.create(device, physicalDevice, outputSizeBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+        batchQueryCapacity = neededQueryCapacity;
+        batchCandidateCapacity = candidateCount;
+        batchWordCapacity = wordCount;
+        updateBatchDescriptorSet();
+    }
+
+    private void updateBatchDescriptorSet() {
+        GpuResource[] resources = {
+            buffers.positionsX(),
+            buffers.positionsY(),
+            buffers.positionsZ(),
+            batchOriginsX,
+            batchOriginsY,
+            batchOriginsZ,
+            batchSquaredRadii,
+            batchOutput
+        };
+        try (MemoryStack stack = stackPush()) {
+            for (int binding = 0; binding < resources.length; binding++) {
+                GpuResource resource = resources[binding];
+                VkDescriptorBufferInfo.Buffer info = VkDescriptorBufferInfo.calloc(1, stack)
+                    .buffer(resource.buffer())
+                    .offset(0)
+                    .range(resource.sizeBytes());
+                VkWriteDescriptorSet.Buffer write = VkWriteDescriptorSet.calloc(1, stack)
+                    .sType$Default()
+                    .dstSet(batchDescriptorSet)
+                    .dstBinding(binding)
+                    .descriptorType(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER)
+                    .descriptorCount(1)
+                    .pBufferInfo(info);
+                vkUpdateDescriptorSets(device, write, null);
+            }
+        }
+    }
+
+    private void uploadBatchOrigins(
+        float[] originsX, float[] originsY, float[] originsZ, float[] squaredRadii, int queryCount
+    ) {
+        upload(batchOriginsX, originsX, queryCount);
+        upload(batchOriginsY, originsY, queryCount);
+        upload(batchOriginsZ, originsZ, queryCount);
+        upload(batchSquaredRadii, squaredRadii, queryCount);
+    }
+
+    private void recordBatchRadiusMask(int candidateCount, int wordCount, int queryCount) {
+        check(vkResetCommandBuffer(commandBuffer, VK_COMMAND_BUFFER_RESET_RELEASE_RESOURCES_BIT), "reset command buffer");
+        try (MemoryStack stack = stackPush()) {
+            VkCommandBufferBeginInfo beginInfo = VkCommandBufferBeginInfo.calloc(stack).sType$Default();
+            check(vkBeginCommandBuffer(commandBuffer, beginInfo), "begin command buffer");
+            if (positionsDirty) {
+                recordPositionUpload(stack);
+                positionsDirty = false;
+            }
+            vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, batchPipeline);
+            vkCmdBindDescriptorSets(
+                commandBuffer,
+                VK_PIPELINE_BIND_POINT_COMPUTE,
+                batchPipelineLayout,
+                0,
+                stack.longs(batchDescriptorSet),
+                null
+            );
+            ByteBuffer parameters = stack.malloc(3 * Integer.BYTES).order(ByteOrder.nativeOrder());
+            parameters.putInt(candidateCount).putInt(wordCount).putInt(queryCount).flip();
+            vkCmdPushConstants(commandBuffer, batchPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, parameters);
+            int workgroupsX = Math.ceilDiv(queryCount, BATCH_LOCAL_SIZE_X);
+            int workgroupsY = Math.ceilDiv(wordCount, BATCH_LOCAL_SIZE_Y);
+            vkCmdDispatch(commandBuffer, workgroupsX, workgroupsY, 1);
+            check(vkEndCommandBuffer(commandBuffer), "end command buffer");
+        }
+    }
+
+    private void downloadBatchMask(int[] output, int queryCount, int wordCount) {
+        IntBuffer values = batchOutput.mapped().duplicate()
+            .order(ByteOrder.nativeOrder())
+            .asIntBuffer();
+        values.get(output, 0, queryCount * wordCount);
+    }
+
     private static VkInstance createInstance() {
         try (MemoryStack stack = stackPush()) {
             VkApplicationInfo applicationInfo = VkApplicationInfo.calloc(stack)
@@ -893,6 +1310,56 @@ public final class VulkanSpatialComputeBackend implements ManagedSpatialComputeB
         }
     }
 
+    private static long createBatchDescriptorSetLayout(VkDevice device) {
+        try (MemoryStack stack = stackPush()) {
+            VkDescriptorSetLayoutBinding.Buffer bindings = VkDescriptorSetLayoutBinding.calloc(8, stack);
+            for (int index = 0; index < bindings.capacity(); index++) {
+                bindings.get(index)
+                    .binding(index)
+                    .descriptorType(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER)
+                    .descriptorCount(1)
+                    .stageFlags(VK_SHADER_STAGE_COMPUTE_BIT);
+            }
+            VkDescriptorSetLayoutCreateInfo createInfo = VkDescriptorSetLayoutCreateInfo.calloc(stack)
+                .sType$Default()
+                .pBindings(bindings);
+            LongBuffer handle = stack.mallocLong(1);
+            check(vkCreateDescriptorSetLayout(device, createInfo, null, handle), "create batch descriptor set layout");
+            return handle.get(0);
+        }
+    }
+
+    private static long createBatchPipelineLayout(VkDevice device, long descriptorSetLayout) {
+        try (MemoryStack stack = stackPush()) {
+            VkPushConstantRange.Buffer pushConstants = VkPushConstantRange.calloc(1, stack)
+                .stageFlags(VK_SHADER_STAGE_COMPUTE_BIT)
+                .offset(0)
+                .size(12);
+            VkPipelineLayoutCreateInfo createInfo = VkPipelineLayoutCreateInfo.calloc(stack)
+                .sType$Default()
+                .pSetLayouts(stack.longs(descriptorSetLayout))
+                .pPushConstantRanges(pushConstants);
+            LongBuffer handle = stack.mallocLong(1);
+            check(vkCreatePipelineLayout(device, createInfo, null, handle), "create batch pipeline layout");
+            return handle.get(0);
+        }
+    }
+
+    private static long createBatchDescriptorPool(VkDevice device) {
+        try (MemoryStack stack = stackPush()) {
+            VkDescriptorPoolSize.Buffer poolSize = VkDescriptorPoolSize.calloc(1, stack)
+                .type(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER)
+                .descriptorCount(8);
+            VkDescriptorPoolCreateInfo createInfo = VkDescriptorPoolCreateInfo.calloc(stack)
+                .sType$Default()
+                .pPoolSizes(poolSize)
+                .maxSets(1);
+            LongBuffer handle = stack.mallocLong(1);
+            check(vkCreateDescriptorPool(device, createInfo, null, handle), "create batch descriptor pool");
+            return handle.get(0);
+        }
+    }
+
     private static long allocateDescriptorSet(VkDevice device, long pool, long layout) {
         try (MemoryStack stack = stackPush()) {
             VkDescriptorSetAllocateInfo allocateInfo = VkDescriptorSetAllocateInfo.calloc(stack)
@@ -1018,9 +1485,49 @@ public final class VulkanSpatialComputeBackend implements ManagedSpatialComputeB
         long radiusMaskPipeline,
         long descriptorPool,
         long commandPool,
-        long fence
+        long fence,
+        long batchDescriptorSetLayout,
+        long batchPipelineLayout,
+        long batchShaderModule,
+        long batchPipeline,
+        long batchDescriptorPool,
+        long noiseDescriptorSetLayout,
+        long noisePipelineLayout,
+        long noiseShaderModule,
+        long noisePipeline,
+        long noiseDescriptorPool
     ) {
         if (device != null) {
+            if (noisePipeline != NULL) {
+                vkDestroyPipeline(device, noisePipeline, null);
+            }
+            if (noiseShaderModule != NULL) {
+                vkDestroyShaderModule(device, noiseShaderModule, null);
+            }
+            if (noisePipelineLayout != NULL) {
+                vkDestroyPipelineLayout(device, noisePipelineLayout, null);
+            }
+            if (noiseDescriptorPool != NULL) {
+                vkDestroyDescriptorPool(device, noiseDescriptorPool, null);
+            }
+            if (noiseDescriptorSetLayout != NULL) {
+                vkDestroyDescriptorSetLayout(device, noiseDescriptorSetLayout, null);
+            }
+            if (batchPipeline != NULL) {
+                vkDestroyPipeline(device, batchPipeline, null);
+            }
+            if (batchShaderModule != NULL) {
+                vkDestroyShaderModule(device, batchShaderModule, null);
+            }
+            if (batchPipelineLayout != NULL) {
+                vkDestroyPipelineLayout(device, batchPipelineLayout, null);
+            }
+            if (batchDescriptorPool != NULL) {
+                vkDestroyDescriptorPool(device, batchDescriptorPool, null);
+            }
+            if (batchDescriptorSetLayout != NULL) {
+                vkDestroyDescriptorSetLayout(device, batchDescriptorSetLayout, null);
+            }
             if (fence != NULL) {
                 vkDestroyFence(device, fence, null);
             }

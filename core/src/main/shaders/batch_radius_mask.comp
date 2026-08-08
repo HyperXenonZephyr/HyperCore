@@ -1,0 +1,70 @@
+#version 450
+
+layout(local_size_x = 16, local_size_y = 16) in;
+
+layout(set = 0, binding = 0, std430) readonly buffer PositionsX {
+    float values[];
+} positionsX;
+
+layout(set = 0, binding = 1, std430) readonly buffer PositionsY {
+    float values[];
+} positionsY;
+
+layout(set = 0, binding = 2, std430) readonly buffer PositionsZ {
+    float values[];
+} positionsZ;
+
+layout(set = 0, binding = 3, std430) readonly buffer OriginsX {
+    float values[];
+} originsX;
+
+layout(set = 0, binding = 4, std430) readonly buffer OriginsY {
+    float values[];
+} originsY;
+
+layout(set = 0, binding = 5, std430) readonly buffer OriginsZ {
+    float values[];
+} originsZ;
+
+layout(set = 0, binding = 6, std430) readonly buffer SquaredRadii {
+    float values[];
+} squaredRadii;
+
+layout(set = 0, binding = 7, std430) writeonly buffer OutputMask {
+    uint values[];
+} outputMask;
+
+layout(push_constant) uniform Parameters {
+    uint candidateCount;
+    uint wordCount;
+    uint queryCount;
+} params;
+
+void main() {
+    uint queryIndex = gl_GlobalInvocationID.x;
+    uint wordIndex = gl_GlobalInvocationID.y;
+
+    if (queryIndex >= params.queryCount || wordIndex >= params.wordCount) {
+        return;
+    }
+
+    float ox = originsX.values[queryIndex];
+    float oy = originsY.values[queryIndex];
+    float oz = originsZ.values[queryIndex];
+    float sqRadius = squaredRadii.values[queryIndex];
+
+    uint start = wordIndex * 32u;
+    uint end = min(start + 32u, params.candidateCount);
+
+    uint mask = 0u;
+    for (uint index = start; index < end; index++) {
+        float deltaX = positionsX.values[index] - ox;
+        float deltaY = positionsY.values[index] - oy;
+        float deltaZ = positionsZ.values[index] - oz;
+        float squaredDistance = deltaX * deltaX + deltaY * deltaY + deltaZ * deltaZ;
+        if (squaredDistance <= sqRadius) {
+            mask |= 1u << (index - start);
+        }
+    }
+    outputMask.values[queryIndex * params.wordCount + wordIndex] = mask;
+}

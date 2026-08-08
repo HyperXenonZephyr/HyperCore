@@ -109,6 +109,14 @@ Fabric's GameTest uses the same test Bukkit plugin staged into `fabric/run/plugi
 
 The generated report is written to `core/build/reports/hypercore/compute-benchmark.md`. It is a microbenchmark of the spatial mask backend, not an MSPT or world-simulation benchmark.
 
+### Noise compute benchmark
+
+```powershell
+./gradlew.bat :core:benchmarkNoiseCompute
+```
+
+The generated report is written to `core/build/reports/hypercore/noise-compute-benchmark.md`. It compares CPU scalar and GPU Vulkan 3D value-noise generation over volumes from 16³ (4,096 voxels) through 128³ (2,097,152 voxels).
+
 The Forge development run tasks automatically stage `:core` and `:forge` classes and resources — including the compiled `.spv` shaders and the vector source-set output — into a single mod directory under `forge/build/dev-mod` via the `prepareDevMod` task. This keeps normal Gradle build outputs reproducible while giving Forge one complete exploded mod root.
 
 ## Configuration
@@ -134,6 +142,10 @@ The scalar backend is the deterministic correctness baseline for structure-of-ar
 `SpatialQueryEngine` accepts an immutable copy of structure-of-arrays positions and returns the ordered indices whose squared distance is within an inclusive radius. Its scalar path packs matches directly, while its Vulkan path processes 32 candidates per invocation and returns one 32-bit mask word. The engine weakly caches one prepared backend snapshot per `PositionBatch`; repeated queries reuse resident XYZ data, while snapshot switching or direct buffer use is detected by a Vulkan data generation and triggers a correct re-upload. `withinRadii` returns query-major results and batches up to 32 Vulkan dispatches into one submission and fence wait. Larger groups are chunked without changing result order. Runtime shutdown closes query snapshots before the compute backend.
 
 The packed mask, resident snapshot, and multi-query submission are exact transfer and synchronization reductions, not end-to-end server performance claims. In the latest RTX 4060 run, eight batched queries were `7.56x`, `4.94x`, `3.10x`, `1.70x`, and `1.33x` faster than eight individual GPU submissions from 4K through 1M candidates. At 4M, compute cost dominated and the batch measured `1.19x`, so batching is not treated as universally faster. With positions held in device-local memory, the resident-snapshot path no longer crosses PCIe on every dispatch and now reaches a repeatable CPU crossover (65,536–262,144 candidates across runs); the full-call path (which still includes the staging→device-local copy) does not cross over. Entity, chunk, and block simulation remain outside the GPU path, and the default offload threshold stays unchanged until repeatable end-to-end query or tick gains are established.
+
+### 3D density noise generation
+
+A second GPU compute workload generates 3D value-noise density fields over regular voxel grids. Each voxel is computed from a deterministic integer hash of its surrounding lattice points with trilinear interpolation and a smoothstep fade. The hash function uses the same constants and bitwise operations in both Java (`ScalarNoiseComputeBackend`) and GLSL (`density_noise.comp`), so CPU and GPU output match within a 1e-5 tolerance. The `AdaptiveNoiseComputeBackend` mirrors the spatial adaptive router: asynchronous Vulkan initialization, batch-size-gated GPU offload via `GpuOffloadPolicy`, a self-test against the scalar reference, and permanent CPU fallback on GPU failure. The noise pipeline uses a 3D dispatch (8×8×4 local size) with a single write-only output buffer and 28 bytes of push constants (origin, grid dimensions, frequency).
 
 ## Region execution model
 

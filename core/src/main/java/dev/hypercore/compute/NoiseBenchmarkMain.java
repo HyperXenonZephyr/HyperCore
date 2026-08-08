@@ -6,11 +6,10 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
 
-public final class ComputeBenchmarkMain {
-    private static final int[] BATCH_SIZES = {4_096, 16_384, 65_536, 262_144, 1_048_576, 4_194_304};
-    private static final int[] BATCH_QUERY_COUNTS = {16, 64, 256, 1024};
+public final class NoiseBenchmarkMain {
+    private static final int[] VOLUME_SIZES = {16, 32, 64, 128};
 
-    private ComputeBenchmarkMain() {
+    private NoiseBenchmarkMain() {
     }
 
     public static void main(String[] arguments) throws IOException {
@@ -18,16 +17,13 @@ public final class ComputeBenchmarkMain {
             throw new IllegalArgumentException("Expected the Markdown report output path");
         }
         Path output = Path.of(arguments[0]);
-        SpatialComputeBackend vector = VectorBackendFactory.tryLoad().orElse(null);
         try (VulkanSpatialComputeBackend gpu = VulkanSpatialComputeBackend.create()) {
-            SpatialComputeBenchmark.Report report = SpatialComputeBenchmark.run(
-                new ScalarSpatialComputeBackend(),
-                vector,
+            NoiseComputeBenchmark.Report report = NoiseComputeBenchmark.run(
+                new ScalarNoiseComputeBackend(),
                 gpu,
                 gpu.deviceName(),
                 gpu.transferMode(),
-                BATCH_SIZES,
-                BATCH_QUERY_COUNTS,
+                VOLUME_SIZES,
                 20,
                 15
             );

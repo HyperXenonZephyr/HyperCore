@@ -26,6 +26,10 @@ public final class AdaptiveSpatialComputeBackend implements SpatialComputeBacken
     private final AtomicLong gpuSnapshotReuses = new AtomicLong();
     private final AtomicLong gpuMultiQueryBatches = new AtomicLong();
     private final AtomicLong gpuMultiQueryQueries = new AtomicLong();
+    private final AtomicLong cpuBatchBatches = new AtomicLong();
+    private final AtomicLong gpuBatchBatches = new AtomicLong();
+    private final AtomicLong gpuBatchQueries = new AtomicLong();
+    private final AtomicLong gpuBatchCandidates = new AtomicLong();
     private final AtomicLong spatialQueries = new AtomicLong();
     private final AtomicLong spatialCandidates = new AtomicLong();
     private final AtomicLong spatialMatches = new AtomicLong();
@@ -238,6 +242,61 @@ public final class AdaptiveSpatialComputeBackend implements SpatialComputeBacken
         cpuRadiusMaskBatches.incrementAndGet();
     }
 
+    @Override
+    public void batchRadiusMask(
+        float[] originsX, float[] originsY, float[] originsZ, float[] squaredRadii, int queryCount,
+        float[] positionsX, float[] positionsY, float[] positionsZ,
+        int[] outputWords
+    ) {
+        Objects.requireNonNull(positionsX, "positionsX");
+        Objects.requireNonNull(positionsY, "positionsY");
+        Objects.requireNonNull(positionsZ, "positionsZ");
+        Objects.requireNonNull(outputWords, "outputWords");
+        Objects.requireNonNull(originsX, "originsX");
+        Objects.requireNonNull(originsY, "originsY");
+        Objects.requireNonNull(originsZ, "originsZ");
+        Objects.requireNonNull(squaredRadii, "squaredRadii");
+        int size = positionsX.length;
+        if (queryCount < 0) {
+            throw new IllegalArgumentException("queryCount cannot be negative");
+        }
+        if (queryCount == 0 || size == 0) {
+            return;
+        }
+
+        GpuOffloadPolicy.Decision decision = policy.evaluate(size, gpu != null, gpu != null);
+        if (decision.offload()) {
+            synchronized (this) {
+                if (closed) {
+                    throw new IllegalStateException("Backend is closed");
+                }
+                ManagedSpatialComputeBackend currentGpu = gpu;
+                if (currentGpu != null) {
+                    try {
+                        currentGpu.batchRadiusMask(
+                            originsX, originsY, originsZ, squaredRadii, queryCount,
+                            positionsX, positionsY, positionsZ, outputWords
+                        );
+                        gpuBatchBatches.incrementAndGet();
+                        gpuBatchQueries.addAndGet(queryCount);
+                        gpuBatchCandidates.addAndGet((long) size * queryCount);
+                        return;
+                    } catch (VulkanSpatialComputeBackend.BatchNotSupportedException ignored) {
+                        // Fall through to CPU
+                    } catch (RuntimeException | LinkageError error) {
+                        disableGpu(currentGpu, error);
+                    }
+                }
+            }
+        }
+
+        cpu.batchRadiusMask(
+            originsX, originsY, originsZ, squaredRadii, queryCount,
+            positionsX, positionsY, positionsZ, outputWords
+        );
+        cpuBatchBatches.incrementAndGet();
+    }
+
     private void radiusMaskFromSnapshot(
         AdaptivePositionSnapshot snapshot,
         float originX,
@@ -417,6 +476,10 @@ public final class AdaptiveSpatialComputeBackend implements SpatialComputeBacken
             spatialQueries.get(),
             spatialCandidates.get(),
             spatialMatches.get(),
+            gpuBatchBatches.get(),
+            cpuBatchBatches.get(),
+            gpuBatchQueries.get(),
+            gpuBatchCandidates.get(),
             unavailableReason
         );
     }
@@ -739,6 +802,10 @@ public final class AdaptiveSpatialComputeBackend implements SpatialComputeBacken
         long spatialQueries,
         long spatialCandidates,
         long spatialMatches,
+        long gpuBatchBatches,
+        long cpuBatchBatches,
+        long gpuBatchQueries,
+        long gpuBatchCandidates,
         String unavailableReason
     ) {
     }

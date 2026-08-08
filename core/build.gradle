@@ -195,6 +195,34 @@ tasks.register('compileRadiusMaskShader', JavaExec) {
     }
 }
 
+tasks.register('compileBatchRadiusMaskShader', JavaExec) {
+    dependsOn tasks.named('shaderCompilerClasses')
+    classpath = sourceSets.shaderCompiler.runtimeClasspath
+    mainClass = 'dev.hypercore.tools.ComputeShaderCompiler'
+    args(
+        layout.projectDirectory.file('src/main/shaders/batch_radius_mask.comp').asFile.absolutePath,
+        generatedShaderResources.get().file('assets/hypercore/shaders/batch_radius_mask.spv').asFile.absolutePath
+    )
+    inputs.file layout.projectDirectory.file('src/main/shaders/batch_radius_mask.comp')
+    outputs.file generatedShaderResources.map {
+        it.file('assets/hypercore/shaders/batch_radius_mask.spv')
+    }
+}
+
+tasks.register('compileDensityNoiseShader', JavaExec) {
+    dependsOn tasks.named('shaderCompilerClasses')
+    classpath = sourceSets.shaderCompiler.runtimeClasspath
+    mainClass = 'dev.hypercore.tools.ComputeShaderCompiler'
+    args(
+        layout.projectDirectory.file('src/main/shaders/density_noise.comp').asFile.absolutePath,
+        generatedShaderResources.get().file('assets/hypercore/shaders/density_noise.spv').asFile.absolutePath
+    )
+    inputs.file layout.projectDirectory.file('src/main/shaders/density_noise.comp')
+    outputs.file generatedShaderResources.map {
+        it.file('assets/hypercore/shaders/density_noise.spv')
+    }
+}
+
 def generatedBukkitEvents = layout.buildDirectory.dir('generated-src/bukkit-events/java')
 
 tasks.register('generateBukkitEventStubs', JavaExec) {
@@ -216,6 +244,8 @@ tasks.named('compileJava').configure {
 tasks.named('processResources').configure {
     dependsOn tasks.named('compileComputeShaders')
     dependsOn tasks.named('compileRadiusMaskShader')
+    dependsOn tasks.named('compileBatchRadiusMaskShader')
+    dependsOn tasks.named('compileDensityNoiseShader')
     from generatedShaderResources
 }
 
@@ -226,6 +256,14 @@ tasks.register('benchmarkCompute', JavaExec) {
     mainClass = 'dev.hypercore.compute.ComputeBenchmarkMain'
     args(layout.buildDirectory.file('reports/hypercore/compute-benchmark.md').get().asFile.absolutePath)
     jvmArgs('--add-modules', 'jdk.incubator.vector')
+    outputs.upToDateWhen { false }
+}
+
+tasks.register('benchmarkNoiseCompute', JavaExec) {
+    dependsOn tasks.named('classes')
+    classpath = sourceSets.main.output + configurations.runtimeClasspath + configurations.benchmarkRuntime
+    mainClass = 'dev.hypercore.compute.NoiseBenchmarkMain'
+    args(layout.buildDirectory.file('reports/hypercore/noise-compute-benchmark.md').get().asFile.absolutePath)
     outputs.upToDateWhen { false }
 }
 

@@ -30,7 +30,7 @@ public final class SpatialComputeBenchmark {
         int warmupIterations,
         int sampleIterations
     ) {
-        return run(cpu, null, gpu, gpuDevice, gpuTransferMode, batchSizes, warmupIterations, sampleIterations);
+        return run(cpu, null, gpu, gpuDevice, gpuTransferMode, batchSizes, new int[0], warmupIterations, sampleIterations);
     }
 
     public static Report run(
@@ -40,6 +40,20 @@ public final class SpatialComputeBenchmark {
         String gpuDevice,
         String gpuTransferMode,
         int[] batchSizes,
+        int warmupIterations,
+        int sampleIterations
+    ) {
+        return run(cpu, vector, gpu, gpuDevice, gpuTransferMode, batchSizes, new int[0], warmupIterations, sampleIterations);
+    }
+
+    public static Report run(
+        SpatialComputeBackend cpu,
+        SpatialComputeBackend vector,
+        SpatialComputeBackend gpu,
+        String gpuDevice,
+        String gpuTransferMode,
+        int[] batchSizes,
+        int[] queryCounts,
         int warmupIterations,
         int sampleIterations
     ) {
@@ -163,7 +177,13 @@ public final class SpatialComputeBenchmark {
                 vector == null ? 0L : percentile(vectorSamples, 0.95)
             ));
         }
-        return new Report(gpuDevice, gpuTransferMode, warmupIterations, sampleIterations, List.copyOf(results));
+        List<BatchQueryResult> batchQueryResults = queryCounts != null && queryCounts.length > 0
+            ? runBatchComparisons(cpu, gpu, batchSizes, queryCounts, warmupIterations, sampleIterations)
+            : List.of();
+        return new Report(
+            gpuDevice, gpuTransferMode, warmupIterations, sampleIterations,
+            List.copyOf(results), batchQueryResults
+        );
     }
 
     static long percentile(long[] samples, double percentile) {
@@ -322,6 +342,109 @@ public final class SpatialComputeBenchmark {
         return queries;
     }
 
+    private static List<BatchQueryResult> runBatchComparisons(
+        SpatialComputeBackend cpu,
+        SpatialComputeBackend gpu,
+        int[] batchSizes,
+        int[] queryCounts,
+        int warmupIterations,
+        int sampleIterations
+    ) {
+        List<BatchQueryResult> results = new ArrayList<>();
+        for (int batchSize : batchSizes) {
+            PositionData positions = PositionData.create(batchSize);
+            int wordCount = SpatialComputeBackend.maskWordCount(batchSize);
+            for (int queryCount : queryCounts) {
+                float[] originsX = new float[queryCount];
+                float[] originsY = new float[queryCount];
+                float[] originsZ = new float[queryCount];
+                float[] squaredRadii = new float[queryCount];
+                for (int q = 0; q < queryCount; q++) {
+                    originsX[q] = q * 3.25f - 12.0f;
+                    originsY[q] = q % 3 * 2.0f - 2.0f;
+                    originsZ[q] = q * -1.75f + 6.0f;
+                    squaredRadii[q] = 3_600.0f + q * 128.0f;
+                }
+                int[] cpuMask = new int[wordCount * queryCount];
+                int[] gpuMask = new int[cpuMask.length];
+
+                for (int iteration = 0; iteration < warmupIterations; iteration++) {
+                    cpu.batchRadiusMask(
+                        originsX, originsY, originsZ, squaredRadii, queryCount,
+                        positions.x(), positions.y(), positions.z(), cpuMask
+                    );
+                    gpu.batchRadiusMask(
+                        originsX, originsY, originsZ, squaredRadii, queryCount,
+                        positions.x(), positions.y(), positions.z(), gpuMask
+                    );
+                }
+                cpu.batchRadiusMask(
+                    originsX, originsY, originsZ, squaredRadii, queryCount,
+                    positions.x(), positions.y(), positions.z(), cpuMask
+                );
+                gpu.batchRadiusMask(
+                    originsX, originsY, originsZ, squaredRadii, queryCount,
+                    positions.x(), positions.y(), positions.z(), gpuMask
+                );
+                if (!Arrays.equals(cpuMask, gpuMask)) {
+                    throw new IllegalStateException(
+                        "Batch query benchmark correctness mismatch at batch " + batchSize
+                            + ", queries " + queryCount
+                    );
+                }
+
+                long[] cpuSamples = new long[sampleIterations];
+                long[] gpuSamples = new long[sampleIterations];
+                for (int sample = 0; sample < sampleIterations; sample++) {
+                    if ((sample & 1) == 0) {
+                        cpuSamples[sample] = measureBatch(
+                            cpu, positions, originsX, originsY, originsZ, squaredRadii, queryCount, cpuMask
+                        );
+                        gpuSamples[sample] = measureBatch(
+                            gpu, positions, originsX, originsY, originsZ, squaredRadii, queryCount, gpuMask
+                        );
+                    } else {
+                        gpuSamples[sample] = measureBatch(
+                            gpu, positions, originsX, originsY, originsZ, squaredRadii, queryCount, gpuMask
+                        );
+                        cpuSamples[sample] = measureBatch(
+                            cpu, positions, originsX, originsY, originsZ, squaredRadii, queryCount, cpuMask
+                        );
+                    }
+                }
+                results.add(new BatchQueryResult(
+                    queryCount,
+                    batchSize,
+                    percentile(cpuSamples, 0.50),
+                    percentile(cpuSamples, 0.95),
+                    percentile(gpuSamples, 0.50),
+                    percentile(gpuSamples, 0.95)
+                ));
+            }
+        }
+        return results;
+    }
+
+    private static long measureBatch(
+        SpatialComputeBackend backend,
+        PositionData positions,
+        float[] originsX,
+        float[] originsY,
+        float[] originsZ,
+        float[] squaredRadii,
+        int queryCount,
+        int[] output
+    ) {
+        long started = System.nanoTime();
+        backend.batchRadiusMask(
+            originsX, originsY, originsZ, squaredRadii, queryCount,
+            positions.x(), positions.y(), positions.z(), output
+        );
+        long elapsed = System.nanoTime() - started;
+        blackhole ^= output[output.length - 1];
+        return elapsed;
+    }
+
     private record PositionData(float[] x, float[] y, float[] z) {
         private static PositionData create(int size) {
             float[] x = new float[size];
@@ -456,17 +579,42 @@ public final class SpatialComputeBenchmark {
         }
     }
 
+    public record BatchQueryResult(
+        int queryCount,
+        int candidateCount,
+        long cpuP50Nanos,
+        long cpuP95Nanos,
+        long gpuP50Nanos,
+        long gpuP95Nanos
+    ) {
+        public double p50Speedup() {
+            return (double) cpuP50Nanos / gpuP50Nanos;
+        }
+    }
+
     public record Report(
         String gpuDevice,
         String gpuTransferMode,
         int warmupIterations,
         int sampleIterations,
-        List<BatchResult> batches
+        List<BatchResult> batches,
+        List<BatchQueryResult> batchQueries
     ) {
         public Report {
             gpuDevice = Objects.requireNonNull(gpuDevice, "gpuDevice");
             gpuTransferMode = Objects.requireNonNull(gpuTransferMode, "gpuTransferMode");
             batches = List.copyOf(batches);
+            batchQueries = List.copyOf(batchQueries);
+        }
+
+        public Report(
+            String gpuDevice,
+            String gpuTransferMode,
+            int warmupIterations,
+            int sampleIterations,
+            List<BatchResult> batches
+        ) {
+            this(gpuDevice, gpuTransferMode, warmupIterations, sampleIterations, batches, List.of());
         }
 
         public int recommendedMinimumBatchSize() {
@@ -602,6 +750,26 @@ public final class SpatialComputeBenchmark {
                     batch.multiQuerySpeedup(),
                     batch.gpuReadbackBytes() * batch.multiQueryCount()
                 ));
+            }
+            if (!batchQueries.isEmpty()) {
+                output.append("\n## Batch Query\n\n")
+                    .append("Each row compares a CPU sequential loop against a single GPU 2D dispatch that processes all ")
+                    .append("queries simultaneously.\n\n")
+                    .append("| Candidates | Queries | CPU p50 | CPU p95 | GPU p50 | GPU p95 | Speedup |\n")
+                    .append("| ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n");
+                for (BatchQueryResult batchQuery : batchQueries) {
+                    output.append(String.format(
+                        Locale.ROOT,
+                        "| %,d | %d | %.3f ms | %.3f ms | %.3f ms | %.3f ms | %.2fx |%n",
+                        batchQuery.candidateCount(),
+                        batchQuery.queryCount(),
+                        nanosToMillis(batchQuery.cpuP50Nanos()),
+                        nanosToMillis(batchQuery.cpuP95Nanos()),
+                        nanosToMillis(batchQuery.gpuP50Nanos()),
+                        nanosToMillis(batchQuery.gpuP95Nanos()),
+                        batchQuery.p50Speedup()
+                    ));
+                }
             }
             int recommendation = recommendedMinimumBatchSize();
             output.append("\nConservative full-call p50 crossover: ");

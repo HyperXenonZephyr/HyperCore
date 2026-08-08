@@ -94,6 +94,61 @@ public final class SpatialQueryEngine implements AutoCloseable {
         return results;
     }
 
+    /**
+     * Executes multiple radius queries against the same position batch in a single
+     * call. On GPU backends this is significantly faster than calling
+     * {@link #withinRadius} in a loop because all queries are processed in one
+     * 2D dispatch.
+     *
+     * @param positions the candidate positions
+     * @param queries   the radius queries to execute
+     * @return one {@link QueryResult} per query, in the same order as the input
+     */
+    public QueryResult[] batchWithinRadius(PositionBatch positions, RadiusQuery... queries) {
+        Objects.requireNonNull(positions, "positions");
+        Objects.requireNonNull(queries, "queries");
+        if (closed) {
+            throw new IllegalStateException("Spatial query engine is closed");
+        }
+        if (queries.length == 0) {
+            return new QueryResult[0];
+        }
+
+        int size = positions.size();
+        int wordCount = SpatialComputeBackend.maskWordCount(size);
+        float[] originsX = new float[queries.length];
+        float[] originsY = new float[queries.length];
+        float[] originsZ = new float[queries.length];
+        float[] squaredRadii = new float[queries.length];
+        for (int q = 0; q < queries.length; q++) {
+            RadiusQuery query = Objects.requireNonNull(queries[q], "queries[" + q + "]");
+            originsX[q] = query.originX();
+            originsY[q] = query.originY();
+            originsZ[q] = query.originZ();
+            squaredRadii[q] = query.radius() * query.radius();
+        }
+
+        long requiredWords = (long) wordCount * queries.length;
+        if (requiredWords > Integer.MAX_VALUE) {
+            throw new IllegalArgumentException("Batched query output is too large");
+        }
+        int[] maskWords = new int[(int) requiredWords];
+        backend.batchRadiusMask(
+            originsX, originsY, originsZ, squaredRadii, queries.length,
+            positions.positionsX, positions.positionsY, positions.positionsZ,
+            maskWords
+        );
+
+        QueryResult[] results = new QueryResult[queries.length];
+        for (int q = 0; q < queries.length; q++) {
+            results[q] = decodeResult(size, maskWords, q * wordCount);
+            if (backend instanceof AdaptiveSpatialComputeBackend adaptive) {
+                adaptive.recordSpatialQuery(size, results[q].matchCount());
+            }
+        }
+        return results;
+    }
+
     private static QueryResult decodeResult(int size, int[] maskWords, int wordOffset) {
         int wordCount = SpatialComputeBackend.maskWordCount(size);
         int[] matches = new int[size];
