@@ -30,7 +30,15 @@ A Fabric mod is added to the whitelist only after **all** of the following are t
 
 | Mod id | Name | Version range | Adds content | Tested with | Test date | Tester | Notes |
 | --- | --- | --- | :---: | --- | --- | --- | --- |
-| _(none yet)_ | | | | | | | |
+| `lithium` | Lithium | `>=0.15.3+mc1.21.1` | No | HyperCore 0.1.0-SNAPSHOT, Fabric 1.21.1, Fabric Loader 0.16.9, Fabric API 0.115.1, 23 GameTests | 2026-08-08 | HyperCore AI | General game-logic optimization (physics/AI/scheduling). No behavior change. All 23 GameTests passed including coexistence tests. |
+| `ferritecore` | FerriteCore | `>=7.0.3` | No | HyperCore 0.1.0-SNAPSHOT, Fabric 1.21.1, Fabric Loader 0.16.9, Fabric API 0.115.1, 23 GameTests | 2026-08-08 | HyperCore AI | Memory reduction (object pooling/cache). No conflict risk. All 23 GameTests passed. |
+| `krypton` | Krypton | `>=0.2.8` | No | HyperCore 0.1.0-SNAPSHOT, Fabric 1.21.1, Fabric Loader 0.16.9, Fabric API 0.115.1, 23 GameTests | 2026-08-08 | HyperCore AI | Network stack optimization. Bundles `com_velocitypowered_velocity-native` as a nested library. All 23 GameTests passed. |
+
+### Pending / blocked
+
+| Mod id | Name | Version | Status | Blocker |
+| --- | --- | --- | --- | --- |
+| `c2me` | Concurrent Chunk Management Engine | 0.4.0-alpha.0.23 | Blocked | Requires Fabric Loader >=0.18.3 (we use 0.16.9) and Java >=25 (we use 21). Cannot test until environment is upgraded or an older compatible version is found. Involves multi-threaded chunk generation — needs careful testing against the world-state bridge if it becomes testable. |
 
 ## Whitelist file format
 

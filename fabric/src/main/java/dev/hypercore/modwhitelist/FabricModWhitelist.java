@@ -51,7 +51,11 @@ public final class FabricModWhitelist {
         "fabricloader",
         "minecraft",
         "java",
-        "hypercore"
+        "hypercore",
+        // Nested libraries bundled inside other mods; never independently
+        // installed and never content-adding.
+        "mixinextras",
+        "com_velocitypowered_velocity-native"
     );
 
     private FabricModWhitelist() {
