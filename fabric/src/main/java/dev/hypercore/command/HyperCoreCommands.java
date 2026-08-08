@@ -91,6 +91,7 @@ public final class HyperCoreCommands {
 
     private static int showTimings(CommandSourceStack source, HyperCoreRuntime runtime) {
         TickMetrics.Snapshot snapshot = runtime.tickMetrics().snapshot();
+        TickMetrics.Snapshot fullSnapshot = runtime.tickMetrics().fullSnapshot();
         source.sendSuccess(() -> Component.literal(String.format(
             Locale.ROOT,
             "Tick window: n=%d/%d avg=%.2f ms p95=%.2f ms max=%.2f ms",
@@ -99,6 +100,15 @@ public final class HyperCoreCommands {
             snapshot.averageMs(),
             snapshot.p95Ms(),
             snapshot.maximumMs()
+        )), false);
+        source.sendSuccess(() -> Component.literal(String.format(
+            Locale.ROOT,
+            "Full tick (incl region+bridge): n=%d/%d avg=%.2f ms p95=%.2f ms max=%.2f ms",
+            fullSnapshot.samples(),
+            runtime.tickMetrics().windowSize(),
+            fullSnapshot.averageMs(),
+            fullSnapshot.p95Ms(),
+            fullSnapshot.maximumMs()
         )), false);
         return snapshot.samples();
     }

@@ -4,13 +4,18 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipFile;
 
 /**
  * Assembles the unified HyperCore distribution directory.
@@ -45,29 +50,35 @@ public final class HyperCoreDistributionBuilder {
     }
 
     public static void main(String[] args) throws IOException {
-        if (args.length != 5) {
+        if (args.length != 5 && args.length != 6) {
             throw new IllegalArgumentException(
-                "Usage: HyperCoreDistributionBuilder <outputDir> <orchestratorJar> <forgeModJar> <fabricModJar> <gametestPluginJar>"
+                "Usage: HyperCoreDistributionBuilder <outputDir> <orchestratorJar> <forgeModJar> <fabricModJar> <gametestPluginJar> [<whitelistFile>]"
             );
         }
+        Path whitelistFile = args.length == 6 ? Path.of(args[5]) : null;
         build(
             Path.of(args[0]),
             Path.of(args[1]),
             Path.of(args[2]),
             Path.of(args[3]),
-            Path.of(args[4])
+            Path.of(args[4]),
+            whitelistFile
         );
     }
 
     /**
-     * Assembles the distribution directory.
+     * Assembles the distribution directory. When a Fabric mod whitelist file
+     * is provided, any pre-existing third-party JARs in {@code fabric-host/mods/}
+     * are filtered: only JARs whose Fabric mod id is in the whitelist (or is a
+     * core infrastructure mod) are kept; others are removed.
      */
     public static void build(
         Path outputDirectory,
         Path orchestratorJar,
         Path forgeModJar,
         Path fabricModJar,
-        Path gametestPluginJar
+        Path gametestPluginJar,
+        Path whitelistFile
     ) throws IOException {
         Files.createDirectories(outputDirectory);
         Path orchestratorDir = outputDirectory.resolve("orchestrator");
@@ -76,18 +87,115 @@ public final class HyperCoreDistributionBuilder {
         Files.createDirectories(orchestratorDir);
         Files.createDirectories(forgeDir.resolve("mods"));
         Files.createDirectories(forgeDir.resolve("plugins"));
-        Files.createDirectories(fabricDir.resolve("mods"));
+        Path fabricModsDir = fabricDir.resolve("mods");
+        Files.createDirectories(fabricModsDir);
         Files.createDirectories(fabricDir.resolve("plugins"));
 
         copy(orchestratorJar, orchestratorDir.resolve("hypercore-core.jar"));
         copy(forgeModJar, forgeDir.resolve("mods").resolve("hypercore-forge.jar"));
-        copy(fabricModJar, fabricDir.resolve("mods").resolve("hypercore-fabric.jar"));
+        copy(fabricModJar, fabricModsDir.resolve("hypercore-fabric.jar"));
         copy(gametestPluginJar, forgeDir.resolve("plugins").resolve("hypercore-gametest-bukkit-plugin.jar"));
         copy(gametestPluginJar, fabricDir.resolve("plugins").resolve("hypercore-gametest-bukkit-plugin.jar"));
+
+        if (whitelistFile != null) {
+            filterFabricMods(fabricModsDir, whitelistFile);
+        }
 
         writeLaunchScripts(outputDirectory, "hypercore-core.jar");
         writeReadme(outputDirectory);
         LOGGER.info("Distribution assembled at {}", outputDirectory.toAbsolutePath());
+    }
+
+    /**
+     * Removes third-party Fabric mod JARs from {@code modsDir} whose mod id is
+     * not in the whitelist and not a core infrastructure mod. HyperCore's own
+     * JAR ({@code hypercore-fabric.jar}) is always kept.
+     */
+    static void filterFabricMods(Path modsDir, Path whitelistFile) throws IOException {
+        Set<String> whitelist = loadWhitelist(whitelistFile);
+        List<Path> jars;
+        try (var stream = Files.list(modsDir)) {
+            jars = stream.filter(p -> p.toString().endsWith(".jar")).toList();
+        }
+        for (Path jar : jars) {
+            String fileName = jar.getFileName().toString();
+            if (fileName.equals("hypercore-fabric.jar")) {
+                continue;
+            }
+            String modId = readFabricModId(jar);
+            if (modId == null) {
+                LOGGER.warn("Skipping whitelist check for {} (not a Fabric mod JAR)", fileName);
+                continue;
+            }
+            if (isCoreMod(modId) || whitelist.contains(modId)) {
+                continue;
+            }
+            LOGGER.warn("Removing non-whitelisted Fabric mod: {} (id={})", fileName, modId);
+            Files.deleteIfExists(jar);
+        }
+    }
+
+    static Set<String> loadWhitelist(Path file) throws IOException {
+        Set<String> result = new HashSet<>();
+        if (!Files.exists(file)) {
+            return result;
+        }
+        for (String line : Files.readAllLines(file, StandardCharsets.UTF_8)) {
+            String trimmed = line.trim();
+            if (trimmed.isEmpty() || trimmed.startsWith("#")) {
+                continue;
+            }
+            result.add(trimmed.toLowerCase());
+        }
+        return result;
+    }
+
+    static boolean isCoreMod(String modId) {
+        if (modId == null) return false;
+        return modId.equals("fabricloader")
+            || modId.equals("minecraft")
+            || modId.equals("java")
+            || modId.equals("hypercore")
+            || modId.equals("mixinextras")
+            || modId.equals("com_velocitypowered_velocity-native")
+            || modId.startsWith("fabric-");
+    }
+
+    /**
+     * Reads the {@code id} field from {@code fabric.mod.json} inside a JAR.
+     * Returns {@code null} if the JAR is not a Fabric mod (no fabric.mod.json).
+     */
+    static String readFabricModId(Path jarPath) {
+        try (ZipFile zip = new ZipFile(jarPath.toFile())) {
+            ZipEntry entry = zip.getEntry("fabric.mod.json");
+            if (entry == null) {
+                return null;
+            }
+            try (InputStream is = zip.getInputStream(entry)) {
+                String json = new String(is.readAllBytes(), StandardCharsets.UTF_8);
+                // Minimal JSON string extraction for "id" — avoids a Gson dependency
+                // in the orchestrator packaging module.
+                return extractJsonStringField(json, "id");
+            }
+        } catch (IOException e) {
+            LOGGER.warn("Failed to read fabric.mod.json from {}", jarPath, e);
+            return null;
+        }
+    }
+
+    /**
+     * Extracts the value of a top-level string field from a small JSON object.
+     * This is intentionally minimal — it only needs to parse fabric.mod.json
+     * which is a flat object with string fields.
+     */
+    static String extractJsonStringField(String json, String fieldName) {
+        // Match "fieldName" : "value"
+        String pattern = "\"" + fieldName + "\"\\s*:\\s*\"([^\"]+)\"";
+        java.util.regex.Matcher matcher = java.util.regex.Pattern.compile(pattern).matcher(json);
+        if (matcher.find()) {
+            return matcher.group(1);
+        }
+        return null;
     }
 
     private static void copy(Path source, Path target) throws IOException {

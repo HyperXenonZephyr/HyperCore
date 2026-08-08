@@ -1,0 +1,87 @@
+#version 450
+
+layout(local_size_x = 256) in;
+
+// Read-only inputs: the original positions, velocities, and masses for this
+// step. Every invocation reads the same original positions so the update is
+// synchronous (no invocation observes a body that another invocation already
+// moved). The updated state is written to separate output buffers, which keeps
+// the dispatch race-free.
+layout(set = 0, binding = 0, std430) readonly buffer PositionsIn {
+    float positions[];
+} positionIn;
+
+layout(set = 0, binding = 1, std430) readonly buffer VelocitiesIn {
+    float velocities[];
+} velocityIn;
+
+layout(set = 0, binding = 2, std430) readonly buffer Masses {
+    float masses[];
+} massBuffer;
+
+layout(set = 0, binding = 3, std430) writeonly buffer PositionsOut {
+    float positions[];
+} positionOut;
+
+layout(set = 0, binding = 4, std430) writeonly buffer VelocitiesOut {
+    float velocities[];
+} velocityOut;
+
+layout(push_constant) uniform Parameters {
+    uint count;
+    float gravityConstant;
+    float dt;
+    float softening;
+} params;
+
+// Each thread integrates one body by looping over every other body. The float
+// operation order matches the Java ScalarNBodySimulationBackend (which reads a
+// snapshot of the original positions) so CPU and GPU agree within tolerance:
+//   for each j != i: accumulate a += G * mass[j] * invDist3 * delta
+//   velocity += a * dt
+//   position = originalPosition + velocity * dt
+// GPU inversesqrt may differ from CPU Math.sqrt in the last ulp, so the
+// adaptive self-test verifies against a tolerance rather than bit-exactly.
+void main() {
+    uint i = gl_GlobalInvocationID.x;
+    if (i >= params.count) {
+        return;
+    }
+
+    uint baseI = i * 3u;
+    float xi = positionIn.positions[baseI + 0u];
+    float yi = positionIn.positions[baseI + 1u];
+    float zi = positionIn.positions[baseI + 2u];
+
+    float ax = 0.0;
+    float ay = 0.0;
+    float az = 0.0;
+    for (uint j = 0u; j < params.count; j++) {
+        if (j == i) {
+            continue;
+        }
+        uint baseJ = j * 3u;
+        float dx = positionIn.positions[baseJ + 0u] - xi;
+        float dy = positionIn.positions[baseJ + 1u] - yi;
+        float dz = positionIn.positions[baseJ + 2u] - zi;
+        float distSq = dx * dx + dy * dy + dz * dz + params.softening;
+        float invDist = inversesqrt(distSq);
+        float invDist3 = invDist * invDist * invDist;
+        float scale = params.gravityConstant * massBuffer.masses[j] * invDist3;
+        ax += scale * dx;
+        ay += scale * dy;
+        az += scale * dz;
+    }
+
+    float vx = velocityIn.velocities[baseI + 0u] + ax * params.dt;
+    float vy = velocityIn.velocities[baseI + 1u] + ay * params.dt;
+    float vz = velocityIn.velocities[baseI + 2u] + az * params.dt;
+
+    velocityOut.velocities[baseI + 0u] = vx;
+    velocityOut.velocities[baseI + 1u] = vy;
+    velocityOut.velocities[baseI + 2u] = vz;
+
+    positionOut.positions[baseI + 0u] = xi + vx * params.dt;
+    positionOut.positions[baseI + 1u] = yi + vy * params.dt;
+    positionOut.positions[baseI + 2u] = zi + vz * params.dt;
+}

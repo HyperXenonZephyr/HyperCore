@@ -152,6 +152,7 @@ public final class HyperCoreFabric implements DedicatedServerModInitializer {
         if (bridgeEndpoint != null) {
             bridgeEndpoint.flush();
         }
+        runtime.tickMetrics().endFullTick();
     }
 
     private void onServerStopping(MinecraftServer server) {

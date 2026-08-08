@@ -237,6 +237,20 @@ tasks.register('compileParticleSimShader', JavaExec) {
     }
 }
 
+tasks.register('compileNBodySimShader', JavaExec) {
+    dependsOn tasks.named('shaderCompilerClasses')
+    classpath = sourceSets.shaderCompiler.runtimeClasspath
+    mainClass = 'dev.hypercore.tools.ComputeShaderCompiler'
+    args(
+        layout.projectDirectory.file('src/main/shaders/nbody_sim.comp').asFile.absolutePath,
+        generatedShaderResources.get().file('assets/hypercore/shaders/nbody_sim.spv').asFile.absolutePath
+    )
+    inputs.file layout.projectDirectory.file('src/main/shaders/nbody_sim.comp')
+    outputs.file generatedShaderResources.map {
+        it.file('assets/hypercore/shaders/nbody_sim.spv')
+    }
+}
+
 def generatedBukkitEvents = layout.buildDirectory.dir('generated-src/bukkit-events/java')
 
 tasks.register('generateBukkitEventStubs', JavaExec) {
@@ -261,6 +275,7 @@ tasks.named('processResources').configure {
     dependsOn tasks.named('compileBatchRadiusMaskShader')
     dependsOn tasks.named('compileDensityNoiseShader')
     dependsOn tasks.named('compileParticleSimShader')
+    dependsOn tasks.named('compileNBodySimShader')
     from generatedShaderResources
 }
 
@@ -290,6 +305,14 @@ tasks.register('benchmarkParticleSim', JavaExec) {
     outputs.upToDateWhen { false }
 }
 
+tasks.register('benchmarkNBodySim', JavaExec) {
+    dependsOn tasks.named('classes')
+    classpath = sourceSets.main.output + configurations.runtimeClasspath + configurations.benchmarkRuntime
+    mainClass = 'dev.hypercore.compute.NBodyBenchmarkMain'
+    args(layout.buildDirectory.file('reports/hypercore/nbody-sim-benchmark.md').get().asFile.absolutePath)
+    outputs.upToDateWhen { false }
+}
+
 tasks.register('benchmarkRegionParallel', JavaExec) {
     dependsOn tasks.named('classes')
     dependsOn tasks.named('compileVectorJava')
@@ -298,6 +321,15 @@ tasks.register('benchmarkRegionParallel', JavaExec) {
     mainClass = 'dev.hypercore.region.RegionParallelBenchmarkMain'
     args(layout.buildDirectory.file('reports/hypercore/region-parallel-benchmark.md').get().asFile.absolutePath)
     jvmArgs('--add-modules', 'jdk.incubator.vector')
+    outputs.upToDateWhen { false }
+}
+
+tasks.register('benchmarkEndToEndTick', JavaExec) {
+    dependsOn tasks.named('classes')
+    dependsOn tasks.named('compileBenchmarkJava')
+    classpath = sourceSets.main.output + sourceSets.benchmark.output + configurations.runtimeClasspath + configurations.benchmarkRuntime
+    mainClass = 'dev.hypercore.benchmark.EndToEndTickBenchmarkMain'
+    args(layout.buildDirectory.file('reports/hypercore/end-to-end-tick-benchmark.md').get().asFile.absolutePath)
     outputs.upToDateWhen { false }
 }
 
@@ -336,12 +368,14 @@ tasks.register('assembleDistribution', JavaExec) {
         def forgeModJar = project(':forge').tasks.named('jar').get().archiveFile.get().asFile
         def fabricModJar = project(':fabric').tasks.named('remapJar').get().archiveFile.get().asFile
         def gametestPluginJar = tasks.named('gametestPluginJar').get().archiveFile.get().asFile
+        def whitelistFile = rootProject.file('fabric-mod-whitelist.txt')
         args(
             outputDir.absolutePath,
             orchestratorJar.absolutePath,
             forgeModJar.absolutePath,
             fabricModJar.absolutePath,
-            gametestPluginJar.absolutePath
+            gametestPluginJar.absolutePath,
+            whitelistFile.absolutePath
         )
     }
     systemProperty 'hypercore.minecraftVersion', minecraftVersion

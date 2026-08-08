@@ -126,7 +126,7 @@ import static org.lwjgl.vulkan.VK10.vkUnmapMemory;
 import static org.lwjgl.vulkan.VK10.vkUpdateDescriptorSets;
 import static org.lwjgl.vulkan.VK10.vkWaitForFences;
 
-public final class VulkanSpatialComputeBackend implements ManagedSpatialComputeBackend, ManagedNoiseComputeBackend, ManagedParticleSimulationBackend {
+public final class VulkanSpatialComputeBackend implements ManagedSpatialComputeBackend, ManagedNoiseComputeBackend, ManagedParticleSimulationBackend, ManagedNBodySimulationBackend {
     public static final String ID = "gpu-vulkan";
 
     private static final String DISTANCE_SHADER_RESOURCE = "/assets/hypercore/shaders/squared_distances.spv";
@@ -134,6 +134,7 @@ public final class VulkanSpatialComputeBackend implements ManagedSpatialComputeB
     private static final String BATCH_RADIUS_MASK_SHADER_RESOURCE = "/assets/hypercore/shaders/batch_radius_mask.spv";
     private static final String NOISE_SHADER_RESOURCE = "/assets/hypercore/shaders/density_noise.spv";
     private static final String PARTICLE_SHADER_RESOURCE = "/assets/hypercore/shaders/particle_sim.spv";
+    private static final String NBODY_SHADER_RESOURCE = "/assets/hypercore/shaders/nbody_sim.spv";
     private static final int LOCAL_SIZE = 256;
     private static final int BATCH_LOCAL_SIZE_X = 16;
     private static final int BATCH_LOCAL_SIZE_Y = 16;
@@ -141,6 +142,7 @@ public final class VulkanSpatialComputeBackend implements ManagedSpatialComputeB
     private static final int NOISE_LOCAL_SIZE_Y = 8;
     private static final int NOISE_LOCAL_SIZE_Z = 4;
     private static final int PARTICLE_LOCAL_SIZE = 256;
+    private static final int NBODY_LOCAL_SIZE = 256;
     private static final int MAX_QUERIES_PER_SUBMISSION = 32;
     private static final long FENCE_TIMEOUT_NANOS = 30_000_000_000L;
 
@@ -207,6 +209,20 @@ public final class VulkanSpatialComputeBackend implements ManagedSpatialComputeB
     private GpuBuffer particleVelocities;
     private int particleCapacity;
 
+    private long nbodyDescriptorSetLayout;
+    private long nbodyPipelineLayout;
+    private long nbodyShaderModule;
+    private long nbodyPipeline;
+    private long nbodyDescriptorPool;
+    private long nbodyDescriptorSet;
+    private GpuBuffer nbodyPositionsIn;
+    private GpuBuffer nbodyVelocitiesIn;
+    private GpuBuffer nbodyMasses;
+    private GpuBuffer nbodyPositionsOut;
+    private GpuBuffer nbodyVelocitiesOut;
+    private int nbodyCapacity;
+    private int nbodyMassCapacity;
+
     private VulkanSpatialComputeBackend() {
         VkInstance createdInstance = null;
         VkDevice createdDevice = null;
@@ -234,6 +250,11 @@ public final class VulkanSpatialComputeBackend implements ManagedSpatialComputeB
         long createdParticleShaderModule = NULL;
         long createdParticlePipeline = NULL;
         long createdParticleDescriptorPool = NULL;
+        long createdNBodyDescriptorSetLayout = NULL;
+        long createdNBodyPipelineLayout = NULL;
+        long createdNBodyShaderModule = NULL;
+        long createdNBodyPipeline = NULL;
+        long createdNBodyDescriptorPool = NULL;
         try {
             createdInstance = createInstance();
             DeviceCandidate selected = selectPhysicalDevice(createdInstance);
@@ -300,6 +321,17 @@ public final class VulkanSpatialComputeBackend implements ManagedSpatialComputeB
             createdParticleDescriptorPool = createParticleDescriptorPool(device);
             particleDescriptorPool = createdParticleDescriptorPool;
             particleDescriptorSet = allocateDescriptorSet(device, particleDescriptorPool, particleDescriptorSetLayout);
+            createdNBodyShaderModule = createShaderModule(device, NBODY_SHADER_RESOURCE);
+            nbodyShaderModule = createdNBodyShaderModule;
+            createdNBodyDescriptorSetLayout = createNBodyDescriptorSetLayout(device);
+            nbodyDescriptorSetLayout = createdNBodyDescriptorSetLayout;
+            createdNBodyPipelineLayout = createNBodyPipelineLayout(device, nbodyDescriptorSetLayout);
+            nbodyPipelineLayout = createdNBodyPipelineLayout;
+            createdNBodyPipeline = createPipeline(device, nbodyPipelineLayout, nbodyShaderModule);
+            nbodyPipeline = createdNBodyPipeline;
+            createdNBodyDescriptorPool = createNBodyDescriptorPool(device);
+            nbodyDescriptorPool = createdNBodyDescriptorPool;
+            nbodyDescriptorSet = allocateDescriptorSet(device, nbodyDescriptorPool, nbodyDescriptorSetLayout);
         } catch (RuntimeException | LinkageError error) {
             destroyPartial(
                 createdInstance,
@@ -327,7 +359,12 @@ public final class VulkanSpatialComputeBackend implements ManagedSpatialComputeB
                 createdParticlePipelineLayout,
                 createdParticleShaderModule,
                 createdParticlePipeline,
-                createdParticleDescriptorPool
+                createdParticleDescriptorPool,
+                createdNBodyDescriptorSetLayout,
+                createdNBodyPipelineLayout,
+                createdNBodyShaderModule,
+                createdNBodyPipeline,
+                createdNBodyDescriptorPool
             );
             throw error;
         }
@@ -790,6 +827,177 @@ public final class VulkanSpatialComputeBackend implements ManagedSpatialComputeB
         }
     }
 
+    // ---- NBodySimulationBackend ----
+
+    @Override
+    public synchronized void simulate(
+        float[] positions, float[] velocities, float[] masses,
+        int count,
+        float gravityConstant, float dt, float softening
+    ) {
+        ensureOpen();
+        int required = NBodySimulationBackend.validate(
+            positions, velocities, masses, count, gravityConstant, dt, softening
+        );
+
+        long bufferBytes = (long) required * Float.BYTES;
+        long massBytes = (long) count * Float.BYTES;
+        if (bufferBytes > maximumStorageBufferBytes || massBytes > maximumStorageBufferBytes) {
+            throw new BatchNotSupportedException("N-body batch exceeds device storage buffer limit");
+        }
+        int workgroups = Math.ceilDiv(count, NBODY_LOCAL_SIZE);
+        if (workgroups > maximumWorkgroupsX) {
+            throw new BatchNotSupportedException("N-body dispatch exceeds device workgroup limit");
+        }
+
+        ensureNBodyCapacity(required, count);
+        // Inputs are uploaded to the read-only in-buffers; the shader writes the
+        // updated state to the separate out-buffers, so the dispatch is race-free.
+        // Masses are O(n) to upload — cheap relative to the O(n^2) dispatch — so
+        // they are refreshed every step rather than tracking caller-side changes.
+        upload(nbodyPositionsIn, positions, required);
+        upload(nbodyVelocitiesIn, velocities, required);
+        upload(nbodyMasses, masses, count);
+        recordNBodySim(count, gravityConstant, dt, softening, workgroups);
+        submitAndWait();
+        download(nbodyPositionsOut, positions, required);
+        download(nbodyVelocitiesOut, velocities, required);
+    }
+
+    private void ensureNBodyCapacity(int required, int count) {
+        int needed = Math.max(1_024, Integer.highestOneBit(required - 1) << 1);
+        if (needed < required) {
+            needed = required;
+        }
+        int neededMass = Math.max(1_024, Integer.highestOneBit(count - 1) << 1);
+        if (neededMass < count) {
+            neededMass = count;
+        }
+        if (nbodyPositionsIn != null
+            && nbodyCapacity >= needed
+            && nbodyMassCapacity >= neededMass) {
+            return;
+        }
+        vkDeviceWaitIdle(device);
+        if (nbodyPositionsIn != null) {
+            nbodyPositionsIn.close(device);
+            nbodyVelocitiesIn.close(device);
+            nbodyMasses.close(device);
+            nbodyPositionsOut.close(device);
+            nbodyVelocitiesOut.close(device);
+        }
+        long sizeBytes = (long) needed * Float.BYTES;
+        long massBytes = (long) neededMass * Float.BYTES;
+        nbodyPositionsIn = GpuBuffer.create(device, physicalDevice, sizeBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+        nbodyVelocitiesIn = GpuBuffer.create(device, physicalDevice, sizeBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+        nbodyMasses = GpuBuffer.create(device, physicalDevice, massBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+        nbodyPositionsOut = GpuBuffer.create(device, physicalDevice, sizeBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+        nbodyVelocitiesOut = GpuBuffer.create(device, physicalDevice, sizeBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+        nbodyCapacity = needed;
+        nbodyMassCapacity = neededMass;
+        updateNBodyDescriptorSet();
+    }
+
+    private void updateNBodyDescriptorSet() {
+        GpuResource[] resources = {
+            nbodyPositionsIn, nbodyVelocitiesIn, nbodyMasses,
+            nbodyPositionsOut, nbodyVelocitiesOut
+        };
+        try (MemoryStack stack = stackPush()) {
+            for (int binding = 0; binding < resources.length; binding++) {
+                GpuResource resource = resources[binding];
+                VkDescriptorBufferInfo.Buffer info = VkDescriptorBufferInfo.calloc(1, stack)
+                    .buffer(resource.buffer())
+                    .offset(0)
+                    .range(resource.sizeBytes());
+                VkWriteDescriptorSet.Buffer write = VkWriteDescriptorSet.calloc(1, stack)
+                    .sType$Default()
+                    .dstSet(nbodyDescriptorSet)
+                    .dstBinding(binding)
+                    .descriptorType(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER)
+                    .descriptorCount(1)
+                    .pBufferInfo(info);
+                vkUpdateDescriptorSets(device, write, null);
+            }
+        }
+    }
+
+    private void recordNBodySim(int count, float gravityConstant, float dt, float softening, int workgroups) {
+        check(vkResetCommandBuffer(commandBuffer, VK_COMMAND_BUFFER_RESET_RELEASE_RESOURCES_BIT), "reset command buffer");
+        try (MemoryStack stack = stackPush()) {
+            VkCommandBufferBeginInfo beginInfo = VkCommandBufferBeginInfo.calloc(stack).sType$Default();
+            check(vkBeginCommandBuffer(commandBuffer, beginInfo), "begin command buffer");
+            vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, nbodyPipeline);
+            vkCmdBindDescriptorSets(
+                commandBuffer,
+                VK_PIPELINE_BIND_POINT_COMPUTE,
+                nbodyPipelineLayout,
+                0,
+                stack.longs(nbodyDescriptorSet),
+                null
+            );
+            ByteBuffer parameters = stack.malloc(16).order(ByteOrder.nativeOrder());
+            parameters.putInt(count)
+                .putFloat(gravityConstant)
+                .putFloat(dt)
+                .putFloat(softening)
+                .flip();
+            vkCmdPushConstants(commandBuffer, nbodyPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, parameters);
+            vkCmdDispatch(commandBuffer, workgroups, 1, 1);
+            check(vkEndCommandBuffer(commandBuffer), "end command buffer");
+        }
+    }
+
+    private static long createNBodyDescriptorSetLayout(VkDevice device) {
+        try (MemoryStack stack = stackPush()) {
+            VkDescriptorSetLayoutBinding.Buffer bindings = VkDescriptorSetLayoutBinding.calloc(5, stack);
+            for (int index = 0; index < bindings.capacity(); index++) {
+                bindings.get(index)
+                    .binding(index)
+                    .descriptorType(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER)
+                    .descriptorCount(1)
+                    .stageFlags(VK_SHADER_STAGE_COMPUTE_BIT);
+            }
+            VkDescriptorSetLayoutCreateInfo createInfo = VkDescriptorSetLayoutCreateInfo.calloc(stack)
+                .sType$Default()
+                .pBindings(bindings);
+            LongBuffer handle = stack.mallocLong(1);
+            check(vkCreateDescriptorSetLayout(device, createInfo, null, handle), "create nbody descriptor set layout");
+            return handle.get(0);
+        }
+    }
+
+    private static long createNBodyPipelineLayout(VkDevice device, long descriptorSetLayout) {
+        try (MemoryStack stack = stackPush()) {
+            VkPushConstantRange.Buffer pushConstants = VkPushConstantRange.calloc(1, stack)
+                .stageFlags(VK_SHADER_STAGE_COMPUTE_BIT)
+                .offset(0)
+                .size(16);
+            VkPipelineLayoutCreateInfo createInfo = VkPipelineLayoutCreateInfo.calloc(stack)
+                .sType$Default()
+                .pSetLayouts(stack.longs(descriptorSetLayout))
+                .pPushConstantRanges(pushConstants);
+            LongBuffer handle = stack.mallocLong(1);
+            check(vkCreatePipelineLayout(device, createInfo, null, handle), "create nbody pipeline layout");
+            return handle.get(0);
+        }
+    }
+
+    private static long createNBodyDescriptorPool(VkDevice device) {
+        try (MemoryStack stack = stackPush()) {
+            VkDescriptorPoolSize.Buffer poolSize = VkDescriptorPoolSize.calloc(1, stack)
+                .type(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER)
+                .descriptorCount(5);
+            VkDescriptorPoolCreateInfo createInfo = VkDescriptorPoolCreateInfo.calloc(stack)
+                .sType$Default()
+                .pPoolSizes(poolSize)
+                .maxSets(1);
+            LongBuffer handle = stack.mallocLong(1);
+            check(vkCreateDescriptorPool(device, createInfo, null, handle), "create nbody descriptor pool");
+            return handle.get(0);
+        }
+    }
+
     @Override
     public synchronized void close() {
         if (closed) {
@@ -859,6 +1067,28 @@ public final class VulkanSpatialComputeBackend implements ManagedSpatialComputeB
         }
         if (particleDescriptorSetLayout != NULL) {
             vkDestroyDescriptorSetLayout(device, particleDescriptorSetLayout, null);
+        }
+        if (nbodyPositionsIn != null) {
+            nbodyPositionsIn.close(device);
+            nbodyVelocitiesIn.close(device);
+            nbodyMasses.close(device);
+            nbodyPositionsOut.close(device);
+            nbodyVelocitiesOut.close(device);
+        }
+        if (nbodyPipeline != NULL) {
+            vkDestroyPipeline(device, nbodyPipeline, null);
+        }
+        if (nbodyShaderModule != NULL) {
+            vkDestroyShaderModule(device, nbodyShaderModule, null);
+        }
+        if (nbodyPipelineLayout != NULL) {
+            vkDestroyPipelineLayout(device, nbodyPipelineLayout, null);
+        }
+        if (nbodyDescriptorPool != NULL) {
+            vkDestroyDescriptorPool(device, nbodyDescriptorPool, null);
+        }
+        if (nbodyDescriptorSetLayout != NULL) {
+            vkDestroyDescriptorSetLayout(device, nbodyDescriptorSetLayout, null);
         }
         vkDestroyFence(device, fence, null);
         vkDestroyCommandPool(device, commandPool, null);
@@ -1698,9 +1928,29 @@ public final class VulkanSpatialComputeBackend implements ManagedSpatialComputeB
         long particlePipelineLayout,
         long particleShaderModule,
         long particlePipeline,
-        long particleDescriptorPool
+        long particleDescriptorPool,
+        long nbodyDescriptorSetLayout,
+        long nbodyPipelineLayout,
+        long nbodyShaderModule,
+        long nbodyPipeline,
+        long nbodyDescriptorPool
     ) {
         if (device != null) {
+            if (nbodyPipeline != NULL) {
+                vkDestroyPipeline(device, nbodyPipeline, null);
+            }
+            if (nbodyShaderModule != NULL) {
+                vkDestroyShaderModule(device, nbodyShaderModule, null);
+            }
+            if (nbodyPipelineLayout != NULL) {
+                vkDestroyPipelineLayout(device, nbodyPipelineLayout, null);
+            }
+            if (nbodyDescriptorPool != NULL) {
+                vkDestroyDescriptorPool(device, nbodyDescriptorPool, null);
+            }
+            if (nbodyDescriptorSetLayout != NULL) {
+                vkDestroyDescriptorSetLayout(device, nbodyDescriptorSetLayout, null);
+            }
             if (particlePipeline != NULL) {
                 vkDestroyPipeline(device, particlePipeline, null);
             }

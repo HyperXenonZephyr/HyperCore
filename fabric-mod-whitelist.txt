@@ -1,0 +1,8 @@
+# HyperCore Fabric mod whitelist (build-time gating)
+# One mod id per line. Lines starting with # are comments.
+# Only mods listed here (plus core infrastructure mods) are kept in the
+# Fabric host template's mods/ directory during assembleDistribution.
+# See FABRIC_MOD_WHITELIST.md for inclusion criteria and test records.
+lithium
+ferritecore
+krypton

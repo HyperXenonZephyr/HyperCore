@@ -138,6 +138,7 @@ public final class HyperCore {
             if (bridgeEndpoint != null) {
                 bridgeEndpoint.flush();
             }
+            runtime.tickMetrics().endFullTick();
         }
     }
 
