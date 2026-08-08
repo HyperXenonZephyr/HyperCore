@@ -7,6 +7,7 @@ import dev.hypercore.command.HyperCoreCommands;
 import dev.hypercore.compute.AdaptiveSpatialComputeBackend;
 import dev.hypercore.config.FabricConfigLoader;
 import dev.hypercore.hardware.RuntimeCapabilities;
+import dev.hypercore.modwhitelist.FabricModWhitelist;
 import dev.hypercore.plugin.FabricPluginCommandBridge;
 import dev.hypercore.region.RegionTaskCoordinator;
 import dev.hypercore.runtime.HyperCoreRuntime;
@@ -62,6 +63,11 @@ public final class HyperCoreFabric implements DedicatedServerModInitializer {
         // directory, so relative paths resolve there — matching the Forge entry
         // point's Path.of("plugins") convention.
         Path configDirectory = Path.of("config");
+        // Validate loaded Fabric mods against the whitelist before starting the
+        // runtime. In enforce mode (default) this aborts host startup when
+        // non-whitelisted mods are present, protecting the dual-server
+        // world-state bridge from unverified content/logic mods.
+        FabricModWhitelist.enforce(Path.of(""));
         runtime.start(FabricConfigLoader.load(configDirectory), Path.of("plugins"));
         runtime.registerWorldAccessFactory(new FabricWorldAccessFactory(server));
         bukkitEventBridge = new BukkitEventBridge(runtime.plugins());
