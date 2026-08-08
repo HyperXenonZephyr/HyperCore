@@ -107,3 +107,34 @@ Conservative p50 crossover: none in the tested range.
 A crossover requires the GPU p50 to be at least 5% lower at that volume and every larger tested volume.
 
 The 3D value-noise workload is compute-light (one integer hash plus trilinear smoothstep interpolation per voxel), so per-dispatch overhead and density readback dominate at small and large volumes respectively. The GPU wins at 64³ (1.62x p50) where the 262K-voxel dispatch saturates the compute cores enough to amortize the 1 MB readback, but at 128³ the 8 MB readback and staging cost overtake the compute savings. At 16³ and 32³ the dispatch/fence floor exceeds the CPU loop cost. Unlike the spatial-query path, noise generation writes one `float` per voxel (4 bytes) rather than a packed 1-bit mask, so readback scales with volume and caps the large-volume speedup. The adaptive router retains the CPU fallback for batches below the offload threshold; the noise self-test verifies bit-exact CPU/GPU agreement within `1.0E-5`.
+
+## Particle Physics Simulation
+
+Generated: 2026-08-08T11:14:01Z
+
+- GPU: `NVIDIA GeForce RTX 4060 Laptop GPU`
+- GPU transfer mode: `device-local-staged`
+- Java: `21.0.9`
+- OS: `Windows 11 amd64`
+- Logical processors: `32`
+- Warmups per backend and count: `20`
+- Timed samples per backend and count: `15`
+- Gravity: `9.8`
+- Time step: `0.05`
+- Restitution: `0.6`
+- Correctness tolerance: `1.0E-5`
+
+Each step integrates one Euler step (position += velocity * dt, velocity.y -= gravity * dt) with elastic ground collision at y=0. CPU timings include the full scalar integration loop. GPU timings include staging upload of positions and velocities, compute dispatch, fence wait, and readback of the updated arrays.
+
+| Particles | CPU p50 | CPU p95 | GPU p50 | GPU p95 | Speedup | Readback |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 256 | 0.001 ms | 0.001 ms | 0.141 ms | 0.708 ms | 0.00x | 6,144 B |
+| 1,024 | 0.002 ms | 0.033 ms | 0.206 ms | 0.450 ms | 0.01x | 24,576 B |
+| 4,096 | 0.008 ms | 0.009 ms | 0.457 ms | 0.702 ms | 0.02x | 98,304 B |
+| 16,384 | 0.034 ms | 0.035 ms | 1.379 ms | 1.449 ms | 0.02x | 393,216 B |
+| 65,536 | 0.124 ms | 0.199 ms | 5.569 ms | 6.744 ms | 0.02x | 1,572,864 B |
+
+Conservative p50 crossover: none in the tested range.
+A crossover requires the GPU p50 to be at least 5% lower at that count and every larger tested count.
+
+The particle simulation workload is extremely compute-light (6 multiplies, 3 additions, and one branch per particle), so the GPU's staging upload, dispatch, and readback overhead dominates by 2–3 orders of magnitude at every tested count. Even at 65,536 particles the CPU finishes in 0.124 ms while the GPU needs 5.6 ms — the readback alone (1.5 MB for two float arrays) exceeds the total CPU compute time. The adaptive router keeps particle simulation on CPU; the GPU path exists as infrastructure for future workloads that involve heavier per-particle compute (e.g., N-body interactions, voxel collision) where the compute-to-transfer ratio is more favorable.

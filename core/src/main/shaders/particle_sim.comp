@@ -1,0 +1,59 @@
+#version 450
+
+layout(local_size_x = 256) in;
+
+layout(set = 0, binding = 0, std430) buffer Positions {
+    float positions[];
+} positionBuffer;
+
+layout(set = 0, binding = 1, std430) buffer Velocities {
+    float velocities[];
+} velocityBuffer;
+
+layout(push_constant) uniform Parameters {
+    uint count;
+    float gravity;
+    float dt;
+    float restitution;
+} params;
+
+// Each thread integrates one particle. The float operation order matches the
+// Java ScalarParticleSimulationBackend so CPU and GPU produce identical bits:
+//   position += velocity * dt
+//   velocity.y -= gravity * dt
+//   if (position.y < 0) { position.y = 0; velocity.y = -velocity.y * restitution }
+void main() {
+    uint index = gl_GlobalInvocationID.x;
+    if (index >= params.count) {
+        return;
+    }
+
+    uint base = index * 3u;
+
+    float px = positionBuffer.positions[base + 0u];
+    float py = positionBuffer.positions[base + 1u];
+    float pz = positionBuffer.positions[base + 2u];
+
+    float vx = velocityBuffer.velocities[base + 0u];
+    float vy = velocityBuffer.velocities[base + 1u];
+    float vz = velocityBuffer.velocities[base + 2u];
+
+    px = px + vx * params.dt;
+    py = py + vy * params.dt;
+    pz = pz + vz * params.dt;
+
+    vy = vy - params.gravity * params.dt;
+
+    if (py < 0.0) {
+        py = 0.0;
+        vy = -vy * params.restitution;
+    }
+
+    positionBuffer.positions[base + 0u] = px;
+    positionBuffer.positions[base + 1u] = py;
+    positionBuffer.positions[base + 2u] = pz;
+
+    velocityBuffer.velocities[base + 0u] = vx;
+    velocityBuffer.velocities[base + 1u] = vy;
+    velocityBuffer.velocities[base + 2u] = vz;
+}

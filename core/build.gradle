@@ -223,6 +223,20 @@ tasks.register('compileDensityNoiseShader', JavaExec) {
     }
 }
 
+tasks.register('compileParticleSimShader', JavaExec) {
+    dependsOn tasks.named('shaderCompilerClasses')
+    classpath = sourceSets.shaderCompiler.runtimeClasspath
+    mainClass = 'dev.hypercore.tools.ComputeShaderCompiler'
+    args(
+        layout.projectDirectory.file('src/main/shaders/particle_sim.comp').asFile.absolutePath,
+        generatedShaderResources.get().file('assets/hypercore/shaders/particle_sim.spv').asFile.absolutePath
+    )
+    inputs.file layout.projectDirectory.file('src/main/shaders/particle_sim.comp')
+    outputs.file generatedShaderResources.map {
+        it.file('assets/hypercore/shaders/particle_sim.spv')
+    }
+}
+
 def generatedBukkitEvents = layout.buildDirectory.dir('generated-src/bukkit-events/java')
 
 tasks.register('generateBukkitEventStubs', JavaExec) {
@@ -246,6 +260,7 @@ tasks.named('processResources').configure {
     dependsOn tasks.named('compileRadiusMaskShader')
     dependsOn tasks.named('compileBatchRadiusMaskShader')
     dependsOn tasks.named('compileDensityNoiseShader')
+    dependsOn tasks.named('compileParticleSimShader')
     from generatedShaderResources
 }
 
@@ -264,6 +279,14 @@ tasks.register('benchmarkNoiseCompute', JavaExec) {
     classpath = sourceSets.main.output + configurations.runtimeClasspath + configurations.benchmarkRuntime
     mainClass = 'dev.hypercore.compute.NoiseBenchmarkMain'
     args(layout.buildDirectory.file('reports/hypercore/noise-compute-benchmark.md').get().asFile.absolutePath)
+    outputs.upToDateWhen { false }
+}
+
+tasks.register('benchmarkParticleSim', JavaExec) {
+    dependsOn tasks.named('classes')
+    classpath = sourceSets.main.output + configurations.runtimeClasspath + configurations.benchmarkRuntime
+    mainClass = 'dev.hypercore.compute.ParticleBenchmarkMain'
+    args(layout.buildDirectory.file('reports/hypercore/particle-sim-benchmark.md').get().asFile.absolutePath)
     outputs.upToDateWhen { false }
 }
 

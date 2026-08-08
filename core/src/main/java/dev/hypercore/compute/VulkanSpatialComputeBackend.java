@@ -126,19 +126,21 @@ import static org.lwjgl.vulkan.VK10.vkUnmapMemory;
 import static org.lwjgl.vulkan.VK10.vkUpdateDescriptorSets;
 import static org.lwjgl.vulkan.VK10.vkWaitForFences;
 
-public final class VulkanSpatialComputeBackend implements ManagedSpatialComputeBackend, ManagedNoiseComputeBackend {
+public final class VulkanSpatialComputeBackend implements ManagedSpatialComputeBackend, ManagedNoiseComputeBackend, ManagedParticleSimulationBackend {
     public static final String ID = "gpu-vulkan";
 
     private static final String DISTANCE_SHADER_RESOURCE = "/assets/hypercore/shaders/squared_distances.spv";
     private static final String RADIUS_MASK_SHADER_RESOURCE = "/assets/hypercore/shaders/radius_mask.spv";
     private static final String BATCH_RADIUS_MASK_SHADER_RESOURCE = "/assets/hypercore/shaders/batch_radius_mask.spv";
     private static final String NOISE_SHADER_RESOURCE = "/assets/hypercore/shaders/density_noise.spv";
+    private static final String PARTICLE_SHADER_RESOURCE = "/assets/hypercore/shaders/particle_sim.spv";
     private static final int LOCAL_SIZE = 256;
     private static final int BATCH_LOCAL_SIZE_X = 16;
     private static final int BATCH_LOCAL_SIZE_Y = 16;
     private static final int NOISE_LOCAL_SIZE_X = 8;
     private static final int NOISE_LOCAL_SIZE_Y = 8;
     private static final int NOISE_LOCAL_SIZE_Z = 4;
+    private static final int PARTICLE_LOCAL_SIZE = 256;
     private static final int MAX_QUERIES_PER_SUBMISSION = 32;
     private static final long FENCE_TIMEOUT_NANOS = 30_000_000_000L;
 
@@ -195,6 +197,16 @@ public final class VulkanSpatialComputeBackend implements ManagedSpatialComputeB
     private GpuBuffer noiseOutput;
     private int noiseCapacity;
 
+    private long particleDescriptorSetLayout;
+    private long particlePipelineLayout;
+    private long particleShaderModule;
+    private long particlePipeline;
+    private long particleDescriptorPool;
+    private long particleDescriptorSet;
+    private GpuBuffer particlePositions;
+    private GpuBuffer particleVelocities;
+    private int particleCapacity;
+
     private VulkanSpatialComputeBackend() {
         VkInstance createdInstance = null;
         VkDevice createdDevice = null;
@@ -217,6 +229,11 @@ public final class VulkanSpatialComputeBackend implements ManagedSpatialComputeB
         long createdNoiseShaderModule = NULL;
         long createdNoisePipeline = NULL;
         long createdNoiseDescriptorPool = NULL;
+        long createdParticleDescriptorSetLayout = NULL;
+        long createdParticlePipelineLayout = NULL;
+        long createdParticleShaderModule = NULL;
+        long createdParticlePipeline = NULL;
+        long createdParticleDescriptorPool = NULL;
         try {
             createdInstance = createInstance();
             DeviceCandidate selected = selectPhysicalDevice(createdInstance);
@@ -272,6 +289,17 @@ public final class VulkanSpatialComputeBackend implements ManagedSpatialComputeB
             createdNoiseDescriptorPool = createNoiseDescriptorPool(device);
             noiseDescriptorPool = createdNoiseDescriptorPool;
             noiseDescriptorSet = allocateDescriptorSet(device, noiseDescriptorPool, noiseDescriptorSetLayout);
+            createdParticleShaderModule = createShaderModule(device, PARTICLE_SHADER_RESOURCE);
+            particleShaderModule = createdParticleShaderModule;
+            createdParticleDescriptorSetLayout = createParticleDescriptorSetLayout(device);
+            particleDescriptorSetLayout = createdParticleDescriptorSetLayout;
+            createdParticlePipelineLayout = createParticlePipelineLayout(device, particleDescriptorSetLayout);
+            particlePipelineLayout = createdParticlePipelineLayout;
+            createdParticlePipeline = createPipeline(device, particlePipelineLayout, particleShaderModule);
+            particlePipeline = createdParticlePipeline;
+            createdParticleDescriptorPool = createParticleDescriptorPool(device);
+            particleDescriptorPool = createdParticleDescriptorPool;
+            particleDescriptorSet = allocateDescriptorSet(device, particleDescriptorPool, particleDescriptorSetLayout);
         } catch (RuntimeException | LinkageError error) {
             destroyPartial(
                 createdInstance,
@@ -294,7 +322,12 @@ public final class VulkanSpatialComputeBackend implements ManagedSpatialComputeB
                 createdNoisePipelineLayout,
                 createdNoiseShaderModule,
                 createdNoisePipeline,
-                createdNoiseDescriptorPool
+                createdNoiseDescriptorPool,
+                createdParticleDescriptorSetLayout,
+                createdParticlePipelineLayout,
+                createdParticleShaderModule,
+                createdParticlePipeline,
+                createdParticleDescriptorPool
             );
             throw error;
         }
@@ -611,6 +644,152 @@ public final class VulkanSpatialComputeBackend implements ManagedSpatialComputeB
         }
     }
 
+    // ---- ParticleSimulationBackend ----
+
+    @Override
+    public synchronized void simulate(
+        float[] positions, float[] velocities,
+        int count,
+        float gravity, float dt, float restitution
+    ) {
+        ensureOpen();
+        int required = ParticleSimulationBackend.validate(positions, velocities, count, gravity, dt, restitution);
+
+        long bufferBytes = (long) required * Float.BYTES;
+        if (bufferBytes > maximumStorageBufferBytes) {
+            throw new BatchNotSupportedException("Particle batch exceeds device storage buffer limit");
+        }
+        int workgroups = Math.ceilDiv(count, PARTICLE_LOCAL_SIZE);
+        if (workgroups > maximumWorkgroupsX) {
+            throw new BatchNotSupportedException("Particle dispatch exceeds device workgroup limit");
+        }
+
+        ensureParticleCapacity(required);
+        upload(particlePositions, positions, required);
+        upload(particleVelocities, velocities, required);
+        recordParticleSim(count, gravity, dt, restitution, workgroups);
+        submitAndWait();
+        download(particlePositions, positions, required);
+        download(particleVelocities, velocities, required);
+    }
+
+    private void ensureParticleCapacity(int required) {
+        if (particlePositions != null && particleCapacity >= required) {
+            return;
+        }
+        int newCapacity = Math.max(1_024, Integer.highestOneBit(required - 1) << 1);
+        if (newCapacity < required) {
+            newCapacity = required;
+        }
+        vkDeviceWaitIdle(device);
+        if (particlePositions != null) {
+            particlePositions.close(device);
+            particleVelocities.close(device);
+        }
+        long sizeBytes = (long) newCapacity * Float.BYTES;
+        particlePositions = GpuBuffer.create(device, physicalDevice, sizeBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+        particleVelocities = GpuBuffer.create(device, physicalDevice, sizeBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+        particleCapacity = newCapacity;
+        updateParticleDescriptorSet();
+    }
+
+    private void updateParticleDescriptorSet() {
+        GpuResource[] resources = {particlePositions, particleVelocities};
+        try (MemoryStack stack = stackPush()) {
+            for (int binding = 0; binding < resources.length; binding++) {
+                GpuResource resource = resources[binding];
+                VkDescriptorBufferInfo.Buffer info = VkDescriptorBufferInfo.calloc(1, stack)
+                    .buffer(resource.buffer())
+                    .offset(0)
+                    .range(resource.sizeBytes());
+                VkWriteDescriptorSet.Buffer write = VkWriteDescriptorSet.calloc(1, stack)
+                    .sType$Default()
+                    .dstSet(particleDescriptorSet)
+                    .dstBinding(binding)
+                    .descriptorType(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER)
+                    .descriptorCount(1)
+                    .pBufferInfo(info);
+                vkUpdateDescriptorSets(device, write, null);
+            }
+        }
+    }
+
+    private void recordParticleSim(int count, float gravity, float dt, float restitution, int workgroups) {
+        check(vkResetCommandBuffer(commandBuffer, VK_COMMAND_BUFFER_RESET_RELEASE_RESOURCES_BIT), "reset command buffer");
+        try (MemoryStack stack = stackPush()) {
+            VkCommandBufferBeginInfo beginInfo = VkCommandBufferBeginInfo.calloc(stack).sType$Default();
+            check(vkBeginCommandBuffer(commandBuffer, beginInfo), "begin command buffer");
+            vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, particlePipeline);
+            vkCmdBindDescriptorSets(
+                commandBuffer,
+                VK_PIPELINE_BIND_POINT_COMPUTE,
+                particlePipelineLayout,
+                0,
+                stack.longs(particleDescriptorSet),
+                null
+            );
+            ByteBuffer parameters = stack.malloc(16).order(ByteOrder.nativeOrder());
+            parameters.putInt(count)
+                .putFloat(gravity)
+                .putFloat(dt)
+                .putFloat(restitution)
+                .flip();
+            vkCmdPushConstants(commandBuffer, particlePipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, parameters);
+            vkCmdDispatch(commandBuffer, workgroups, 1, 1);
+            check(vkEndCommandBuffer(commandBuffer), "end command buffer");
+        }
+    }
+
+    private static long createParticleDescriptorSetLayout(VkDevice device) {
+        try (MemoryStack stack = stackPush()) {
+            VkDescriptorSetLayoutBinding.Buffer bindings = VkDescriptorSetLayoutBinding.calloc(2, stack);
+            for (int index = 0; index < bindings.capacity(); index++) {
+                bindings.get(index)
+                    .binding(index)
+                    .descriptorType(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER)
+                    .descriptorCount(1)
+                    .stageFlags(VK_SHADER_STAGE_COMPUTE_BIT);
+            }
+            VkDescriptorSetLayoutCreateInfo createInfo = VkDescriptorSetLayoutCreateInfo.calloc(stack)
+                .sType$Default()
+                .pBindings(bindings);
+            LongBuffer handle = stack.mallocLong(1);
+            check(vkCreateDescriptorSetLayout(device, createInfo, null, handle), "create particle descriptor set layout");
+            return handle.get(0);
+        }
+    }
+
+    private static long createParticlePipelineLayout(VkDevice device, long descriptorSetLayout) {
+        try (MemoryStack stack = stackPush()) {
+            VkPushConstantRange.Buffer pushConstants = VkPushConstantRange.calloc(1, stack)
+                .stageFlags(VK_SHADER_STAGE_COMPUTE_BIT)
+                .offset(0)
+                .size(16);
+            VkPipelineLayoutCreateInfo createInfo = VkPipelineLayoutCreateInfo.calloc(stack)
+                .sType$Default()
+                .pSetLayouts(stack.longs(descriptorSetLayout))
+                .pPushConstantRanges(pushConstants);
+            LongBuffer handle = stack.mallocLong(1);
+            check(vkCreatePipelineLayout(device, createInfo, null, handle), "create particle pipeline layout");
+            return handle.get(0);
+        }
+    }
+
+    private static long createParticleDescriptorPool(VkDevice device) {
+        try (MemoryStack stack = stackPush()) {
+            VkDescriptorPoolSize.Buffer poolSize = VkDescriptorPoolSize.calloc(1, stack)
+                .type(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER)
+                .descriptorCount(2);
+            VkDescriptorPoolCreateInfo createInfo = VkDescriptorPoolCreateInfo.calloc(stack)
+                .sType$Default()
+                .pPoolSizes(poolSize)
+                .maxSets(1);
+            LongBuffer handle = stack.mallocLong(1);
+            check(vkCreateDescriptorPool(device, createInfo, null, handle), "create particle descriptor pool");
+            return handle.get(0);
+        }
+    }
+
     @Override
     public synchronized void close() {
         if (closed) {
@@ -661,6 +840,25 @@ public final class VulkanSpatialComputeBackend implements ManagedSpatialComputeB
         }
         if (noiseDescriptorSetLayout != NULL) {
             vkDestroyDescriptorSetLayout(device, noiseDescriptorSetLayout, null);
+        }
+        if (particlePositions != null) {
+            particlePositions.close(device);
+            particleVelocities.close(device);
+        }
+        if (particlePipeline != NULL) {
+            vkDestroyPipeline(device, particlePipeline, null);
+        }
+        if (particleShaderModule != NULL) {
+            vkDestroyShaderModule(device, particleShaderModule, null);
+        }
+        if (particlePipelineLayout != NULL) {
+            vkDestroyPipelineLayout(device, particlePipelineLayout, null);
+        }
+        if (particleDescriptorPool != NULL) {
+            vkDestroyDescriptorPool(device, particleDescriptorPool, null);
+        }
+        if (particleDescriptorSetLayout != NULL) {
+            vkDestroyDescriptorSetLayout(device, particleDescriptorSetLayout, null);
         }
         vkDestroyFence(device, fence, null);
         vkDestroyCommandPool(device, commandPool, null);
@@ -1495,9 +1693,29 @@ public final class VulkanSpatialComputeBackend implements ManagedSpatialComputeB
         long noisePipelineLayout,
         long noiseShaderModule,
         long noisePipeline,
-        long noiseDescriptorPool
+        long noiseDescriptorPool,
+        long particleDescriptorSetLayout,
+        long particlePipelineLayout,
+        long particleShaderModule,
+        long particlePipeline,
+        long particleDescriptorPool
     ) {
         if (device != null) {
+            if (particlePipeline != NULL) {
+                vkDestroyPipeline(device, particlePipeline, null);
+            }
+            if (particleShaderModule != NULL) {
+                vkDestroyShaderModule(device, particleShaderModule, null);
+            }
+            if (particlePipelineLayout != NULL) {
+                vkDestroyPipelineLayout(device, particlePipelineLayout, null);
+            }
+            if (particleDescriptorPool != NULL) {
+                vkDestroyDescriptorPool(device, particleDescriptorPool, null);
+            }
+            if (particleDescriptorSetLayout != NULL) {
+                vkDestroyDescriptorSetLayout(device, particleDescriptorSetLayout, null);
+            }
             if (noisePipeline != NULL) {
                 vkDestroyPipeline(device, noisePipeline, null);
             }
