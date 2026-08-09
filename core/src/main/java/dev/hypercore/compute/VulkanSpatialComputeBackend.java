@@ -231,15 +231,20 @@ public final class VulkanSpatialComputeBackend implements ManagedSpatialComputeB
 
     // Light propagation pipeline — double-buffered with two descriptor sets
     // so multiple iterations can be chained in a single command buffer.
+    // Device-local buffers hold the live grid during dispatch (no PCIe
+    // traversal per iteration); host-visible staging buffers carry upload/
+    // download traffic at the start/end of each propagate call.
     private long lightDescriptorSetLayout;
     private long lightPipelineLayout;
     private long lightShaderModule;
     private long lightPipeline;
     private long lightDescriptorSetA;
     private long lightDescriptorSetB;
-    private GpuBuffer lightBufferA;
-    private GpuBuffer lightBufferB;
-    private GpuBuffer lightOpacity;
+    private DeviceLocalBuffer lightBufferA;
+    private DeviceLocalBuffer lightBufferB;
+    private DeviceLocalBuffer lightOpacity;
+    private GpuBuffer lightStaging;
+    private GpuBuffer opacityStaging;
     private int lightCapacity;
 
     private VulkanSpatialComputeBackend() {
@@ -1136,8 +1141,9 @@ public final class VulkanSpatialComputeBackend implements ManagedSpatialComputeB
     public synchronized void propagate(int[] light, int[] opacity, int dimX, int dimY, int dimZ, int iterations) {
         int required = LightPropagationBackend.validate(light, opacity, dimX, dimY, dimZ, iterations);
         ensureLightCapacity(required);
-        uploadInt(lightBufferA, light, required);
-        uploadInt(lightOpacity, opacity, required);
+        // Host writes inputs to the persistently-mapped staging buffers.
+        uploadInt(lightStaging, light, required);
+        uploadInt(opacityStaging, opacity, required);
         updateLightDescriptorSets();
 
         long currentSet = lightDescriptorSetA;
@@ -1146,6 +1152,32 @@ public final class VulkanSpatialComputeBackend implements ManagedSpatialComputeB
             VkCommandBufferBeginInfo beginInfo = VkCommandBufferBeginInfo.calloc(stack).sType$Default();
             check(vkBeginCommandBuffer(commandBuffer, beginInfo), "begin command buffer");
 
+            // Copy staging -> device-local grid buffers. After this the
+            // per-iteration dispatch reads/writes VRAM only, avoiding PCIe
+            // traversal on every iteration of the flood-fill relaxation.
+            long sizeBytes = (long) required * Integer.BYTES;
+            VkBufferCopy.Buffer lightRegion = VkBufferCopy.calloc(1, stack)
+                .srcOffset(0).dstOffset(0).size(sizeBytes);
+            vkCmdCopyBuffer(commandBuffer, lightStaging.buffer(), lightBufferA.buffer(), lightRegion);
+            VkBufferCopy.Buffer opacityRegion = VkBufferCopy.calloc(1, stack)
+                .srcOffset(0).dstOffset(0).size(sizeBytes);
+            vkCmdCopyBuffer(commandBuffer, opacityStaging.buffer(), lightOpacity.buffer(), opacityRegion);
+
+            // transfer -> compute: ensure the copies are visible to the shader.
+            VkMemoryBarrier.Buffer uploadBarrier = VkMemoryBarrier.calloc(1, stack)
+                .sType$Default()
+                .srcAccessMask(VK_ACCESS_TRANSFER_WRITE_BIT)
+                .dstAccessMask(VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
+            vkCmdPipelineBarrier(
+                commandBuffer,
+                VK_PIPELINE_STAGE_TRANSFER_BIT,
+                VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                0,
+                uploadBarrier,
+                null,
+                null
+            );
+
             int groupsX = (dimX + LIGHT_LOCAL_SIZE_X - 1) / LIGHT_LOCAL_SIZE_X;
             int groupsY = (dimY + LIGHT_LOCAL_SIZE_Y - 1) / LIGHT_LOCAL_SIZE_Y;
             int groupsZ = (dimZ + LIGHT_LOCAL_SIZE_Z - 1) / LIGHT_LOCAL_SIZE_Z;
@@ -1153,7 +1185,7 @@ public final class VulkanSpatialComputeBackend implements ManagedSpatialComputeB
             ByteBuffer pushConstants = stack.malloc(12).order(ByteOrder.nativeOrder());
             pushConstants.putInt(dimX).putInt(dimY).putInt(dimZ).flip();
 
-            VkMemoryBarrier.Buffer barrier = VkMemoryBarrier.calloc(1, stack)
+            VkMemoryBarrier.Buffer iterBarrier = VkMemoryBarrier.calloc(1, stack)
                 .sType$Default()
                 .srcAccessMask(VK_ACCESS_SHADER_WRITE_BIT)
                 .dstAccessMask(VK_ACCESS_SHADER_READ_BIT);
@@ -1177,21 +1209,27 @@ public final class VulkanSpatialComputeBackend implements ManagedSpatialComputeB
                     VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
                     VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
                     0,
-                    barrier,
+                    iterBarrier,
                     null,
                     null
                 );
                 currentSet = (currentSet == lightDescriptorSetA) ? lightDescriptorSetB : lightDescriptorSetA;
             }
 
+            // Copy the final result back to the light staging buffer.
+            // After the loop, currentSet is the set the NEXT iteration would
+            // use; that set reads from the buffer the LAST iteration wrote to.
+            DeviceLocalBuffer resultBuffer = (currentSet == lightDescriptorSetA) ? lightBufferA : lightBufferB;
+            VkBufferCopy.Buffer resultRegion = VkBufferCopy.calloc(1, stack)
+                .srcOffset(0).dstOffset(0).size(sizeBytes);
+            vkCmdCopyBuffer(commandBuffer, resultBuffer.buffer(), lightStaging.buffer(), resultRegion);
+
             check(vkEndCommandBuffer(commandBuffer), "end command buffer");
         }
         submitAndWait();
-
-        // After the loop, currentSet is the set the NEXT iteration would use.
-        // That set reads from the buffer the LAST iteration wrote to.
-        GpuBuffer resultBuffer = (currentSet == lightDescriptorSetA) ? lightBufferA : lightBufferB;
-        downloadInt(resultBuffer, light, required);
+        // Host reads the result from the staging buffer. The fence in
+        // submitAndWait guarantees the GPU copy has completed.
+        downloadInt(lightStaging, light, required);
     }
 
     private void ensureLightCapacity(int size) {
@@ -1203,20 +1241,39 @@ public final class VulkanSpatialComputeBackend implements ManagedSpatialComputeB
             newCapacity = size;
         }
         vkDeviceWaitIdle(device);
-        GpuBuffer newBufferA = GpuBuffer.create(device, physicalDevice, newCapacity * 4L, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
-        GpuBuffer newBufferB = GpuBuffer.create(device, physicalDevice, newCapacity * 4L, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
-        GpuBuffer newOpacity = GpuBuffer.create(device, physicalDevice, newCapacity * 4L, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
-        GpuBuffer oldA = lightBufferA;
-        GpuBuffer oldB = lightBufferB;
-        GpuBuffer oldOpacity = lightOpacity;
+        // Device-local grid buffers: storage + transfer src (result copy-back)
+        // + transfer dst (staging upload). On a discrete GPU these live in
+        // VRAM, so the per-iteration dispatch reads/writes never traverse PCIe.
+        int gridUsage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT
+            | VK_BUFFER_USAGE_TRANSFER_SRC_BIT
+            | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+        DeviceLocalBuffer newBufferA = DeviceLocalBuffer.create(device, physicalDevice, newCapacity * 4L, gridUsage);
+        DeviceLocalBuffer newBufferB = DeviceLocalBuffer.create(device, physicalDevice, newCapacity * 4L, gridUsage);
+        // Opacity is read-only during dispatch, so it only needs transfer dst.
+        DeviceLocalBuffer newOpacity = DeviceLocalBuffer.create(device, physicalDevice, newCapacity * 4L,
+            VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+        // Host-visible staging buffers carry upload/download traffic.
+        GpuBuffer newLightStaging = GpuBuffer.create(device, physicalDevice, newCapacity * 4L,
+            VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+        GpuBuffer newOpacityStaging = GpuBuffer.create(device, physicalDevice, newCapacity * 4L,
+            VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+        DeviceLocalBuffer oldA = lightBufferA;
+        DeviceLocalBuffer oldB = lightBufferB;
+        DeviceLocalBuffer oldOpacity = lightOpacity;
+        GpuBuffer oldLightStaging = lightStaging;
+        GpuBuffer oldOpacityStaging = opacityStaging;
         lightBufferA = newBufferA;
         lightBufferB = newBufferB;
         lightOpacity = newOpacity;
+        lightStaging = newLightStaging;
+        opacityStaging = newOpacityStaging;
         lightCapacity = newCapacity;
         if (oldA != null) {
             oldA.close(device);
             oldB.close(device);
             oldOpacity.close(device);
+            oldLightStaging.close(device);
+            oldOpacityStaging.close(device);
         }
     }
 
@@ -1346,6 +1403,10 @@ public final class VulkanSpatialComputeBackend implements ManagedSpatialComputeB
             lightBufferA.close(device);
             lightBufferB.close(device);
             lightOpacity.close(device);
+        }
+        if (lightStaging != null) {
+            lightStaging.close(device);
+            opacityStaging.close(device);
         }
         if (lightPipeline != NULL) {
             vkDestroyPipeline(device, lightPipeline, null);
@@ -2463,11 +2524,16 @@ public final class VulkanSpatialComputeBackend implements ManagedSpatialComputeB
     // is typically system RAM, so this degrades to a no-op without harm.
     private record DeviceLocalBuffer(long buffer, long memory, long sizeBytes) implements GpuResource {
         private static DeviceLocalBuffer create(VkDevice device, VkPhysicalDevice physicalDevice, long sizeBytes) {
+            return create(device, physicalDevice, sizeBytes,
+                VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+        }
+
+        private static DeviceLocalBuffer create(VkDevice device, VkPhysicalDevice physicalDevice, long sizeBytes, int usage) {
             try (MemoryStack stack = stackPush()) {
                 VkBufferCreateInfo createInfo = VkBufferCreateInfo.calloc(stack)
                     .sType$Default()
                     .size(sizeBytes)
-                    .usage(VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT)
+                    .usage(usage)
                     .sharingMode(VK_SHARING_MODE_EXCLUSIVE);
                 LongBuffer bufferHandle = stack.mallocLong(1);
                 check(vkCreateBuffer(device, createInfo, null, bufferHandle), "create device-local buffer");
