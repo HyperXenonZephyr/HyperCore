@@ -251,6 +251,20 @@ tasks.register('compileNBodySimShader', JavaExec) {
     }
 }
 
+tasks.register('compileLightPropagationShader', JavaExec) {
+    dependsOn tasks.named('shaderCompilerClasses')
+    classpath = sourceSets.shaderCompiler.runtimeClasspath
+    mainClass = 'dev.hypercore.tools.ComputeShaderCompiler'
+    args(
+        layout.projectDirectory.file('src/main/shaders/light_propagation.comp').asFile.absolutePath,
+        generatedShaderResources.get().file('assets/hypercore/shaders/light_propagation.spv').asFile.absolutePath
+    )
+    inputs.file layout.projectDirectory.file('src/main/shaders/light_propagation.comp')
+    outputs.file generatedShaderResources.map {
+        it.file('assets/hypercore/shaders/light_propagation.spv')
+    }
+}
+
 def generatedBukkitEvents = layout.buildDirectory.dir('generated-src/bukkit-events/java')
 
 tasks.register('generateBukkitEventStubs', JavaExec) {
@@ -276,6 +290,7 @@ tasks.named('processResources').configure {
     dependsOn tasks.named('compileDensityNoiseShader')
     dependsOn tasks.named('compileParticleSimShader')
     dependsOn tasks.named('compileNBodySimShader')
+    dependsOn tasks.named('compileLightPropagationShader')
     from generatedShaderResources
 }
 
@@ -330,6 +345,31 @@ tasks.register('benchmarkEndToEndTick', JavaExec) {
     classpath = sourceSets.main.output + sourceSets.benchmark.output + configurations.runtimeClasspath + configurations.benchmarkRuntime
     mainClass = 'dev.hypercore.benchmark.EndToEndTickBenchmarkMain'
     args(layout.buildDirectory.file('reports/hypercore/end-to-end-tick-benchmark.md').get().asFile.absolutePath)
+    outputs.upToDateWhen { false }
+}
+
+tasks.register('benchmarkLightPropagation', JavaExec) {
+    dependsOn tasks.named('classes')
+    classpath = sourceSets.main.output + configurations.runtimeClasspath + configurations.benchmarkRuntime
+    mainClass = 'dev.hypercore.compute.LightPropagationBenchmarkMain'
+    args(layout.buildDirectory.file('reports/hypercore/light-propagation-benchmark.md').get().asFile.absolutePath)
+    outputs.upToDateWhen { false }
+}
+
+tasks.register('benchmarkDescriptorPool', JavaExec) {
+    dependsOn tasks.named('classes')
+    classpath = sourceSets.main.output + configurations.runtimeClasspath + configurations.benchmarkRuntime
+    mainClass = 'dev.hypercore.compute.DescriptorPoolBenchmarkMain'
+    args(layout.buildDirectory.file('reports/hypercore/descriptor-pool-benchmark.md').get().asFile.absolutePath)
+    outputs.upToDateWhen { false }
+}
+
+tasks.register('benchmarkAdaptiveScheduling', JavaExec) {
+    dependsOn tasks.named('classes')
+    dependsOn tasks.named('compileBenchmarkJava')
+    classpath = sourceSets.main.output + sourceSets.benchmark.output + configurations.runtimeClasspath + configurations.benchmarkRuntime
+    mainClass = 'dev.hypercore.region.AdaptiveSchedulingBenchmarkMain'
+    args(layout.buildDirectory.file('reports/hypercore/adaptive-scheduling-benchmark.md').get().asFile.absolutePath)
     outputs.upToDateWhen { false }
 }
 

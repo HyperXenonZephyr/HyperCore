@@ -25,6 +25,7 @@ import org.lwjgl.vulkan.VkFenceCreateInfo;
 import org.lwjgl.vulkan.VkInstance;
 import org.lwjgl.vulkan.VkInstanceCreateInfo;
 import org.lwjgl.vulkan.VkMemoryAllocateInfo;
+import org.lwjgl.vulkan.VkMemoryBarrier;
 import org.lwjgl.vulkan.VkMemoryRequirements;
 import org.lwjgl.vulkan.VkPhysicalDevice;
 import org.lwjgl.vulkan.VkPhysicalDeviceMemoryProperties;
@@ -46,6 +47,7 @@ import java.nio.FloatBuffer;
 import java.nio.IntBuffer;
 import java.nio.LongBuffer;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
@@ -54,6 +56,7 @@ import static org.lwjgl.system.MemoryStack.stackPush;
 import static org.lwjgl.system.MemoryUtil.NULL;
 import static org.lwjgl.system.MemoryUtil.memByteBuffer;
 import static org.lwjgl.vulkan.VK10.VK_ACCESS_SHADER_READ_BIT;
+import static org.lwjgl.vulkan.VK10.VK_ACCESS_SHADER_WRITE_BIT;
 import static org.lwjgl.vulkan.VK10.VK_ACCESS_TRANSFER_WRITE_BIT;
 import static org.lwjgl.vulkan.VK10.VK_API_VERSION_1_0;
 import static org.lwjgl.vulkan.VK10.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
@@ -126,7 +129,7 @@ import static org.lwjgl.vulkan.VK10.vkUnmapMemory;
 import static org.lwjgl.vulkan.VK10.vkUpdateDescriptorSets;
 import static org.lwjgl.vulkan.VK10.vkWaitForFences;
 
-public final class VulkanSpatialComputeBackend implements ManagedSpatialComputeBackend, ManagedNoiseComputeBackend, ManagedParticleSimulationBackend, ManagedNBodySimulationBackend {
+public final class VulkanSpatialComputeBackend implements ManagedSpatialComputeBackend, ManagedNoiseComputeBackend, ManagedParticleSimulationBackend, ManagedNBodySimulationBackend, ManagedLightPropagationBackend {
     public static final String ID = "gpu-vulkan";
 
     private static final String DISTANCE_SHADER_RESOURCE = "/assets/hypercore/shaders/squared_distances.spv";
@@ -135,6 +138,7 @@ public final class VulkanSpatialComputeBackend implements ManagedSpatialComputeB
     private static final String NOISE_SHADER_RESOURCE = "/assets/hypercore/shaders/density_noise.spv";
     private static final String PARTICLE_SHADER_RESOURCE = "/assets/hypercore/shaders/particle_sim.spv";
     private static final String NBODY_SHADER_RESOURCE = "/assets/hypercore/shaders/nbody_sim.spv";
+    private static final String LIGHT_SHADER_RESOURCE = "/assets/hypercore/shaders/light_propagation.spv";
     private static final int LOCAL_SIZE = 256;
     private static final int BATCH_LOCAL_SIZE_X = 16;
     private static final int BATCH_LOCAL_SIZE_Y = 16;
@@ -143,6 +147,9 @@ public final class VulkanSpatialComputeBackend implements ManagedSpatialComputeB
     private static final int NOISE_LOCAL_SIZE_Z = 4;
     private static final int PARTICLE_LOCAL_SIZE = 256;
     private static final int NBODY_LOCAL_SIZE = 256;
+    private static final int LIGHT_LOCAL_SIZE_X = 8;
+    private static final int LIGHT_LOCAL_SIZE_Y = 8;
+    private static final int LIGHT_LOCAL_SIZE_Z = 4;
     private static final int MAX_QUERIES_PER_SUBMISSION = 32;
     private static final long FENCE_TIMEOUT_NANOS = 30_000_000_000L;
 
@@ -160,7 +167,10 @@ public final class VulkanSpatialComputeBackend implements ManagedSpatialComputeB
     private final long pipeline;
     private final long radiusMaskShaderModule;
     private final long radiusMaskPipeline;
-    private final long descriptorPool;
+    // All pipelines share a single descriptor pool to reduce creation overhead
+    // and memory fragmentation. maxSets=6 (5 active + 1 for future expansion),
+    // descriptorCount=24 STORAGE_BUFFER (4+8+1+2+5 active + 4 reserved).
+    private final long sharedDescriptorPool;
     private final long descriptorSet;
     private final long commandPool;
     private final VkCommandBuffer commandBuffer;
@@ -179,7 +189,6 @@ public final class VulkanSpatialComputeBackend implements ManagedSpatialComputeB
     private long batchPipelineLayout;
     private long batchShaderModule;
     private long batchPipeline;
-    private long batchDescriptorPool;
     private long batchDescriptorSet;
     private GpuBuffer batchOriginsX;
     private GpuBuffer batchOriginsY;
@@ -194,7 +203,6 @@ public final class VulkanSpatialComputeBackend implements ManagedSpatialComputeB
     private long noisePipelineLayout;
     private long noiseShaderModule;
     private long noisePipeline;
-    private long noiseDescriptorPool;
     private long noiseDescriptorSet;
     private GpuBuffer noiseOutput;
     private int noiseCapacity;
@@ -203,7 +211,6 @@ public final class VulkanSpatialComputeBackend implements ManagedSpatialComputeB
     private long particlePipelineLayout;
     private long particleShaderModule;
     private long particlePipeline;
-    private long particleDescriptorPool;
     private long particleDescriptorSet;
     private GpuBuffer particlePositions;
     private GpuBuffer particleVelocities;
@@ -213,7 +220,6 @@ public final class VulkanSpatialComputeBackend implements ManagedSpatialComputeB
     private long nbodyPipelineLayout;
     private long nbodyShaderModule;
     private long nbodyPipeline;
-    private long nbodyDescriptorPool;
     private long nbodyDescriptorSet;
     private GpuBuffer nbodyPositionsIn;
     private GpuBuffer nbodyVelocitiesIn;
@@ -222,6 +228,19 @@ public final class VulkanSpatialComputeBackend implements ManagedSpatialComputeB
     private GpuBuffer nbodyVelocitiesOut;
     private int nbodyCapacity;
     private int nbodyMassCapacity;
+
+    // Light propagation pipeline — double-buffered with two descriptor sets
+    // so multiple iterations can be chained in a single command buffer.
+    private long lightDescriptorSetLayout;
+    private long lightPipelineLayout;
+    private long lightShaderModule;
+    private long lightPipeline;
+    private long lightDescriptorSetA;
+    private long lightDescriptorSetB;
+    private GpuBuffer lightBufferA;
+    private GpuBuffer lightBufferB;
+    private GpuBuffer lightOpacity;
+    private int lightCapacity;
 
     private VulkanSpatialComputeBackend() {
         VkInstance createdInstance = null;
@@ -232,29 +251,29 @@ public final class VulkanSpatialComputeBackend implements ManagedSpatialComputeB
         long createdPipeline = NULL;
         long createdRadiusMaskShaderModule = NULL;
         long createdRadiusMaskPipeline = NULL;
-        long createdDescriptorPool = NULL;
+        long createdSharedDescriptorPool = NULL;
         long createdCommandPool = NULL;
         long createdFence = NULL;
         long createdBatchDescriptorSetLayout = NULL;
         long createdBatchPipelineLayout = NULL;
         long createdBatchShaderModule = NULL;
         long createdBatchPipeline = NULL;
-        long createdBatchDescriptorPool = NULL;
         long createdNoiseDescriptorSetLayout = NULL;
         long createdNoisePipelineLayout = NULL;
         long createdNoiseShaderModule = NULL;
         long createdNoisePipeline = NULL;
-        long createdNoiseDescriptorPool = NULL;
         long createdParticleDescriptorSetLayout = NULL;
         long createdParticlePipelineLayout = NULL;
         long createdParticleShaderModule = NULL;
         long createdParticlePipeline = NULL;
-        long createdParticleDescriptorPool = NULL;
         long createdNBodyDescriptorSetLayout = NULL;
         long createdNBodyPipelineLayout = NULL;
         long createdNBodyShaderModule = NULL;
         long createdNBodyPipeline = NULL;
-        long createdNBodyDescriptorPool = NULL;
+        long createdLightDescriptorSetLayout = NULL;
+        long createdLightPipelineLayout = NULL;
+        long createdLightShaderModule = NULL;
+        long createdLightPipeline = NULL;
         try {
             createdInstance = createInstance();
             DeviceCandidate selected = selectPhysicalDevice(createdInstance);
@@ -280,9 +299,9 @@ public final class VulkanSpatialComputeBackend implements ManagedSpatialComputeB
             radiusMaskShaderModule = createdRadiusMaskShaderModule;
             createdRadiusMaskPipeline = createPipeline(device, pipelineLayout, radiusMaskShaderModule);
             radiusMaskPipeline = createdRadiusMaskPipeline;
-            createdDescriptorPool = createDescriptorPool(device);
-            descriptorPool = createdDescriptorPool;
-            descriptorSet = allocateDescriptorSet(device, descriptorPool, descriptorSetLayout);
+            createdSharedDescriptorPool = createSharedDescriptorPool(device);
+            sharedDescriptorPool = createdSharedDescriptorPool;
+            descriptorSet = allocateDescriptorSet(device, sharedDescriptorPool, descriptorSetLayout);
             createdCommandPool = createCommandPool(device, queueFamilyIndex);
             commandPool = createdCommandPool;
             commandBuffer = allocateCommandBuffer(device, commandPool);
@@ -296,9 +315,7 @@ public final class VulkanSpatialComputeBackend implements ManagedSpatialComputeB
             batchShaderModule = createdBatchShaderModule;
             createdBatchPipeline = createPipeline(device, batchPipelineLayout, batchShaderModule);
             batchPipeline = createdBatchPipeline;
-            createdBatchDescriptorPool = createBatchDescriptorPool(device);
-            batchDescriptorPool = createdBatchDescriptorPool;
-            batchDescriptorSet = allocateDescriptorSet(device, batchDescriptorPool, batchDescriptorSetLayout);
+            batchDescriptorSet = allocateDescriptorSet(device, sharedDescriptorPool, batchDescriptorSetLayout);
             createdNoiseShaderModule = createShaderModule(device, NOISE_SHADER_RESOURCE);
             noiseShaderModule = createdNoiseShaderModule;
             createdNoiseDescriptorSetLayout = createNoiseDescriptorSetLayout(device);
@@ -307,9 +324,7 @@ public final class VulkanSpatialComputeBackend implements ManagedSpatialComputeB
             noisePipelineLayout = createdNoisePipelineLayout;
             createdNoisePipeline = createPipeline(device, noisePipelineLayout, noiseShaderModule);
             noisePipeline = createdNoisePipeline;
-            createdNoiseDescriptorPool = createNoiseDescriptorPool(device);
-            noiseDescriptorPool = createdNoiseDescriptorPool;
-            noiseDescriptorSet = allocateDescriptorSet(device, noiseDescriptorPool, noiseDescriptorSetLayout);
+            noiseDescriptorSet = allocateDescriptorSet(device, sharedDescriptorPool, noiseDescriptorSetLayout);
             createdParticleShaderModule = createShaderModule(device, PARTICLE_SHADER_RESOURCE);
             particleShaderModule = createdParticleShaderModule;
             createdParticleDescriptorSetLayout = createParticleDescriptorSetLayout(device);
@@ -318,9 +333,7 @@ public final class VulkanSpatialComputeBackend implements ManagedSpatialComputeB
             particlePipelineLayout = createdParticlePipelineLayout;
             createdParticlePipeline = createPipeline(device, particlePipelineLayout, particleShaderModule);
             particlePipeline = createdParticlePipeline;
-            createdParticleDescriptorPool = createParticleDescriptorPool(device);
-            particleDescriptorPool = createdParticleDescriptorPool;
-            particleDescriptorSet = allocateDescriptorSet(device, particleDescriptorPool, particleDescriptorSetLayout);
+            particleDescriptorSet = allocateDescriptorSet(device, sharedDescriptorPool, particleDescriptorSetLayout);
             createdNBodyShaderModule = createShaderModule(device, NBODY_SHADER_RESOURCE);
             nbodyShaderModule = createdNBodyShaderModule;
             createdNBodyDescriptorSetLayout = createNBodyDescriptorSetLayout(device);
@@ -329,9 +342,17 @@ public final class VulkanSpatialComputeBackend implements ManagedSpatialComputeB
             nbodyPipelineLayout = createdNBodyPipelineLayout;
             createdNBodyPipeline = createPipeline(device, nbodyPipelineLayout, nbodyShaderModule);
             nbodyPipeline = createdNBodyPipeline;
-            createdNBodyDescriptorPool = createNBodyDescriptorPool(device);
-            nbodyDescriptorPool = createdNBodyDescriptorPool;
-            nbodyDescriptorSet = allocateDescriptorSet(device, nbodyDescriptorPool, nbodyDescriptorSetLayout);
+            nbodyDescriptorSet = allocateDescriptorSet(device, sharedDescriptorPool, nbodyDescriptorSetLayout);
+            createdLightDescriptorSetLayout = createLightDescriptorSetLayout(device);
+            lightDescriptorSetLayout = createdLightDescriptorSetLayout;
+            createdLightPipelineLayout = createLightPipelineLayout(device, lightDescriptorSetLayout);
+            lightPipelineLayout = createdLightPipelineLayout;
+            createdLightShaderModule = createShaderModule(device, LIGHT_SHADER_RESOURCE);
+            lightShaderModule = createdLightShaderModule;
+            createdLightPipeline = createPipeline(device, lightPipelineLayout, lightShaderModule);
+            lightPipeline = createdLightPipeline;
+            lightDescriptorSetA = allocateDescriptorSet(device, sharedDescriptorPool, lightDescriptorSetLayout);
+            lightDescriptorSetB = allocateDescriptorSet(device, sharedDescriptorPool, lightDescriptorSetLayout);
         } catch (RuntimeException | LinkageError error) {
             destroyPartial(
                 createdInstance,
@@ -342,29 +363,29 @@ public final class VulkanSpatialComputeBackend implements ManagedSpatialComputeB
                 createdPipeline,
                 createdRadiusMaskShaderModule,
                 createdRadiusMaskPipeline,
-                createdDescriptorPool,
+                createdSharedDescriptorPool,
                 createdCommandPool,
                 createdFence,
                 createdBatchDescriptorSetLayout,
                 createdBatchPipelineLayout,
                 createdBatchShaderModule,
                 createdBatchPipeline,
-                createdBatchDescriptorPool,
                 createdNoiseDescriptorSetLayout,
                 createdNoisePipelineLayout,
                 createdNoiseShaderModule,
                 createdNoisePipeline,
-                createdNoiseDescriptorPool,
                 createdParticleDescriptorSetLayout,
                 createdParticlePipelineLayout,
                 createdParticleShaderModule,
                 createdParticlePipeline,
-                createdParticleDescriptorPool,
                 createdNBodyDescriptorSetLayout,
                 createdNBodyPipelineLayout,
                 createdNBodyShaderModule,
                 createdNBodyPipeline,
-                createdNBodyDescriptorPool
+                createdLightDescriptorSetLayout,
+                createdLightPipelineLayout,
+                createdLightShaderModule,
+                createdLightPipeline
             );
             throw error;
         }
@@ -385,6 +406,127 @@ public final class VulkanSpatialComputeBackend implements ManagedSpatialComputeB
     @Override
     public String transferMode() {
         return "device-local-staged";
+    }
+
+    /**
+     * Microbenchmark comparing the previous per-pipeline descriptor pool
+     * strategy against the consolidated shared pool. The "split" strategy
+     * creates one small pool per pipeline (5 pools, maxSets=1 each) and
+     * allocates a single set from each; the "shared" strategy creates one
+     * pool (maxSets=8) and allocates all 5 sets from it. Each cycle creates,
+     * allocates, and destroys, so the split strategy performs 5x the pool
+     * create/destroy calls. Reuses this backend's already-initialized
+     * {@link VkDevice} and distance {@code descriptorSetLayout} (4 bindings).
+     *
+     * <p>Package-private: invoked only by
+     * {@link DescriptorPoolBenchmarkMain}.
+     */
+    synchronized DescriptorPoolComparison runDescriptorPoolComparison(int iterations) {
+        if (iterations < 1) {
+            throw new IllegalArgumentException("iterations must be positive");
+        }
+        int warmup = Math.min(20, iterations);
+        for (int i = 0; i < warmup; i++) {
+            timeSplitCycle();
+            timeSharedCycle();
+        }
+        long[] splitSamples = new long[iterations];
+        long[] sharedSamples = new long[iterations];
+        for (int i = 0; i < iterations; i++) {
+            splitSamples[i] = timeSplitCycle();
+            sharedSamples[i] = timeSharedCycle();
+        }
+        Arrays.sort(splitSamples);
+        Arrays.sort(sharedSamples);
+        return new DescriptorPoolComparison(
+            iterations,
+            percentile(splitSamples, 0.50),
+            percentile(splitSamples, 0.95),
+            mean(splitSamples),
+            percentile(sharedSamples, 0.50),
+            percentile(sharedSamples, 0.95),
+            mean(sharedSamples)
+        );
+    }
+
+    private long timeSplitCycle() {
+        long start = System.nanoTime();
+        long[] pools = new long[5];
+        long[] sets = new long[5];
+        for (int i = 0; i < 5; i++) {
+            pools[i] = createBenchmarkPool(1, 4);
+            sets[i] = allocateBenchmarkSet(pools[i]);
+        }
+        for (int i = 0; i < 5; i++) {
+            vkDestroyDescriptorPool(device, pools[i], null);
+        }
+        return System.nanoTime() - start;
+    }
+
+    private long timeSharedCycle() {
+        long start = System.nanoTime();
+        long pool = createBenchmarkPool(8, 32);
+        long[] sets = new long[5];
+        for (int i = 0; i < 5; i++) {
+            sets[i] = allocateBenchmarkSet(pool);
+        }
+        vkDestroyDescriptorPool(device, pool, null);
+        return System.nanoTime() - start;
+    }
+
+    private long createBenchmarkPool(int maxSets, int descriptorCount) {
+        try (MemoryStack stack = stackPush()) {
+            VkDescriptorPoolSize.Buffer poolSize = VkDescriptorPoolSize.calloc(1, stack)
+                .type(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER)
+                .descriptorCount(descriptorCount);
+            VkDescriptorPoolCreateInfo createInfo = VkDescriptorPoolCreateInfo.calloc(stack)
+                .sType$Default()
+                .pPoolSizes(poolSize)
+                .maxSets(maxSets);
+            LongBuffer handle = stack.mallocLong(1);
+            check(vkCreateDescriptorPool(device, createInfo, null, handle), "create benchmark descriptor pool");
+            return handle.get(0);
+        }
+    }
+
+    private long allocateBenchmarkSet(long pool) {
+        try (MemoryStack stack = stackPush()) {
+            VkDescriptorSetAllocateInfo allocateInfo = VkDescriptorSetAllocateInfo.calloc(stack)
+                .sType$Default()
+                .descriptorPool(pool)
+                .pSetLayouts(stack.longs(descriptorSetLayout));
+            LongBuffer handle = stack.mallocLong(1);
+            check(vkAllocateDescriptorSets(device, allocateInfo, handle), "allocate benchmark descriptor set");
+            return handle.get(0);
+        }
+    }
+
+    private static long percentile(long[] sorted, double p) {
+        int index = Math.max(0, (int) Math.ceil(p * sorted.length) - 1);
+        return sorted[index];
+    }
+
+    private static long mean(long[] samples) {
+        long sum = 0L;
+        for (long s : samples) {
+            sum += s;
+        }
+        return sum / samples.length;
+    }
+
+    /** Result of {@link #runDescriptorPoolComparison(int)}. */
+    record DescriptorPoolComparison(
+        int iterations,
+        long splitP50Nanos,
+        long splitP95Nanos,
+        long splitMeanNanos,
+        long sharedP50Nanos,
+        long sharedP95Nanos,
+        long sharedMeanNanos
+    ) {
+        public double p50Reduction() {
+            return (double) splitP50Nanos / sharedP50Nanos;
+        }
     }
 
     @Override
@@ -666,21 +808,6 @@ public final class VulkanSpatialComputeBackend implements ManagedSpatialComputeB
         }
     }
 
-    private static long createNoiseDescriptorPool(VkDevice device) {
-        try (MemoryStack stack = stackPush()) {
-            VkDescriptorPoolSize.Buffer poolSize = VkDescriptorPoolSize.calloc(1, stack)
-                .type(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER)
-                .descriptorCount(1);
-            VkDescriptorPoolCreateInfo createInfo = VkDescriptorPoolCreateInfo.calloc(stack)
-                .sType$Default()
-                .pPoolSizes(poolSize)
-                .maxSets(1);
-            LongBuffer handle = stack.mallocLong(1);
-            check(vkCreateDescriptorPool(device, createInfo, null, handle), "create noise descriptor pool");
-            return handle.get(0);
-        }
-    }
-
     // ---- ParticleSimulationBackend ----
 
     @Override
@@ -808,21 +935,6 @@ public final class VulkanSpatialComputeBackend implements ManagedSpatialComputeB
                 .pPushConstantRanges(pushConstants);
             LongBuffer handle = stack.mallocLong(1);
             check(vkCreatePipelineLayout(device, createInfo, null, handle), "create particle pipeline layout");
-            return handle.get(0);
-        }
-    }
-
-    private static long createParticleDescriptorPool(VkDevice device) {
-        try (MemoryStack stack = stackPush()) {
-            VkDescriptorPoolSize.Buffer poolSize = VkDescriptorPoolSize.calloc(1, stack)
-                .type(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER)
-                .descriptorCount(2);
-            VkDescriptorPoolCreateInfo createInfo = VkDescriptorPoolCreateInfo.calloc(stack)
-                .sType$Default()
-                .pPoolSizes(poolSize)
-                .maxSets(1);
-            LongBuffer handle = stack.mallocLong(1);
-            check(vkCreateDescriptorPool(device, createInfo, null, handle), "create particle descriptor pool");
             return handle.get(0);
         }
     }
@@ -983,19 +1095,171 @@ public final class VulkanSpatialComputeBackend implements ManagedSpatialComputeB
         }
     }
 
-    private static long createNBodyDescriptorPool(VkDevice device) {
+    private static long createLightDescriptorSetLayout(VkDevice device) {
         try (MemoryStack stack = stackPush()) {
-            VkDescriptorPoolSize.Buffer poolSize = VkDescriptorPoolSize.calloc(1, stack)
-                .type(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER)
-                .descriptorCount(5);
-            VkDescriptorPoolCreateInfo createInfo = VkDescriptorPoolCreateInfo.calloc(stack)
+            VkDescriptorSetLayoutBinding.Buffer bindings = VkDescriptorSetLayoutBinding.calloc(3, stack);
+            for (int index = 0; index < bindings.capacity(); index++) {
+                bindings.get(index)
+                    .binding(index)
+                    .descriptorType(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER)
+                    .descriptorCount(1)
+                    .stageFlags(VK_SHADER_STAGE_COMPUTE_BIT);
+            }
+            VkDescriptorSetLayoutCreateInfo createInfo = VkDescriptorSetLayoutCreateInfo.calloc(stack)
                 .sType$Default()
-                .pPoolSizes(poolSize)
-                .maxSets(1);
+                .pBindings(bindings);
             LongBuffer handle = stack.mallocLong(1);
-            check(vkCreateDescriptorPool(device, createInfo, null, handle), "create nbody descriptor pool");
+            check(vkCreateDescriptorSetLayout(device, createInfo, null, handle), "create light descriptor set layout");
             return handle.get(0);
         }
+    }
+
+    private static long createLightPipelineLayout(VkDevice device, long descriptorSetLayout) {
+        try (MemoryStack stack = stackPush()) {
+            VkPushConstantRange.Buffer pushConstants = VkPushConstantRange.calloc(1, stack)
+                .stageFlags(VK_SHADER_STAGE_COMPUTE_BIT)
+                .offset(0)
+                .size(12);
+            VkPipelineLayoutCreateInfo createInfo = VkPipelineLayoutCreateInfo.calloc(stack)
+                .sType$Default()
+                .pSetLayouts(stack.longs(descriptorSetLayout))
+                .pPushConstantRanges(pushConstants);
+            LongBuffer handle = stack.mallocLong(1);
+            check(vkCreatePipelineLayout(device, createInfo, null, handle), "create light pipeline layout");
+            return handle.get(0);
+        }
+    }
+
+    // ---- LightPropagationBackend ----
+
+    @Override
+    public synchronized void propagate(int[] light, int[] opacity, int dimX, int dimY, int dimZ, int iterations) {
+        int required = LightPropagationBackend.validate(light, opacity, dimX, dimY, dimZ, iterations);
+        ensureLightCapacity(required);
+        uploadInt(lightBufferA, light, required);
+        uploadInt(lightOpacity, opacity, required);
+        updateLightDescriptorSets();
+
+        long currentSet = lightDescriptorSetA;
+        try (MemoryStack stack = stackPush()) {
+            vkResetCommandBuffer(commandBuffer, VK_COMMAND_BUFFER_RESET_RELEASE_RESOURCES_BIT);
+            VkCommandBufferBeginInfo beginInfo = VkCommandBufferBeginInfo.calloc(stack).sType$Default();
+            check(vkBeginCommandBuffer(commandBuffer, beginInfo), "begin command buffer");
+
+            int groupsX = (dimX + LIGHT_LOCAL_SIZE_X - 1) / LIGHT_LOCAL_SIZE_X;
+            int groupsY = (dimY + LIGHT_LOCAL_SIZE_Y - 1) / LIGHT_LOCAL_SIZE_Y;
+            int groupsZ = (dimZ + LIGHT_LOCAL_SIZE_Z - 1) / LIGHT_LOCAL_SIZE_Z;
+
+            ByteBuffer pushConstants = stack.malloc(12).order(ByteOrder.nativeOrder());
+            pushConstants.putInt(dimX).putInt(dimY).putInt(dimZ).flip();
+
+            VkMemoryBarrier.Buffer barrier = VkMemoryBarrier.calloc(1, stack)
+                .sType$Default()
+                .srcAccessMask(VK_ACCESS_SHADER_WRITE_BIT)
+                .dstAccessMask(VK_ACCESS_SHADER_READ_BIT);
+
+            LongBuffer setHandle = stack.mallocLong(1);
+            for (int iter = 0; iter < iterations; iter++) {
+                setHandle.put(0, currentSet);
+                vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, lightPipeline);
+                vkCmdBindDescriptorSets(
+                    commandBuffer,
+                    VK_PIPELINE_BIND_POINT_COMPUTE,
+                    lightPipelineLayout,
+                    0,
+                    setHandle,
+                    null
+                );
+                vkCmdPushConstants(commandBuffer, lightPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, pushConstants);
+                vkCmdDispatch(commandBuffer, groupsX, groupsY, groupsZ);
+                vkCmdPipelineBarrier(
+                    commandBuffer,
+                    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                    0,
+                    barrier,
+                    null,
+                    null
+                );
+                currentSet = (currentSet == lightDescriptorSetA) ? lightDescriptorSetB : lightDescriptorSetA;
+            }
+
+            check(vkEndCommandBuffer(commandBuffer), "end command buffer");
+        }
+        submitAndWait();
+
+        // After the loop, currentSet is the set the NEXT iteration would use.
+        // That set reads from the buffer the LAST iteration wrote to.
+        GpuBuffer resultBuffer = (currentSet == lightDescriptorSetA) ? lightBufferA : lightBufferB;
+        downloadInt(resultBuffer, light, required);
+    }
+
+    private void ensureLightCapacity(int size) {
+        if (lightCapacity >= size) {
+            return;
+        }
+        int newCapacity = Math.max(1_024, Integer.highestOneBit(size - 1) << 1);
+        if (newCapacity < size) {
+            newCapacity = size;
+        }
+        vkDeviceWaitIdle(device);
+        GpuBuffer newBufferA = GpuBuffer.create(device, physicalDevice, newCapacity * 4L, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+        GpuBuffer newBufferB = GpuBuffer.create(device, physicalDevice, newCapacity * 4L, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+        GpuBuffer newOpacity = GpuBuffer.create(device, physicalDevice, newCapacity * 4L, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+        GpuBuffer oldA = lightBufferA;
+        GpuBuffer oldB = lightBufferB;
+        GpuBuffer oldOpacity = lightOpacity;
+        lightBufferA = newBufferA;
+        lightBufferB = newBufferB;
+        lightOpacity = newOpacity;
+        lightCapacity = newCapacity;
+        if (oldA != null) {
+            oldA.close(device);
+            oldB.close(device);
+            oldOpacity.close(device);
+        }
+    }
+
+    private void updateLightDescriptorSets() {
+        try (MemoryStack stack = stackPush()) {
+            // Set A: opacity=binding0, lightIn=bufferA=binding1, lightOut=bufferB=binding2
+            updateLightBinding(stack, lightDescriptorSetA, 0, lightOpacity);
+            updateLightBinding(stack, lightDescriptorSetA, 1, lightBufferA);
+            updateLightBinding(stack, lightDescriptorSetA, 2, lightBufferB);
+            // Set B: opacity=binding0, lightIn=bufferB=binding1, lightOut=bufferA=binding2
+            updateLightBinding(stack, lightDescriptorSetB, 0, lightOpacity);
+            updateLightBinding(stack, lightDescriptorSetB, 1, lightBufferB);
+            updateLightBinding(stack, lightDescriptorSetB, 2, lightBufferA);
+        }
+    }
+
+    private void updateLightBinding(MemoryStack stack, long descriptorSet, int binding, GpuResource resource) {
+        VkDescriptorBufferInfo.Buffer info = VkDescriptorBufferInfo.calloc(1, stack)
+            .buffer(resource.buffer())
+            .offset(0)
+            .range(resource.sizeBytes());
+        VkWriteDescriptorSet.Buffer write = VkWriteDescriptorSet.calloc(1, stack)
+            .sType$Default()
+            .dstSet(descriptorSet)
+            .dstBinding(binding)
+            .descriptorType(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER)
+            .descriptorCount(1)
+            .pBufferInfo(info);
+        vkUpdateDescriptorSets(device, write, null);
+    }
+
+    private void uploadInt(GpuBuffer target, int[] values, int size) {
+        IntBuffer destination = target.mapped().duplicate()
+            .order(ByteOrder.nativeOrder())
+            .asIntBuffer();
+        destination.put(values, 0, size);
+    }
+
+    private void downloadInt(GpuBuffer source, int[] output, int size) {
+        IntBuffer values = source.mapped().duplicate()
+            .order(ByteOrder.nativeOrder())
+            .asIntBuffer();
+        values.get(output, 0, size);
     }
 
     @Override
@@ -1025,9 +1289,6 @@ public final class VulkanSpatialComputeBackend implements ManagedSpatialComputeB
         if (batchPipelineLayout != NULL) {
             vkDestroyPipelineLayout(device, batchPipelineLayout, null);
         }
-        if (batchDescriptorPool != NULL) {
-            vkDestroyDescriptorPool(device, batchDescriptorPool, null);
-        }
         if (batchDescriptorSetLayout != NULL) {
             vkDestroyDescriptorSetLayout(device, batchDescriptorSetLayout, null);
         }
@@ -1042,9 +1303,6 @@ public final class VulkanSpatialComputeBackend implements ManagedSpatialComputeB
         }
         if (noisePipelineLayout != NULL) {
             vkDestroyPipelineLayout(device, noisePipelineLayout, null);
-        }
-        if (noiseDescriptorPool != NULL) {
-            vkDestroyDescriptorPool(device, noiseDescriptorPool, null);
         }
         if (noiseDescriptorSetLayout != NULL) {
             vkDestroyDescriptorSetLayout(device, noiseDescriptorSetLayout, null);
@@ -1061,9 +1319,6 @@ public final class VulkanSpatialComputeBackend implements ManagedSpatialComputeB
         }
         if (particlePipelineLayout != NULL) {
             vkDestroyPipelineLayout(device, particlePipelineLayout, null);
-        }
-        if (particleDescriptorPool != NULL) {
-            vkDestroyDescriptorPool(device, particleDescriptorPool, null);
         }
         if (particleDescriptorSetLayout != NULL) {
             vkDestroyDescriptorSetLayout(device, particleDescriptorSetLayout, null);
@@ -1084,15 +1339,29 @@ public final class VulkanSpatialComputeBackend implements ManagedSpatialComputeB
         if (nbodyPipelineLayout != NULL) {
             vkDestroyPipelineLayout(device, nbodyPipelineLayout, null);
         }
-        if (nbodyDescriptorPool != NULL) {
-            vkDestroyDescriptorPool(device, nbodyDescriptorPool, null);
-        }
         if (nbodyDescriptorSetLayout != NULL) {
             vkDestroyDescriptorSetLayout(device, nbodyDescriptorSetLayout, null);
         }
+        if (lightBufferA != null) {
+            lightBufferA.close(device);
+            lightBufferB.close(device);
+            lightOpacity.close(device);
+        }
+        if (lightPipeline != NULL) {
+            vkDestroyPipeline(device, lightPipeline, null);
+        }
+        if (lightShaderModule != NULL) {
+            vkDestroyShaderModule(device, lightShaderModule, null);
+        }
+        if (lightPipelineLayout != NULL) {
+            vkDestroyPipelineLayout(device, lightPipelineLayout, null);
+        }
+        if (lightDescriptorSetLayout != NULL) {
+            vkDestroyDescriptorSetLayout(device, lightDescriptorSetLayout, null);
+        }
         vkDestroyFence(device, fence, null);
         vkDestroyCommandPool(device, commandPool, null);
-        vkDestroyDescriptorPool(device, descriptorPool, null);
+        vkDestroyDescriptorPool(device, sharedDescriptorPool, null);
         vkDestroyPipeline(device, radiusMaskPipeline, null);
         vkDestroyShaderModule(device, radiusMaskShaderModule, null);
         vkDestroyPipeline(device, pipeline, null);
@@ -1723,17 +1992,23 @@ public final class VulkanSpatialComputeBackend implements ManagedSpatialComputeB
         }
     }
 
-    private static long createDescriptorPool(VkDevice device) {
+    /**
+     * Creates a single shared descriptor pool for all compute pipelines.
+     * maxSets=8 (distance/radiusMask, batch, noise, particle, nbody + 2 for
+     * light propagation's double-buffered descriptor sets).  descriptorCount=32
+     * covers the sum of all storage-buffer bindings (4+8+1+2+5+6=26) plus 6 reserved.
+     */
+    private static long createSharedDescriptorPool(VkDevice device) {
         try (MemoryStack stack = stackPush()) {
             VkDescriptorPoolSize.Buffer poolSize = VkDescriptorPoolSize.calloc(1, stack)
                 .type(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER)
-                .descriptorCount(4);
+                .descriptorCount(32);
             VkDescriptorPoolCreateInfo createInfo = VkDescriptorPoolCreateInfo.calloc(stack)
                 .sType$Default()
                 .pPoolSizes(poolSize)
-                .maxSets(1);
+                .maxSets(8);
             LongBuffer handle = stack.mallocLong(1);
-            check(vkCreateDescriptorPool(device, createInfo, null, handle), "create descriptor pool");
+            check(vkCreateDescriptorPool(device, createInfo, null, handle), "create shared descriptor pool");
             return handle.get(0);
         }
     }
@@ -1769,21 +2044,6 @@ public final class VulkanSpatialComputeBackend implements ManagedSpatialComputeB
                 .pPushConstantRanges(pushConstants);
             LongBuffer handle = stack.mallocLong(1);
             check(vkCreatePipelineLayout(device, createInfo, null, handle), "create batch pipeline layout");
-            return handle.get(0);
-        }
-    }
-
-    private static long createBatchDescriptorPool(VkDevice device) {
-        try (MemoryStack stack = stackPush()) {
-            VkDescriptorPoolSize.Buffer poolSize = VkDescriptorPoolSize.calloc(1, stack)
-                .type(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER)
-                .descriptorCount(8);
-            VkDescriptorPoolCreateInfo createInfo = VkDescriptorPoolCreateInfo.calloc(stack)
-                .sType$Default()
-                .pPoolSizes(poolSize)
-                .maxSets(1);
-            LongBuffer handle = stack.mallocLong(1);
-            check(vkCreateDescriptorPool(device, createInfo, null, handle), "create batch descriptor pool");
             return handle.get(0);
         }
     }
@@ -1911,31 +2171,43 @@ public final class VulkanSpatialComputeBackend implements ManagedSpatialComputeB
         long pipeline,
         long radiusMaskShaderModule,
         long radiusMaskPipeline,
-        long descriptorPool,
+        long sharedDescriptorPool,
         long commandPool,
         long fence,
         long batchDescriptorSetLayout,
         long batchPipelineLayout,
         long batchShaderModule,
         long batchPipeline,
-        long batchDescriptorPool,
         long noiseDescriptorSetLayout,
         long noisePipelineLayout,
         long noiseShaderModule,
         long noisePipeline,
-        long noiseDescriptorPool,
         long particleDescriptorSetLayout,
         long particlePipelineLayout,
         long particleShaderModule,
         long particlePipeline,
-        long particleDescriptorPool,
         long nbodyDescriptorSetLayout,
         long nbodyPipelineLayout,
         long nbodyShaderModule,
         long nbodyPipeline,
-        long nbodyDescriptorPool
+        long lightDescriptorSetLayout,
+        long lightPipelineLayout,
+        long lightShaderModule,
+        long lightPipeline
     ) {
         if (device != null) {
+            if (lightPipeline != NULL) {
+                vkDestroyPipeline(device, lightPipeline, null);
+            }
+            if (lightShaderModule != NULL) {
+                vkDestroyShaderModule(device, lightShaderModule, null);
+            }
+            if (lightPipelineLayout != NULL) {
+                vkDestroyPipelineLayout(device, lightPipelineLayout, null);
+            }
+            if (lightDescriptorSetLayout != NULL) {
+                vkDestroyDescriptorSetLayout(device, lightDescriptorSetLayout, null);
+            }
             if (nbodyPipeline != NULL) {
                 vkDestroyPipeline(device, nbodyPipeline, null);
             }
@@ -1944,9 +2216,6 @@ public final class VulkanSpatialComputeBackend implements ManagedSpatialComputeB
             }
             if (nbodyPipelineLayout != NULL) {
                 vkDestroyPipelineLayout(device, nbodyPipelineLayout, null);
-            }
-            if (nbodyDescriptorPool != NULL) {
-                vkDestroyDescriptorPool(device, nbodyDescriptorPool, null);
             }
             if (nbodyDescriptorSetLayout != NULL) {
                 vkDestroyDescriptorSetLayout(device, nbodyDescriptorSetLayout, null);
@@ -1960,9 +2229,6 @@ public final class VulkanSpatialComputeBackend implements ManagedSpatialComputeB
             if (particlePipelineLayout != NULL) {
                 vkDestroyPipelineLayout(device, particlePipelineLayout, null);
             }
-            if (particleDescriptorPool != NULL) {
-                vkDestroyDescriptorPool(device, particleDescriptorPool, null);
-            }
             if (particleDescriptorSetLayout != NULL) {
                 vkDestroyDescriptorSetLayout(device, particleDescriptorSetLayout, null);
             }
@@ -1974,9 +2240,6 @@ public final class VulkanSpatialComputeBackend implements ManagedSpatialComputeB
             }
             if (noisePipelineLayout != NULL) {
                 vkDestroyPipelineLayout(device, noisePipelineLayout, null);
-            }
-            if (noiseDescriptorPool != NULL) {
-                vkDestroyDescriptorPool(device, noiseDescriptorPool, null);
             }
             if (noiseDescriptorSetLayout != NULL) {
                 vkDestroyDescriptorSetLayout(device, noiseDescriptorSetLayout, null);
@@ -1990,9 +2253,6 @@ public final class VulkanSpatialComputeBackend implements ManagedSpatialComputeB
             if (batchPipelineLayout != NULL) {
                 vkDestroyPipelineLayout(device, batchPipelineLayout, null);
             }
-            if (batchDescriptorPool != NULL) {
-                vkDestroyDescriptorPool(device, batchDescriptorPool, null);
-            }
             if (batchDescriptorSetLayout != NULL) {
                 vkDestroyDescriptorSetLayout(device, batchDescriptorSetLayout, null);
             }
@@ -2002,8 +2262,8 @@ public final class VulkanSpatialComputeBackend implements ManagedSpatialComputeB
             if (commandPool != NULL) {
                 vkDestroyCommandPool(device, commandPool, null);
             }
-            if (descriptorPool != NULL) {
-                vkDestroyDescriptorPool(device, descriptorPool, null);
+            if (sharedDescriptorPool != NULL) {
+                vkDestroyDescriptorPool(device, sharedDescriptorPool, null);
             }
             if (radiusMaskPipeline != NULL) {
                 vkDestroyPipeline(device, radiusMaskPipeline, null);

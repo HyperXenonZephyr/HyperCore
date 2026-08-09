@@ -1,0 +1,96 @@
+#version 450
+
+// Iterative light propagation: each transparent voxel takes the maximum of
+// its current light level and (neighbor - 1) for all six axis-aligned
+// neighbors. Opaque voxels are clamped to zero. Double-buffered: reads from
+// LightIn, writes to LightOut. The host alternates two descriptor sets to
+// chain multiple iterations within a single command buffer submission.
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 4) in;
+
+layout(set = 0, binding = 0, std430) readonly buffer OpacityGrid {
+    uint opacity[];
+} opacityGrid;
+
+layout(set = 0, binding = 1, std430) readonly buffer LightIn {
+    uint lightIn[];
+} lightInput;
+
+layout(set = 0, binding = 2, std430) writeonly buffer LightOut {
+    uint lightOut[];
+} lightOutput;
+
+layout(push_constant) uniform Parameters {
+    uint dimX;
+    uint dimY;
+    uint dimZ;
+} params;
+
+void main() {
+    uint x = gl_GlobalInvocationID.x;
+    uint y = gl_GlobalInvocationID.y;
+    uint z = gl_GlobalInvocationID.z;
+    if (x >= params.dimX || y >= params.dimY || z >= params.dimZ) {
+        return;
+    }
+
+    uint idx = x + y * params.dimX + z * params.dimX * params.dimY;
+
+    // Opaque blocks emit no light.
+    if (opacityGrid.opacity[idx] != 0u) {
+        lightOutput.lightOut[idx] = 0u;
+        return;
+    }
+
+    uint current = lightInput.lightIn[idx];
+    uint result = current;
+
+    uint strideX = 1u;
+    uint strideY = params.dimX;
+    uint strideZ = params.dimX * params.dimY;
+
+    // +X neighbor
+    if (x + 1u < params.dimX) {
+        uint n = lightInput.lightIn[idx + strideX];
+        if (n > 0u) {
+            result = max(result, n - 1u);
+        }
+    }
+    // -X neighbor
+    if (x > 0u) {
+        uint n = lightInput.lightIn[idx - strideX];
+        if (n > 0u) {
+            result = max(result, n - 1u);
+        }
+    }
+    // +Y neighbor
+    if (y + 1u < params.dimY) {
+        uint n = lightInput.lightIn[idx + strideY];
+        if (n > 0u) {
+            result = max(result, n - 1u);
+        }
+    }
+    // -Y neighbor
+    if (y > 0u) {
+        uint n = lightInput.lightIn[idx - strideY];
+        if (n > 0u) {
+            result = max(result, n - 1u);
+        }
+    }
+    // +Z neighbor
+    if (z + 1u < params.dimZ) {
+        uint n = lightInput.lightIn[idx + strideZ];
+        if (n > 0u) {
+            result = max(result, n - 1u);
+        }
+    }
+    // -Z neighbor
+    if (z > 0u) {
+        uint n = lightInput.lightIn[idx - strideZ];
+        if (n > 0u) {
+            result = max(result, n - 1u);
+        }
+    }
+
+    lightOutput.lightOut[idx] = result;
+}
