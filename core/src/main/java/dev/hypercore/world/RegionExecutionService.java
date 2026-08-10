@@ -1331,6 +1331,21 @@ public final class RegionExecutionService {
     }
 
     /**
+     * Sends a chat message to the player with the given unique id.
+     */
+    public void sendPlayerMessage(UUID playerId, String message) {
+        String worldName = resolveEntityWorld(playerId);
+        if (worldName == null) {
+            return;
+        }
+        WorldAccess world = worldAccessFactory.access(worldName);
+        if (world == null) {
+            return;
+        }
+        world.sendPlayerMessage(playerId, message);
+    }
+
+    /**
      * Sends a title and optional subtitle to the player with the given unique id.
      */
     public void sendTitle(UUID playerId, String title, String subtitle, int fadeIn, int stay, int fadeOut) {

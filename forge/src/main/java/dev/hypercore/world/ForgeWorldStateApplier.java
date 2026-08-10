@@ -109,7 +109,7 @@ public final class ForgeWorldStateApplier implements WorldDeltaApplier {
         level.getChunk(delta.x() >> 4, delta.z() >> 4);
         level.setBlock(
             new BlockPos(delta.x(), delta.y(), delta.z()),
-            ForgeWorldAccess.toBlock(material).defaultBlockState(),
+            ForgeWorldMappings.toBlock(material).defaultBlockState(),
             3
         );
     }
@@ -128,7 +128,7 @@ public final class ForgeWorldStateApplier implements WorldDeltaApplier {
             return;
         }
         try {
-            EntityType<?> mcType = ForgeWorldAccess.toEntityType(type);
+            EntityType<?> mcType = ForgeWorldMappings.toEntityType(type);
             Entity entity = mcType.create(level);
             if (entity == null) {
                 return;
@@ -188,7 +188,7 @@ public final class ForgeWorldStateApplier implements WorldDeltaApplier {
         Material material = materialOf(delta.itemType());
         if (material != null) {
             try {
-                stack = new ItemStack(ForgeWorldAccess.toItem(material), delta.amount());
+                stack = new ItemStack(ForgeWorldMappings.toItem(material), delta.amount());
             } catch (UnsupportedOperationException error) {
                 LOGGER.debug("Cannot mirror inventory item: {}", error.getMessage());
                 return;

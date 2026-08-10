@@ -119,6 +119,7 @@ class RegionExecutionServiceTest {
         // Connection-based operations are no-ops in the memory access but must
         // not throw.
         service.kickPlayer(playerId, "test");
+        service.sendPlayerMessage(playerId, "hello");
         service.sendTitle(playerId, "title", "subtitle", 10, 70, 20);
         service.resetTitle(playerId);
         service.updateInventory(playerId);
@@ -226,6 +227,11 @@ class RegionExecutionServiceTest {
         // from the WorldAccess defaults (which now throw).
         @Override
         public void kickPlayer(UUID playerId, String message) {
+            // No-op.
+        }
+
+        @Override
+        public void sendPlayerMessage(UUID playerId, String message) {
             // No-op.
         }
 

@@ -140,8 +140,7 @@ public final class HyperCorePlayer extends HyperCoreLivingEntity implements Play
 
     @Override
     public void sendMessage(String message) {
-        // No-op in this minimal stub: real implementation would route to the
-        // player's network connection.
+        execution.sendPlayerMessage(getUniqueId(), message);
     }
 
     @Override

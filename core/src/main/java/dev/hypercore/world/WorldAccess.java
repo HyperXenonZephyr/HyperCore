@@ -305,6 +305,13 @@ public interface WorldAccess {
     }
 
     /**
+     * Sends a chat message to the player with the given unique id.
+     */
+    default void sendPlayerMessage(UUID playerId, String message) {
+        throw new UnsupportedOperationException("sendPlayerMessage");
+    }
+
+    /**
      * Sends a title to the player with the given unique id.
      */
     default void sendTitle(UUID playerId, String title, String subtitle, int fadeIn, int stay, int fadeOut) {

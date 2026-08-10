@@ -108,7 +108,7 @@ public final class FabricWorldStateApplier implements WorldDeltaApplier {
         level.getChunk(delta.x() >> 4, delta.z() >> 4);
         level.setBlock(
             new BlockPos(delta.x(), delta.y(), delta.z()),
-            FabricWorldAccess.toBlock(material).defaultBlockState(),
+            FabricWorldMappings.toBlock(material).defaultBlockState(),
             3
         );
     }
@@ -127,7 +127,7 @@ public final class FabricWorldStateApplier implements WorldDeltaApplier {
             return;
         }
         try {
-            EntityType<?> mcType = FabricWorldAccess.toEntityType(type);
+            EntityType<?> mcType = FabricWorldMappings.toEntityType(type);
             Entity entity = mcType.create(level);
             if (entity == null) {
                 return;
@@ -187,7 +187,7 @@ public final class FabricWorldStateApplier implements WorldDeltaApplier {
         Material material = materialOf(delta.itemType());
         if (material != null) {
             try {
-                stack = new ItemStack(FabricWorldAccess.toItem(material), delta.amount());
+                stack = new ItemStack(FabricWorldMappings.toItem(material), delta.amount());
             } catch (UnsupportedOperationException error) {
                 LOGGER.debug("Cannot mirror inventory item: {}", error.getMessage());
                 return;

@@ -45,7 +45,11 @@ public class HyperCoreLivingEntity extends HyperCoreEntity implements LivingEnti
 
     @Override
     public void damage(double amount, org.bukkit.entity.Entity source) {
-        damage(amount);
+        if (source == null) {
+            damage(amount);
+            return;
+        }
+        execution.damageEntity(getUniqueId(), source.getUniqueId(), amount);
     }
 
     @Override

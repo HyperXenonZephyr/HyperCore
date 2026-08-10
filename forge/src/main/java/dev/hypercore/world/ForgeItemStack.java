@@ -33,19 +33,19 @@ public final class ForgeItemStack extends org.bukkit.inventory.ItemStack {
     private ItemStack mcStack;
 
     public ForgeItemStack(ItemStack mcStack) {
-        super(ForgeWorldAccess.toMaterial(mcStack.getItem()), mcStack.getCount());
+        super(ForgeWorldMappings.toMaterial(mcStack.getItem()), mcStack.getCount());
         this.mcStack = Objects.requireNonNull(mcStack, "mcStack");
     }
 
     @Override
     public Material getType() {
-        return ForgeWorldAccess.toMaterial(mcStack.getItem());
+        return ForgeWorldMappings.toMaterial(mcStack.getItem());
     }
 
     @Override
     public void setType(Material type) {
         super.setType(type);
-        Item replacement = ForgeWorldAccess.toItem(type);
+        Item replacement = ForgeWorldMappings.toItem(type);
         this.mcStack = new ItemStack(replacement, mcStack.getCount());
     }
 

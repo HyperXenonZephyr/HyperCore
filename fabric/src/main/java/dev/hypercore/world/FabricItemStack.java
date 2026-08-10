@@ -33,19 +33,19 @@ public final class FabricItemStack extends org.bukkit.inventory.ItemStack {
     private ItemStack mcStack;
 
     public FabricItemStack(ItemStack mcStack) {
-        super(FabricWorldAccess.toMaterial(mcStack.getItem()), mcStack.getCount());
+        super(FabricWorldMappings.toMaterial(mcStack.getItem()), mcStack.getCount());
         this.mcStack = Objects.requireNonNull(mcStack, "mcStack");
     }
 
     @Override
     public Material getType() {
-        return FabricWorldAccess.toMaterial(mcStack.getItem());
+        return FabricWorldMappings.toMaterial(mcStack.getItem());
     }
 
     @Override
     public void setType(Material type) {
         super.setType(type);
-        Item replacement = FabricWorldAccess.toItem(type);
+        Item replacement = FabricWorldMappings.toItem(type);
         this.mcStack = new ItemStack(replacement, mcStack.getCount());
     }
 
