@@ -79,3 +79,12 @@ The Bukkit/Paper adapter is currently a `Beta`. It will not be marked `Compatibl
 7. Bidirectional Bukkit event bridge for world/block/entity/player events. Done — `BlockPlaceEvent`, `BlockBreakEvent`, `EntitySpawnEvent`, `PlayerMoveEvent`, `PlayerJoinEvent`, `PlayerInteractEvent`, `EntityDamageEvent`, `PlayerLoginEvent`, and `PlayerQuitEvent` are bridged and cancellation is propagated back to abort HyperCore mutations; verified in Forge/Fabric GameTests.
 8. True multi-core region-parallel execution. Done — `RegionTaskCoordinator` groups active regions by logical owner lane and dispatches owner batches across the HyperCore worker pool; each region remains serialized under its write lock. Verified in Forge/Fabric `regionParallelExecution` GameTests.
 9. JMH/Gradle benchmark suite for region-parallel execution. Done — `benchmarkRegionParallel` measures region-tick scheduling throughput across 1/2/4/8/16 active regions and writes a Markdown report.
+
+## Server Core Comparison
+
+HyperCore is a Forge/Fabric mod and cannot be dropped into a server directory like Paper, so cross-core comparison uses a headless, configuration-standardized approach: a single auto-benchmark Bukkit plugin runs on vanilla-like cores (Paper, Folia) under identical world settings (seed 42, `view-distance=8`, `simulation-distance=8`, `spawn-protection=0`, `online-mode=false`, `max-tick-time=-1`) and a fixed heap. The plugin measures two metrics per phase:
+
+- **MSPT** — server-recorded tick processing time (`Bukkit.getTickTimes()[0]`), Paper only.
+- **PERIOD / TPS** — wall-clock tick period of a 1-tick repeating task, consistent across Paper and Folia.
+
+The plugin JAR is compiled against the Paper API only and detects Folia via the Folia-specific `Bukkit.isOwnedByCurrentRegion` method (probing scheduler methods is not sufficient because Paper 1.21.1+ also exposes global/region schedulers). On Folia it schedules through the global scheduler and spawns entities through the region scheduler. Results are recorded in [BENCHMARKS.md](BENCHMARKS.md).

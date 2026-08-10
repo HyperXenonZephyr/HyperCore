@@ -125,6 +125,23 @@ The generated report is written to `core/build/reports/hypercore/noise-compute-b
 
 The generated report is written to `core/build/reports/hypercore/particle-sim-benchmark.md`. It compares CPU scalar and GPU Vulkan particle/projectile physics simulation (Euler integration with gravity and elastic ground collision) over batches from 256 through 65,536 particles.
 
+### Other compute and scheduling benchmarks
+
+```powershell
+./gradlew.bat :core:benchmarkNBodySim
+./gradlew.bat :core:benchmarkLightPropagation
+./gradlew.bat :core:benchmarkDescriptorPool
+./gradlew.bat :core:benchmarkRegionParallel
+./gradlew.bat :core:benchmarkEndToEndTick
+./gradlew.bat :core:benchmarkAdaptiveScheduling
+```
+
+Each writes a report under `core/build/reports/hypercore/`. `benchmarkNBodySim` measures O(n²) gravity on CPU vs GPU; `benchmarkLightPropagation` measures iterative light relaxation; `benchmarkDescriptorPool` isolates Vulkan descriptor-pool allocation; `benchmarkRegionParallel` is a JMH throughput run over 1/2/4/8/16 active regions; `benchmarkEndToEndTick` measures the HyperCore post-tick overhead (region dispatch, delta capture, bridge resolution) excluding the vanilla tick body; `benchmarkAdaptiveScheduling` compares the static vs adaptive region owner coordinator. All are calibration microbenchmarks, not MSPT or world-simulation claims.
+
+### Server-core comparison (Paper vs Folia)
+
+A headless, configuration-standardized comparison runs one auto-benchmark Bukkit plugin on vanilla-like cores under identical world settings and heap. It measures server-recorded MSPT (Paper) and wall-clock tick period/TPS (Paper and Folia), and the plugin auto-detects Folia via `Bukkit.isOwnedByCurrentRegion`. The Paper 1.21.1 results and the comparison methodology are recorded in [BENCHMARKS.md](BENCHMARKS.md); Folia is staged and pending.
+
 The Forge development run tasks automatically stage `:core` and `:forge` classes and resources — including the compiled `.spv` shaders and the vector source-set output — into a single mod directory under `forge/build/dev-mod` via the `prepareDevMod` task. This keeps normal Gradle build outputs reproducible while giving Forge one complete exploded mod root.
 
 ## Configuration

@@ -6,6 +6,8 @@ All notable changes to HyperCore are documented in this file. The format is base
 
 ### Added
 
+- Added a headless, configuration-standardized server-core comparison (Paper vs Folia) using an auto-benchmark Bukkit plugin that measures both server-recorded MSPT and wall-clock tick period/TPS. The plugin detects Folia via the Folia-specific `Bukkit.isOwnedByCurrentRegion` method (scheduler-method probing is unreliable because Paper 1.21.1+ also exposes global/region schedulers) and schedules/spawns through the global/region schedulers on Folia. Paper 1.21.1-28 results are recorded in `BENCHMARKS.md` (IDLE MSPT 1.769 ms, ENTITY MSPT 11.522 ms, TPS 20 both phases); Folia is staged and pending.
+- Regenerated the full core benchmark suite on 2026-08-10 after the mapping-centralization refactor and recorded current numbers in `BENCHMARKS.md`: spatial compute (resident-snapshot crossover at 65,536 candidates; vector backend 1.38x–2.32x), batch-query CSV, 3D noise (GPU crossover at 64³), particle sim (no GPU crossover), N-body gravity (GPU 72–133x from 4,096 bodies), light propagation (GPU 15–17x at 32³/48³), descriptor-pool sharing (shared pool 2.24x), region-tick JMH throughput, end-to-end tick latency (<0.003 ms past one region), and adaptive scheduling (p50 2.37x).
 - Initial Forge 1.21.1 project using Forge 52.1.16 and Java 21.
 - Dedicated-server HyperCore entry point and lifecycle logging.
 - Managed background executor sized from the available logical processors.
