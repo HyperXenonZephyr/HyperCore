@@ -13,9 +13,16 @@ import dev.hypercore.world.region.RegionLock;
 import dev.hypercore.bukkit.HyperCoreEntity;
 import dev.hypercore.bukkit.HyperCoreLivingEntity;
 import dev.hypercore.world.event.BlockBreakEvent;
+import dev.hypercore.world.event.BlockDamageEvent;
 import dev.hypercore.world.event.BlockPlaceEvent;
+import dev.hypercore.world.event.EntityDamageByEntityEvent;
 import dev.hypercore.world.event.EntityDamageEvent;
+import dev.hypercore.world.event.EntityDeathEvent;
 import dev.hypercore.world.event.EntitySpawnEvent;
+import dev.hypercore.world.event.InventoryClickEvent;
+import dev.hypercore.world.event.InventoryCloseEvent;
+import dev.hypercore.world.event.InventoryDragEvent;
+import dev.hypercore.world.event.InventoryOpenEvent;
 import dev.hypercore.world.event.PlayerMoveEvent;
 
 import org.bukkit.Location;
@@ -25,6 +32,8 @@ import org.bukkit.block.Block;
 import org.bukkit.entity.EntityType;
 import org.bukkit.entity.Player;
 import org.bukkit.inventory.Inventory;
+import org.bukkit.inventory.InventoryView;
+import org.bukkit.inventory.ItemStack;
 
 import java.util.ArrayList;
 import java.util.Collection;
@@ -406,6 +415,34 @@ public final class RegionExecutionService {
     }
 
     /**
+     * Signals that an entity is beginning to damage (mine) the block at the
+     * given coordinates.
+     *
+     * <p>Fires a {@link BlockDamageEvent} before the damage takes effect. If the
+     * event is cancelled, the block is not damaged.
+     *
+     * @param player the player damaging the block, or {@code null}
+     * @return {@code true} if the damage was allowed, {@code false} if cancelled
+     */
+    public boolean damageBlock(String worldName, int x, int y, int z, Player player) {
+        WorldAccess world = requireWorld(worldName);
+        RegionKey key = regionKeyFor(worldName, x, z);
+        try {
+            return lockFor(key).write(() -> {
+                Material type = world.getBlockType(x, y, z);
+                if (type == Material.AIR) {
+                    return false;
+                }
+                BlockDamageEvent event =
+                    new BlockDamageEvent(world(worldName).getBlockAt(x, y, z), player, type);
+                return !postCancellable(event);
+            });
+        } catch (Exception error) {
+            throw new RuntimeException("Failed to damage block at " + x + "," + y + "," + z, error);
+        }
+    }
+
+    /**
      * Returns the inventory of the block entity at the given coordinates.
      */
     public Inventory getBlockInventory(String worldName, int x, int y, int z) {
@@ -416,6 +453,50 @@ public final class RegionExecutionService {
         } catch (Exception error) {
             throw new RuntimeException("Failed to read block inventory at " + x + "," + y + "," + z, error);
         }
+    }
+
+    /**
+     * Signals that an inventory view is about to be opened for a viewer.
+     *
+     * <p>Fires an {@link InventoryOpenEvent}. If the event is cancelled, the
+     * open is aborted and {@code false} is returned.
+     */
+    public boolean openInventory(InventoryView view, org.bukkit.entity.HumanEntity player) {
+        InventoryOpenEvent event = new InventoryOpenEvent(view, player);
+        return !postCancellable(event);
+    }
+
+    /**
+     * Signals that an inventory view is about to be closed for a viewer.
+     *
+     * <p>Fires an {@link InventoryCloseEvent}. If the event is cancelled, the
+     * close is aborted and {@code false} is returned.
+     */
+    public boolean closeInventory(InventoryView view, org.bukkit.entity.HumanEntity player) {
+        InventoryCloseEvent event = new InventoryCloseEvent(view, player);
+        return !postCancellable(event);
+    }
+
+    /**
+     * Signals that a viewer clicked inside an inventory view.
+     *
+     * <p>Fires an {@link InventoryClickEvent}. If the event is cancelled, the
+     * click is ignored and {@code false} is returned.
+     */
+    public boolean clickInventory(InventoryView view, int slot, ItemStack current, ItemStack cursor) {
+        InventoryClickEvent event = new InventoryClickEvent(view, slot, current, cursor);
+        return !postCancellable(event);
+    }
+
+    /**
+     * Signals that a viewer dragged items across an inventory view.
+     *
+     * <p>Fires an {@link InventoryDragEvent}. If the event is cancelled, the
+     * drag is ignored and {@code false} is returned.
+     */
+    public boolean dragInventory(InventoryView view, ItemStack oldCursor, ItemStack newCursor) {
+        InventoryDragEvent event = new InventoryDragEvent(view, oldCursor, newCursor);
+        return !postCancellable(event);
     }
 
     /**
@@ -1599,11 +1680,82 @@ public final class RegionExecutionService {
                     return;
                 }
                 world.damageEntity(entityId, event.getDamage());
+                fireDeathIfLethal(entityId, world);
                 activeRegions.add(key);
             });
         } catch (Exception error) {
             throw new RuntimeException("Failed to damage entity " + entityId, error);
         }
+    }
+
+    /**
+     * Deals damage to the entity with the given unique id, attributed to another
+     * entity as the source.
+     *
+     * <p>Fires an {@link EntityDamageByEntityEvent} before applying damage. If the
+     * event is cancelled, no damage is dealt.
+     *
+     * @param entityId  the victim's unique id
+     * @param damagerId the damager's unique id, or {@code null} for no source
+     * @param amount    the amount of damage
+     */
+    public void damageEntity(UUID entityId, UUID damagerId, double amount) {
+        String worldName = resolveEntityWorld(entityId);
+        if (worldName == null) {
+            return;
+        }
+        WorldAccess world = requireWorld(worldName);
+        Location location = getEntityLocation(entityId);
+        if (location == null) {
+            return;
+        }
+        RegionKey key = regionKeyFor(worldName, location.getBlockX(), location.getBlockZ());
+        try {
+            lockFor(key).write(() -> {
+                org.bukkit.entity.Entity victim = resolveEntity(entityId);
+                if (victim == null) {
+                    return;
+                }
+                org.bukkit.entity.Entity damager = damagerId == null
+                    ? null
+                    : resolveEntity(damagerId);
+                EntityDamageByEntityEvent event =
+                    new EntityDamageByEntityEvent(victim, damager, amount);
+                eventBus.post(event);
+                if (event.cancelled()) {
+                    return;
+                }
+                world.damageEntity(entityId, event.getDamage());
+                fireDeathIfLethal(entityId, world);
+                activeRegions.add(key);
+            });
+        } catch (Exception error) {
+            throw new RuntimeException("Failed to damage entity " + entityId, error);
+        }
+    }
+
+    /**
+     * Fires an {@link EntityDeathEvent} if the given entity's health has dropped
+     * to zero or below. Intended to be called from within a held region write
+     * lock, so it reads health directly from the world access rather than
+     * re-entering the lock.
+     */
+    private void fireDeathIfLethal(UUID entityId, WorldAccess world) {
+        double health;
+        try {
+            health = world.getEntityHealth(entityId);
+        } catch (UnsupportedOperationException unsupported) {
+            // The world access does not model entity health, so death detection is skipped.
+            return;
+        }
+        if (health > 0.0) {
+            return;
+        }
+        org.bukkit.entity.Entity entity = resolveEntity(entityId);
+        if (entity == null) {
+            return;
+        }
+        eventBus.post(new EntityDeathEvent(entity));
     }
 
     /**

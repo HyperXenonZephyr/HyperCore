@@ -8,9 +8,16 @@ import dev.hypercore.plugin.lifecycle.PluginDisabledEvent;
 import dev.hypercore.plugin.lifecycle.PluginEnabledEvent;
 import dev.hypercore.plugin.lifecycle.ServerStartedEvent;
 import dev.hypercore.world.event.BlockBreakEvent;
+import dev.hypercore.world.event.BlockDamageEvent;
 import dev.hypercore.world.event.BlockPlaceEvent;
+import dev.hypercore.world.event.EntityDamageByEntityEvent;
 import dev.hypercore.world.event.EntityDamageEvent;
+import dev.hypercore.world.event.EntityDeathEvent;
 import dev.hypercore.world.event.EntitySpawnEvent;
+import dev.hypercore.world.event.InventoryClickEvent;
+import dev.hypercore.world.event.InventoryCloseEvent;
+import dev.hypercore.world.event.InventoryDragEvent;
+import dev.hypercore.world.event.InventoryOpenEvent;
 import dev.hypercore.world.event.PlayerInteractEvent;
 import dev.hypercore.world.event.PlayerJoinEvent;
 import dev.hypercore.world.event.PlayerLoginEvent;
@@ -52,8 +59,15 @@ public final class BukkitEventBridge implements PluginManager.LifecycleCallback 
         PluginEventBus events = plugins.events();
         subscriptions.add(events.register("hypercore", BlockPlaceEvent.class, PluginEventBus.EventPriority.NORMAL, false, this::onBlockPlace));
         subscriptions.add(events.register("hypercore", BlockBreakEvent.class, PluginEventBus.EventPriority.NORMAL, false, this::onBlockBreak));
+        subscriptions.add(events.register("hypercore", BlockDamageEvent.class, PluginEventBus.EventPriority.NORMAL, false, this::onBlockDamage));
         subscriptions.add(events.register("hypercore", EntitySpawnEvent.class, PluginEventBus.EventPriority.NORMAL, false, this::onEntitySpawn));
         subscriptions.add(events.register("hypercore", EntityDamageEvent.class, PluginEventBus.EventPriority.NORMAL, false, this::onEntityDamage));
+        subscriptions.add(events.register("hypercore", EntityDamageByEntityEvent.class, PluginEventBus.EventPriority.NORMAL, false, this::onEntityDamageByEntity));
+        subscriptions.add(events.register("hypercore", EntityDeathEvent.class, PluginEventBus.EventPriority.NORMAL, false, this::onEntityDeath));
+        subscriptions.add(events.register("hypercore", InventoryOpenEvent.class, PluginEventBus.EventPriority.NORMAL, false, this::onInventoryOpen));
+        subscriptions.add(events.register("hypercore", InventoryCloseEvent.class, PluginEventBus.EventPriority.NORMAL, false, this::onInventoryClose));
+        subscriptions.add(events.register("hypercore", InventoryClickEvent.class, PluginEventBus.EventPriority.NORMAL, false, this::onInventoryClick));
+        subscriptions.add(events.register("hypercore", InventoryDragEvent.class, PluginEventBus.EventPriority.NORMAL, false, this::onInventoryDrag));
         subscriptions.add(events.register("hypercore", PlayerMoveEvent.class, PluginEventBus.EventPriority.NORMAL, false, this::onPlayerMove));
         subscriptions.add(events.register("hypercore", PlayerJoinEvent.class, PluginEventBus.EventPriority.NORMAL, false, this::onPlayerJoin));
         subscriptions.add(events.register("hypercore", PlayerQuitEvent.class, PluginEventBus.EventPriority.NORMAL, false, this::onPlayerQuit));
@@ -109,6 +123,18 @@ public final class BukkitEventBridge implements PluginManager.LifecycleCallback 
 
     private void onBlockBreak(BlockBreakEvent internal) {
         org.bukkit.event.block.BlockBreakEvent bukkit = new org.bukkit.event.block.BlockBreakEvent(
+            internal.getBlock(),
+            internal.getPlayer(),
+            internal.getType()
+        );
+        callBukkit(bukkit);
+        if (bukkit.isCancelled()) {
+            internal.cancelled(true);
+        }
+    }
+
+    private void onBlockDamage(BlockDamageEvent internal) {
+        org.bukkit.event.block.BlockDamageEvent bukkit = new org.bukkit.event.block.BlockDamageEvent(
             internal.getBlock(),
             internal.getPlayer(),
             internal.getType()
@@ -194,6 +220,71 @@ public final class BukkitEventBridge implements PluginManager.LifecycleCallback 
             internal.cancelled(true);
         } else {
             // Future: propagate setDamage back to the internal event when needed.
+        }
+    }
+
+    private void onEntityDamageByEntity(EntityDamageByEntityEvent internal) {
+        org.bukkit.event.entity.EntityDamageByEntityEvent bukkit =
+            new org.bukkit.event.entity.EntityDamageByEntityEvent(
+                internal.getEntity(),
+                internal.getDamager(),
+                internal.getDamage()
+            );
+        callBukkit(bukkit);
+        if (bukkit.isCancelled()) {
+            internal.cancelled(true);
+        }
+    }
+
+    private void onEntityDeath(EntityDeathEvent internal) {
+        // Death events are informational and not cancellable.
+        org.bukkit.event.entity.EntityDeathEvent bukkit =
+            new org.bukkit.event.entity.EntityDeathEvent(internal.getEntity(), null);
+        callBukkit(bukkit);
+    }
+
+    private void onInventoryOpen(InventoryOpenEvent internal) {
+        org.bukkit.event.inventory.InventoryOpenEvent bukkit =
+            new org.bukkit.event.inventory.InventoryOpenEvent(internal.getView(), internal.getPlayer());
+        callBukkit(bukkit);
+        if (bukkit.isCancelled()) {
+            internal.cancelled(true);
+        }
+    }
+
+    private void onInventoryClose(InventoryCloseEvent internal) {
+        org.bukkit.event.inventory.InventoryCloseEvent bukkit =
+            new org.bukkit.event.inventory.InventoryCloseEvent(internal.getView(), internal.getPlayer());
+        callBukkit(bukkit);
+        if (bukkit.isCancelled()) {
+            internal.cancelled(true);
+        }
+    }
+
+    private void onInventoryClick(InventoryClickEvent internal) {
+        org.bukkit.event.inventory.InventoryClickEvent bukkit =
+            new org.bukkit.event.inventory.InventoryClickEvent(
+                internal.getView(),
+                internal.getSlot(),
+                internal.getCurrent(),
+                internal.getCursor()
+            );
+        callBukkit(bukkit);
+        if (bukkit.isCancelled()) {
+            internal.cancelled(true);
+        }
+    }
+
+    private void onInventoryDrag(InventoryDragEvent internal) {
+        org.bukkit.event.inventory.InventoryDragEvent bukkit =
+            new org.bukkit.event.inventory.InventoryDragEvent(
+                internal.getView(),
+                internal.getOldCursor(),
+                internal.getNewCursor()
+            );
+        callBukkit(bukkit);
+        if (bukkit.isCancelled()) {
+            internal.cancelled(true);
         }
     }
 

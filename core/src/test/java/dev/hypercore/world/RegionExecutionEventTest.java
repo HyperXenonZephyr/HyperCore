@@ -5,12 +5,21 @@ import dev.hypercore.plugin.PluginEventBus;
 import dev.hypercore.region.RegionKey;
 import dev.hypercore.region.RegionTaskCoordinator;
 import dev.hypercore.world.event.BlockBreakEvent;
+import dev.hypercore.world.event.BlockDamageEvent;
 import dev.hypercore.world.event.BlockPlaceEvent;
+import dev.hypercore.world.event.EntityDamageByEntityEvent;
+import dev.hypercore.world.event.EntityDeathEvent;
 import dev.hypercore.world.event.EntitySpawnEvent;
+import dev.hypercore.world.event.InventoryClickEvent;
+import dev.hypercore.world.event.InventoryCloseEvent;
+import dev.hypercore.world.event.InventoryDragEvent;
+import dev.hypercore.world.event.InventoryOpenEvent;
 
 import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.entity.EntityType;
+import org.bukkit.inventory.InventoryView;
+import org.bukkit.inventory.ItemStack;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -151,6 +160,115 @@ class RegionExecutionEventTest {
         assertEquals(123456789L, service.getFullTime("world"));
     }
 
+    @Test
+    void blockDamageEventFiresAndCanBeCancelled() {
+        service.setBlockType("world", 0, 0, 0, Material.STONE);
+        AtomicReference<BlockDamageEvent> captured = new AtomicReference<>();
+        events.register("test", BlockDamageEvent.class, PluginEventBus.EventPriority.NORMAL, false, captured::set);
+
+        assertTrue(service.damageBlock("world", 0, 0, 0, null));
+        BlockDamageEvent event = captured.get();
+        assertNotNull(event);
+        assertEquals(Material.STONE, event.getType());
+
+        events.register("test", BlockDamageEvent.class, PluginEventBus.EventPriority.HIGHEST, false, e -> e.cancelled(true));
+        assertTrue(!service.damageBlock("world", 0, 0, 0, null));
+    }
+
+    @Test
+    void damagingAirBlockDoesNotFireBlockDamageEvent() {
+        AtomicReference<BlockDamageEvent> captured = new AtomicReference<>();
+        events.register("test", BlockDamageEvent.class, PluginEventBus.EventPriority.NORMAL, false, captured::set);
+
+        assertTrue(!service.damageBlock("world", 0, 0, 0, null));
+        assertNull(captured.get());
+    }
+
+    @Test
+    void damageByEntityFiresEntityDamageByEntityEvent() {
+        Location location = new Location(service.world("world"), 5.0, 64.0, 5.0);
+        UUID victim = service.spawnEntity("world", EntityType.ZOMBIE, location);
+        UUID damager = service.spawnEntity("world", EntityType.ZOMBIE, location);
+        AtomicReference<EntityDamageByEntityEvent> captured = new AtomicReference<>();
+        events.register("test", EntityDamageByEntityEvent.class, PluginEventBus.EventPriority.NORMAL, false, captured::set);
+
+        service.damageEntity(victim, damager, 5.0);
+
+        EntityDamageByEntityEvent event = captured.get();
+        assertNotNull(event);
+        assertNotNull(event.getDamager());
+        assertEquals(5.0, event.getDamage());
+    }
+
+    @Test
+    void lethalDamageFiresEntityDeathEvent() {
+        Location location = new Location(service.world("world"), 5.0, 64.0, 5.0);
+        UUID victim = service.spawnEntity("world", EntityType.ZOMBIE, location);
+        AtomicReference<EntityDeathEvent> captured = new AtomicReference<>();
+        events.register("test", EntityDeathEvent.class, PluginEventBus.EventPriority.NORMAL, false, captured::set);
+
+        // Default health is 20.0; deal lethal damage.
+        service.damageEntity(victim, 20.0);
+
+        assertNotNull(captured.get());
+    }
+
+    @Test
+    void nonLethalDamageDoesNotFireEntityDeathEvent() {
+        Location location = new Location(service.world("world"), 5.0, 64.0, 5.0);
+        UUID victim = service.spawnEntity("world", EntityType.ZOMBIE, location);
+        AtomicReference<EntityDeathEvent> captured = new AtomicReference<>();
+        events.register("test", EntityDeathEvent.class, PluginEventBus.EventPriority.NORMAL, false, captured::set);
+
+        service.damageEntity(victim, 5.0);
+
+        assertNull(captured.get());
+    }
+
+    @Test
+    void inventoryEventsFireAndCanBeCancelled() {
+        InventoryView view = new InventoryView() {
+            @Override
+            public org.bukkit.inventory.Inventory getTopInventory() {
+                return null;
+            }
+
+            @Override
+            public org.bukkit.inventory.Inventory getBottomInventory() {
+                return null;
+            }
+
+            @Override
+            public org.bukkit.entity.HumanEntity getPlayer() {
+                return null;
+            }
+        };
+
+        AtomicReference<InventoryOpenEvent> open = new AtomicReference<>();
+        events.register("test", InventoryOpenEvent.class, PluginEventBus.EventPriority.NORMAL, false, open::set);
+        assertTrue(service.openInventory(view, null));
+        assertNotNull(open.get());
+
+        AtomicReference<InventoryCloseEvent> close = new AtomicReference<>();
+        events.register("test", InventoryCloseEvent.class, PluginEventBus.EventPriority.NORMAL, false, close::set);
+        assertTrue(service.closeInventory(view, null));
+        assertNotNull(close.get());
+
+        AtomicReference<InventoryClickEvent> click = new AtomicReference<>();
+        events.register("test", InventoryClickEvent.class, PluginEventBus.EventPriority.NORMAL, false, click::set);
+        assertTrue(service.clickInventory(view, 3, null, null));
+        assertNotNull(click.get());
+        assertEquals(3, click.get().getSlot());
+
+        AtomicReference<InventoryDragEvent> drag = new AtomicReference<>();
+        events.register("test", InventoryDragEvent.class, PluginEventBus.EventPriority.NORMAL, false, drag::set);
+        assertTrue(service.dragInventory(view, null, null));
+        assertNotNull(drag.get());
+
+        events.register("test", InventoryOpenEvent.class, PluginEventBus.EventPriority.HIGHEST, false, e -> e.cancelled(true));
+        assertTrue(!service.openInventory(view, null));
+    }
+
     private static final class MemoryWorldAccessFactory implements WorldAccessFactory {
         private final MemoryWorldAccess world = new MemoryWorldAccess("world");
 
@@ -169,6 +287,7 @@ class RegionExecutionEventTest {
         private final String worldName;
         private final ConcurrentHashMap<Long, Material> blocks = new ConcurrentHashMap<>();
         private final ConcurrentHashMap<UUID, Position> entities = new ConcurrentHashMap<>();
+        private final ConcurrentHashMap<UUID, Double> health = new ConcurrentHashMap<>();
         private long time;
         private long fullTime;
 
@@ -241,6 +360,28 @@ class RegionExecutionEventTest {
         @Override
         public Collection<UUID> entityIds() {
             return List.copyOf(entities.keySet());
+        }
+
+        @Override
+        public org.bukkit.entity.EntityType getEntityType(UUID entityId) {
+            return entities.containsKey(entityId) ? EntityType.ZOMBIE : null;
+        }
+
+        @Override
+        public double getEntityHealth(UUID entityId) {
+            return health.getOrDefault(entityId, Double.NaN);
+        }
+
+        @Override
+        public boolean setEntityHealth(UUID entityId, double value) {
+            health.put(entityId, value);
+            return true;
+        }
+
+        @Override
+        public void damageEntity(UUID entityId, double amount) {
+            health.compute(entityId, (id, current) ->
+                (current == null || current.isNaN() ? 20.0 : current) - amount);
         }
 
         private static long key(int x, int y, int z) {
