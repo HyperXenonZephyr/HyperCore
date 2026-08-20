@@ -1,0 +1,8 @@
+.gradle/
+build/
+build-data/
+hypercore-server/.gradle/
+hypercore-server/build/
+hypercore-server/build-data/
+hypercore-server/src/minecraft/
+paper-server/src/
