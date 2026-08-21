@@ -1,0 +1,42 @@
+--- /dev/null
++++ b/dev/hypercore/server/region/RegionKey.java
+@@ -1,0 +_,39 @@
++package dev.hypercore.server.region;
++
++import java.util.Objects;
++
++/**
++ * A stable, dimension-scoped key for a fixed-size group of chunks.
++ *
++ * <p>The mapping uses floor division so negative chunk coordinates remain
++ * contiguous with their positive-coordinate counterparts at region edges.
++ */
++public record RegionKey(String dimensionId, int regionX, int regionZ) implements Comparable<RegionKey> {
++    public RegionKey {
++        dimensionId = Objects.requireNonNull(dimensionId, "dimensionId").trim();
++        if (dimensionId.isEmpty()) {
++            throw new IllegalArgumentException("dimensionId cannot be blank");
++        }
++    }
++
++    public static RegionKey fromChunk(final String dimensionId, final int chunkX, final int chunkZ) {
++        return fromChunk(dimensionId, chunkX, chunkZ, RegionMailboxScheduler.REGION_SIZE_CHUNKS);
++    }
++
++    public static RegionKey fromChunk(final String dimensionId, final int chunkX, final int chunkZ, final int regionSizeChunks) {
++        if (regionSizeChunks < 1) {
++            throw new IllegalArgumentException("regionSizeChunks must be positive");
++        }
++        return new RegionKey(dimensionId, Math.floorDiv(chunkX, regionSizeChunks), Math.floorDiv(chunkZ, regionSizeChunks));
++    }
++
++    @Override
++    public int compareTo(final RegionKey other) {
++        int dimensionOrder = this.dimensionId.compareTo(other.dimensionId);
++        if (dimensionOrder != 0) {
++            return dimensionOrder;
++        }
++        int xOrder = Integer.compare(this.regionX, other.regionX);
++        return xOrder != 0 ? xOrder : Integer.compare(this.regionZ, other.regionZ);
++    }
++}

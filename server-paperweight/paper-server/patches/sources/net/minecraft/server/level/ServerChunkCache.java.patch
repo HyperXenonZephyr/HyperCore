@@ -1,0 +1,20 @@
+--- a/net/minecraft/server/level/ServerChunkCache.java
++++ b/net/minecraft/server/level/ServerChunkCache.java
+@@ -445,6 +_,17 @@
+         return this.mainThreadProcessor.getPendingTasksCount();
+     }
+ 
++    /**
++     * Returns an immutable snapshot of chunks currently loaded to FULL status.
++     * This method must be called from the level's server thread.
++     */
++    public List<ChunkPos> snapshotFullChunkPositions() {
++        if (Thread.currentThread() != this.mainThread) {
++            throw new IllegalStateException("Full chunk snapshots must be captured on the server thread");
++        }
++        return this.chunkMap.allChunksWithAtLeastStatus(ChunkStatus.FULL).map(ChunkHolder::getPos).toList();
++    }
++
+     public ChunkGenerator getGenerator() {
+         return this.chunkMap.generator();
+     }

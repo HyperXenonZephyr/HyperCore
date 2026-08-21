@@ -20,20 +20,25 @@ The source setup and patch lifecycle are operational:
   `ROOT`, `Vanilla`, `Mache`, `ATs`, `Imports`, and patch-base tags. These are
   paperweight patch baselines, not forks or clones of Paper. Their `upstream`
   remotes point only at local Mache cache directories.
-- `applyPatches` and `rebuildPatches` complete with the empty baseline patch
-  set.
+- `applyPatches` and `rebuildPatches` apply the HyperCore source patch set
+  from the official-server baseline.
 - The server resolves `paperweight-core 2.0.0-beta.21-hypercore.1` from Maven
   Local, which contains the Windows local-path Git remote fix.
 - The compile classpath includes all libraries extracted from Mojang's server
   bundler plus Mache's annotation-only compile dependencies.
 
-`createBundlerJar` completed successfully. Generated artifacts are:
+The Phase 2 source patches add a bounded region mailbox scheduler with
+immutable snapshots, deterministic owner lanes, and lifecycle-safe shutdown.
+They do not move vanilla level ticks or world mutation off the server thread.
+
+Run `createBundlerJar` to generate these artifacts:
 
 - `hypercore-server/build/libs/hypercore-server-0.1.0-SNAPSHOT.jar`
 - `hypercore-server/build/libs/hypercore-server-bundler-0.1.0-SNAPSHOT.jar`
 
-The bundler manifest points to `net.minecraft.server.Main`. A real server start,
-EULA acceptance, world load, and tick smoke test have not yet been performed.
+The bundler bootstraps through Paperclip and stores
+`net.minecraft.server.Main` in `META-INF/main-class`. A real server start, EULA
+acceptance, world load, and tick smoke test have not yet been performed.
 
 ## Local Paperweight Publication
 

@@ -1,0 +1,25 @@
+--- /dev/null
++++ b/dev/hypercore/server/region/RegionSnapshot.java
+@@ -1,0 +_,22 @@
++package dev.hypercore.server.region;
++
++import java.util.Objects;
++
++/**
++ * Immutable server-thread capture supplied to a region worker.
++ *
++ * <p>It deliberately contains no Minecraft world, entity, chunk, or mutable
++ * game-state reference. Worker work in this phase must be a pure computation
++ * over this value or over other immutable input captured by the server thread.
++ */
++public record RegionSnapshot(RegionKey key, int loadedFullChunkCount, long serverTick) {
++    public RegionSnapshot {
++        key = Objects.requireNonNull(key, "key");
++        if (loadedFullChunkCount < 0) {
++            throw new IllegalArgumentException("loadedFullChunkCount cannot be negative");
++        }
++        if (serverTick < 0L) {
++            throw new IllegalArgumentException("serverTick cannot be negative");
++        }
++    }
++}

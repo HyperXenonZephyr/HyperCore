@@ -1,0 +1,112 @@
+--- /dev/null
++++ b/dev/hypercore/server/region/ServerRegionScheduler.java
+@@ -1,0 +_,109 @@
++package dev.hypercore.server.region;
++
++import java.util.ArrayList;
++import java.util.List;
++import java.util.Map;
++import java.util.Objects;
++import java.util.Optional;
++import java.util.TreeMap;
++import java.util.concurrent.CompletableFuture;
++import java.util.concurrent.atomic.AtomicLong;
++import net.minecraft.server.level.ServerLevel;
++import net.minecraft.world.level.ChunkPos;
++
++/**
++ * Server-thread adapter for the region mailbox scheduler.
++ *
++ * <p>It snapshots loaded full-chunk membership only after vanilla level ticks
++ * have completed. The worker callback records immutable scheduling metrics; it
++ * never receives a {@link ServerLevel} and cannot perform a world mutation.
++ */
++public final class ServerRegionScheduler implements AutoCloseable {
++    private final Thread serverThread;
++    private final AtomicLong observedRegionPasses = new AtomicLong();
++    private volatile List<RegionSnapshot> latestSnapshots = List.of();
++    private volatile RegionMailboxScheduler scheduler;
++    private volatile RegionMailboxScheduler.TickResult latestResult;
++
++    public ServerRegionScheduler(final Thread serverThread) {
++        this.serverThread = Objects.requireNonNull(serverThread, "serverThread");
++    }
++
++    public void start() {
++        this.requireServerThread();
++        if (this.scheduler == null) {
++            this.scheduler = RegionMailboxScheduler.createDefault(this.serverThread);
++        }
++    }
++
++    /**
++     * Captures full-chunk membership after the vanilla level loop and dispatches
++     * a pure region pass. A still-running worker plan causes this observation to
++     * be skipped rather than blocking the server thread.
++     */
++    public void afterLevelTicks(final long serverTick, final Iterable<ServerLevel> levels) {
++        this.requireServerThread();
++        RegionMailboxScheduler current = this.scheduler;
++        if (current == null) {
++            return;
++        }
++
++        Map<RegionKey, Integer> chunkCounts = new TreeMap<>();
++        for (ServerLevel level : levels) {
++            String dimensionId = level.dimension().identifier().toString();
++            for (ChunkPos chunk : level.getChunkSource().snapshotFullChunkPositions()) {
++                RegionKey key = RegionKey.fromChunk(dimensionId, chunk.x(), chunk.z());
++                chunkCounts.merge(key, 1, Integer::sum);
++            }
++        }
++
++        List<RegionSnapshot> snapshots = new ArrayList<>(chunkCounts.size());
++        for (Map.Entry<RegionKey, Integer> entry : chunkCounts.entrySet()) {
++            snapshots.add(new RegionSnapshot(entry.getKey(), entry.getValue(), serverTick));
++        }
++        this.latestSnapshots = List.copyOf(snapshots);
++        Optional<CompletableFuture<RegionMailboxScheduler.TickResult>> result = current.beginTick(
++            serverTick, this.latestSnapshots, this::recordObservation
++        );
++        result.ifPresent(future -> future.whenComplete((completed, error) -> {
++            if (error == null) {
++                this.latestResult = completed;
++            }
++        }));
++    }
++
++    public List<RegionSnapshot> latestSnapshots() {
++        return this.latestSnapshots;
++    }
++
++    public long observedRegionPasses() {
++        return this.observedRegionPasses.get();
++    }
++
++    public RegionMailboxScheduler.Status status() {
++        RegionMailboxScheduler current = this.scheduler;
++        return current == null ? new RegionMailboxScheduler.Status(0, 0, false, false, 0L, 0L, 0L, 0L, 0L) : current.status();
++    }
++
++    public RegionMailboxScheduler.TickResult latestResult() {
++        return this.latestResult;
++    }
++
++    @Override
++    public void close() {
++        RegionMailboxScheduler current = this.scheduler;
++        if (current != null) {
++            current.close();
++        }
++    }
++
++    private void recordObservation(final RegionSnapshot snapshot) {
++        this.observedRegionPasses.incrementAndGet();
++    }
++
++    private void requireServerThread() {
++        if (Thread.currentThread() != this.serverThread) {
++            throw new IllegalStateException("Server region snapshots must be captured on the server thread");
++        }
++    }
++}

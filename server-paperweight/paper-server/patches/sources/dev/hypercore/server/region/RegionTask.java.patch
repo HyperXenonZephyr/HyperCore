@@ -1,0 +1,15 @@
+--- /dev/null
++++ b/dev/hypercore/server/region/RegionTask.java
+@@ -1,0 +_,12 @@
++package dev.hypercore.server.region;
++
++/**
++ * Work that may run on a region owner lane.
++ *
++ * <p>The only server-derived argument is an immutable snapshot. Implementations
++ * must not retain or mutate Minecraft objects from a worker thread.
++ */
++@FunctionalInterface
++public interface RegionTask {
++    void run(RegionSnapshot snapshot);
++}

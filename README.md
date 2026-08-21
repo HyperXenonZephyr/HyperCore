@@ -5,29 +5,39 @@
 <h1 align="center">HyperCore</h1>
 
 <p align="center">
-  <a href="https://www.java.com/"><img src="https://img.shields.io/badge/Java-21-ED8B00?logo=java&logoColor=white" alt="Java 21"></a>
-  <a href="https://gradle.org/"><img src="https://img.shields.io/badge/Gradle-8.x-02303A?logo=gradle&logoColor=white" alt="Gradle"></a>
-  <a href="https://minecraftforge.net/"><img src="https://img.shields.io/badge/Minecraft%20Forge-1.21.1-orange" alt="Minecraft Forge 1.21.1"></a>
-  <a href="https://fabricmc.net/"><img src="https://img.shields.io/badge/Fabric-1.21.1-DBD0A4" alt="Fabric 1.21.1"></a>
+  <a href="https://www.java.com/"><img src="https://img.shields.io/badge/Java-25-ED8B00?logo=java&logoColor=white" alt="Java 25 for the independent server core"></a>
+  <a href="https://gradle.org/"><img src="https://img.shields.io/badge/Gradle-9.3-02303A?logo=gradle&logoColor=white" alt="Gradle 9.3"></a>
+  <a href="https://www.minecraft.net/"><img src="https://img.shields.io/badge/Minecraft-26.1-62B47A" alt="Minecraft 26.1"></a>
+  <a href="https://docs.papermc.io/paper/dev/project-setup/"><img src="https://img.shields.io/badge/paperweight-toolchain-5C9BD1" alt="paperweight toolchain"></a>
+  <a href="https://minecraftforge.net/"><img src="https://img.shields.io/badge/Forge%20adapter-1.21.1-orange" alt="legacy Forge adapter 1.21.1"></a>
+  <a href="https://fabricmc.net/"><img src="https://img.shields.io/badge/Fabric%20adapter-1.21.1-DBD0A4" alt="legacy Fabric adapter 1.21.1"></a>
   <a href="https://www.vulkan.org/"><img src="https://img.shields.io/badge/Vulkan-Compute-AC162C?logo=vulkan&logoColor=white" alt="Vulkan Compute"></a>
   <a href="https://www.lwjgl.org/"><img src="https://img.shields.io/badge/LWJGL-3.x-9B6BFF?logo=lwjgl&logoColor=white" alt="LWJGL 3"></a>
   <a href="https://junit.org/junit5/"><img src="https://img.shields.io/badge/JUnit-5-25A162?logo=junit5&logoColor=white" alt="JUnit 5"></a>
   <a href="./LICENSE"><img src="https://img.shields.io/badge/License-Apache%202.0-blue" alt="Apache License 2.0"></a>
 </p>
 
-HyperCore is an experimental high-performance Minecraft Java server project targeting multi-loader mod execution. Its long-term goals are simultaneous Forge mod and Fabric mod execution alongside Bukkit/Paper plugin interoperability, safe multi-core execution, optional GPU compute acceleration, and measurable server-side optimization.
+HyperCore is an experimental independent Minecraft server core. Its primary target is Mojang's official Minecraft `26.1` server bundle, transformed through a reproducible paperweight patch pipeline into `hypercore-server-bundler-0.1.0-SNAPSHOT.jar`; it is not a fork of Paper. The existing Forge/Fabric modules remain compatibility research adapters while their reusable scheduling, plugin, and compute ideas are migrated into the standalone core.
 
 > [!IMPORTANT]
-> HyperCore is in active development. It is not yet a drop-in Bukkit/Paper production server, but its Bukkit/Paper adapter is now validated in dedicated-server GameTests under both Forge and Fabric. Minecraft world simulation remains on the CPU; GPU acceleration is limited to spatial query backends.
+> HyperCore is in active development. The independent core can now be built from the official server bundle, but it has not yet passed an EULA/world-load/tick startup smoke test and is not a drop-in Bukkit/Paper production server. Minecraft world simulation remains on the CPU; GPU acceleration is limited to spatial query backends.
 >
-> The runtime is split into a loader-agnostic `:core` consumed by separate `:forge` and `:fabric` adapter subprojects, both of which build self-contained server-side mod JARs. HyperCore loads under either loader. Simultaneous Forge and Fabric mod execution is implemented through an **orchestrated dual-server deployment**: a `:core`-based Orchestrator launches one Forge host and one Fabric host as child processes and keeps their worlds consistent through a cross-process world-state bridge, so both loaders run unmodified in their native environments. Single-process Forge+Fabric coexistence is not pursued — the two loaders' transform pipelines are mutually exclusive. Forge mod support is unrestricted; Fabric mod support is scoped to performance and logic mods that add no content and have been verified non-conflicting.
+> The independent core owns the production direction. `:core`, `:forge`, and `:fabric` are retained during migration as compatibility research modules; they do not define the standalone server runtime. The prior orchestrated Forge/Fabric dual-server deployment remains an experimental compatibility path, not the architecture of `hypercore-server`.
 
 > [!NOTE]
 > Portions of the adapter and bridge code have been AI-assisted during development to handle the large volume of repetitive cross-loader implementations. Core architecture, correctness-critical paths, concurrency primitives, and design decisions remain hand-written and human-reviewed.
 
 ## Current status
 
-The project is a multi-loader Gradle build: a loader-agnostic `:core` runtime consumed by `:forge` and `:fabric` adapter subprojects, both producing self-contained server-side mod JARs. The established foundation:
+The independent server-core toolchain is established:
+
+- `server-paperweight` targets Mojang's official Minecraft `26.1` server bundle with JDK 25 preview APIs and outputs `hypercore-server-bundler-0.1.0-SNAPSHOT.jar`.
+- Mache source setup, empty-patch application, patch rebuilding, compilation, reobfuscation, and bundler creation run offline after dependencies are cached.
+- The generated Java and resource Git worktrees are local paperweight patch baselines sourced from Mache caches. They contain no Paper server source and no Paper remote.
+- The patched paperweight build tool is published only to Maven Local for Windows local-path handling; it is neither a HyperCore component nor a Paper server fork.
+- The first Phase 2 target is a safe region-scheduler bridge: deterministic region mapping and lifecycle ownership are added before any concurrent vanilla world mutation is enabled.
+
+The retained compatibility research foundation includes:
 
 - Minecraft 1.21.1 and Java 21 are pinned; Forge 52.1.16 and Fabric Loader 0.16.9 (Fabric API 0.115.1+1.21.1) are the current adapter targets.
 - HyperCore loads as a server-side component under Forge or under Fabric, each as a separate build (see the note above on simultaneous execution).
@@ -46,6 +56,26 @@ The project is a multi-loader Gradle build: a loader-agnostic `:core` runtime co
 - An **orchestrated dual-server deployment** enables simultaneous Forge and Fabric mod execution. Single-process coexistence is not pursued because the two loaders' transform pipelines are mutually exclusive. The `:core`-based Orchestrator (`OrchestratorMain`) launches a Forge host and a Fabric host as child JVMs, injects each host's role/IPC port/vector module flag automatically, and monitors their health. A versioned length-prefixed IPC bridge (handshake, heartbeats, acknowledgements) connects the hosts to the orchestrator, which owns a single logical world timeline: host world mutations are captured by `RegionExecutionService`, shipped as binary deltas, conflict-resolved (Forge-priority for equal block targets, spawn ownership for entities, connected-host authority for players), and broadcast to both hosts for mirror application on the server thread. Commands are mirrored across hosts under a prefix (`xforge_*` / `xfabric_*`), block-event cancellations propagate both ways, and player ownership is tracked. `/hypercore bridge status` and `/hypercore bridge peers` report connectivity, latency, delta counts, and mirrored commands. `:core:assembleDistribution` produces `distributions/hypercore-<version>/` with the orchestrator JAR, both host templates, and launch scripts. Forge mod support is unrestricted; Fabric mod support is scoped to performance-measurement and logic-adjustment mods that add no content (items, blocks, entities) and have been verified non-conflicting — content-adding Fabric mods are out of scope.
 
 ## Build
+
+### Independent server core
+
+The standalone core is built in its own Gradle project:
+
+```powershell
+cd server-paperweight
+./gradlew.bat :hypercore-server:setupMacheSources `
+  :hypercore-server:applyPatches `
+  :hypercore-server:rebuildPatches `
+  :hypercore-server:createBundlerJar `
+  --offline
+```
+
+The resulting launcher bundle is
+`server-paperweight/hypercore-server/build/libs/hypercore-server-bundler-0.1.0-SNAPSHOT.jar`.
+See [server-paperweight/README.md](server-paperweight/README.md) for the exact
+toolchain boundaries and local paperweight publication details.
+
+### Compatibility research modules
 
 HyperCore is a multi-loader Gradle build with three subprojects:
 

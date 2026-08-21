@@ -28,6 +28,7 @@ subprojects {
     }
     tasks.withType<Test> {
         jvmArgs("--enable-preview")
+        useJUnitPlatform()
         testLogging {
             showStackTraces = true
             exceptionFormat = TestExceptionFormat.FULL

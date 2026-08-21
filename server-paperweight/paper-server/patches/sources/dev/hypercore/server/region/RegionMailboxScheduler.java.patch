@@ -1,0 +1,324 @@
+--- /dev/null
++++ b/dev/hypercore/server/region/RegionMailboxScheduler.java
+@@ -1,0 +_,321 @@
++package dev.hypercore.server.region;
++
++import java.util.ArrayList;
++import java.util.Collection;
++import java.util.Comparator;
++import java.util.HashMap;
++import java.util.List;
++import java.util.Map;
++import java.util.Objects;
++import java.util.Optional;
++import java.util.TreeMap;
++import java.util.concurrent.ArrayBlockingQueue;
++import java.util.concurrent.CompletableFuture;
++import java.util.concurrent.ThreadFactory;
++import java.util.concurrent.ThreadPoolExecutor;
++import java.util.concurrent.TimeUnit;
++import java.util.concurrent.atomic.AtomicInteger;
++
++/**
++ * Bounded owner-lane scheduler for immutable region work.
++ *
++ * <p>All submission and tick-plan creation happens on the owning server thread.
++ * Work is grouped by a deterministic owner, serialized within each owner lane,
++ * and may run concurrently with other owners. Messages queued while a plan is
++ * in flight remain in the mailbox for the next completed server tick.
++ *
++ * <p>This scheduler is intentionally not a permission to mutate vanilla world
++ * state from a worker. Its tasks receive {@link RegionSnapshot}, never an NMS
++ * world reference. The server-thread apply boundary will be added separately.
++ */
++public final class RegionMailboxScheduler implements AutoCloseable {
++    public static final int REGION_SIZE_CHUNKS = 8;
++
++    private final Thread serverThread;
++    private final int ownerCount;
++    private final ThreadPoolExecutor workers;
++    private final Map<RegionKey, RegionLock> locks = new HashMap<>();
++    private final Map<RegionKey, Integer> owners = new HashMap<>();
++    private final Map<RegionKey, List<RegionMessage>> pendingMessages = new HashMap<>();
++
++    private boolean closed;
++    private boolean tickInFlight;
++    private long nextMessageSequence;
++    private long submittedMessages;
++    private long executedMessages;
++    private long failedRegions;
++    private long requeuedMessages;
++    private long completedTicks;
++
++    public RegionMailboxScheduler(final Thread serverThread, final int ownerCount, final int queueCapacity) {
++        this.serverThread = Objects.requireNonNull(serverThread, "serverThread");
++        if (ownerCount < 1) {
++            throw new IllegalArgumentException("ownerCount must be positive");
++        }
++        if (queueCapacity < 1) {
++            throw new IllegalArgumentException("queueCapacity must be positive");
++        }
++        this.ownerCount = ownerCount;
++        this.workers = new ThreadPoolExecutor(
++            ownerCount,
++            ownerCount,
++            0L,
++            TimeUnit.MILLISECONDS,
++            new ArrayBlockingQueue<>(queueCapacity),
++            new RegionWorkerThreadFactory(),
++            new ThreadPoolExecutor.AbortPolicy()
++        );
++    }
++
++    public static RegionMailboxScheduler createDefault(final Thread serverThread) {
++        int owners = Math.max(1, Runtime.getRuntime().availableProcessors() - 1);
++        return new RegionMailboxScheduler(serverThread, owners, Math.max(256, owners * 64));
++    }
++
++    public synchronized int ownerFor(final RegionKey region) {
++        Objects.requireNonNull(region, "region");
++        return this.owners.computeIfAbsent(region, this::staticOwnerFor);
++    }
++
++    public synchronized RegionLock lockFor(final RegionKey region) {
++        Objects.requireNonNull(region, "region");
++        return this.locks.computeIfAbsent(region, ignored -> new RegionLock());
++    }
++
++    /**
++     * Enqueues immutable work for the target region's next available tick plan.
++     */
++    public synchronized void enqueue(final RegionKey target, final RegionTask task) {
++        this.requireServerThread();
++        this.requireOpen();
++        Objects.requireNonNull(target, "target");
++        Objects.requireNonNull(task, "task");
++        this.pendingMessages.computeIfAbsent(target, ignored -> new ArrayList<>())
++            .add(new RegionMessage(this.nextMessageSequence++, target, task));
++        this.submittedMessages++;
++    }
++
++    /**
++     * Builds one tick plan from immutable snapshots and dispatches it to owner
++     * lanes. An empty result means the previous plan is still running.
++     */
++    public synchronized Optional<CompletableFuture<TickResult>> beginTick(
++        final long serverTick,
++        final Collection<RegionSnapshot> snapshots,
++        final RegionTask perRegionTask
++    ) {
++        this.requireServerThread();
++        this.requireOpen();
++        Objects.requireNonNull(snapshots, "snapshots");
++        Objects.requireNonNull(perRegionTask, "perRegionTask");
++        if (serverTick < 0L) {
++            throw new IllegalArgumentException("serverTick cannot be negative");
++        }
++        if (this.tickInFlight) {
++            return Optional.empty();
++        }
++
++        Map<RegionKey, RegionSnapshot> regions = new TreeMap<>();
++        for (RegionSnapshot snapshot : snapshots) {
++            Objects.requireNonNull(snapshot, "snapshots cannot contain null");
++            if (snapshot.serverTick() != serverTick) {
++                throw new IllegalArgumentException("snapshot serverTick does not match the tick plan");
++            }
++            RegionSnapshot previous = regions.putIfAbsent(snapshot.key(), snapshot);
++            if (previous != null) {
++                throw new IllegalArgumentException("duplicate snapshot for " + snapshot.key());
++            }
++        }
++
++        List<RegionMessage> messages = this.pendingMessages.values().stream()
++            .flatMap(List::stream)
++            .sorted()
++            .toList();
++        this.pendingMessages.clear();
++        for (RegionMessage message : messages) {
++            regions.putIfAbsent(message.target(), new RegionSnapshot(message.target(), 0, serverTick));
++        }
++
++        TickPlan plan = new TickPlan(serverTick, messages.size(), regions);
++        this.tickInFlight = true;
++        if (regions.isEmpty()) {
++            return Optional.of(CompletableFuture.completedFuture(this.finish(plan, List.of())));
++        }
++
++        Map<Integer, List<RegionWork>> workByOwner = new TreeMap<>();
++        Map<RegionKey, List<RegionMessage>> messagesByRegion = new HashMap<>();
++        for (RegionMessage message : messages) {
++            messagesByRegion.computeIfAbsent(message.target(), ignored -> new ArrayList<>()).add(message);
++        }
++        for (Map.Entry<RegionKey, RegionSnapshot> entry : regions.entrySet()) {
++            List<RegionMessage> regionMessages = List.copyOf(messagesByRegion.getOrDefault(entry.getKey(), List.of()));
++            workByOwner.computeIfAbsent(this.ownerFor(entry.getKey()), ignored -> new ArrayList<>())
++                .add(new RegionWork(entry.getValue(), regionMessages));
++        }
++
++        List<CompletableFuture<OwnerResult>> ownerFutures = new ArrayList<>();
++        for (Map.Entry<Integer, List<RegionWork>> entry : workByOwner.entrySet()) {
++            List<RegionWork> ownerWork = List.copyOf(entry.getValue());
++            try {
++                ownerFutures.add(CompletableFuture.supplyAsync(
++                    () -> this.executeOwner(entry.getKey(), ownerWork, perRegionTask), this.workers
++                ).exceptionally(error -> this.requeue(ownerWork)));
++            } catch (RuntimeException error) {
++                ownerFutures.add(CompletableFuture.completedFuture(this.requeue(ownerWork)));
++            }
++        }
++
++        CompletableFuture<TickResult> result = CompletableFuture.allOf(ownerFutures.toArray(CompletableFuture[]::new))
++            .thenApply(ignored -> this.finish(plan, ownerFutures.stream().map(CompletableFuture::join).toList()));
++        return Optional.of(result);
++    }
++
++    public synchronized Status status() {
++        return new Status(
++            this.ownerCount,
++            this.pendingMessages.values().stream().mapToInt(List::size).sum(),
++            this.tickInFlight,
++            this.closed,
++            this.submittedMessages,
++            this.executedMessages,
++            this.failedRegions,
++            this.requeuedMessages,
++            this.completedTicks
++        );
++    }
++
++    @Override
++    public synchronized void close() {
++        if (this.closed) {
++            return;
++        }
++        this.closed = true;
++        this.pendingMessages.clear();
++        this.workers.shutdownNow();
++    }
++
++    private OwnerResult executeOwner(final int owner, final List<RegionWork> work, final RegionTask perRegionTask) {
++        int executed = 0;
++        int failures = 0;
++        int requeued = 0;
++        for (RegionWork regionWork : work.stream().sorted(Comparator.comparing(value -> value.snapshot().key())).toList()) {
++            int[] executedInRegion = {0};
++            try {
++                this.lockFor(regionWork.snapshot().key()).write(() -> {
++                    perRegionTask.run(regionWork.snapshot());
++                    for (RegionMessage message : regionWork.messages()) {
++                        message.task().run(regionWork.snapshot());
++                        executedInRegion[0]++;
++                    }
++                });
++                executed += executedInRegion[0];
++            } catch (RuntimeException error) {
++                failures++;
++                requeued += this.requeueMessages(regionWork.messages().subList(executedInRegion[0], regionWork.messages().size()));
++            }
++        }
++        return new OwnerResult(owner, executed, failures, requeued);
++    }
++
++    private synchronized OwnerResult requeue(final List<RegionWork> work) {
++        int requeued = 0;
++        for (RegionWork regionWork : work) {
++            requeued += this.requeueMessages(regionWork.messages());
++        }
++        return new OwnerResult(-1, 0, 0, requeued);
++    }
++
++    private synchronized int requeueMessages(final List<RegionMessage> messages) {
++        if (this.closed) {
++            return 0;
++        }
++        for (RegionMessage message : messages) {
++            this.pendingMessages.computeIfAbsent(message.target(), ignored -> new ArrayList<>()).add(message);
++        }
++        return messages.size();
++    }
++
++    private synchronized TickResult finish(final TickPlan plan, final List<OwnerResult> ownerResults) {
++        int executed = ownerResults.stream().mapToInt(OwnerResult::executedMessages).sum();
++        int failures = ownerResults.stream().mapToInt(OwnerResult::failedRegions).sum();
++        int requeued = ownerResults.stream().mapToInt(OwnerResult::requeuedMessages).sum();
++        this.executedMessages += executed;
++        this.failedRegions += failures;
++        this.requeuedMessages += requeued;
++        this.completedTicks++;
++        this.tickInFlight = false;
++        return new TickResult(plan.serverTick(), plan.regions().size(), plan.submittedMessages(), ownerResults.size(), executed, failures, requeued);
++    }
++
++    private int staticOwnerFor(final RegionKey region) {
++        int hash = 31 * (31 * region.dimensionId().hashCode() + region.regionX()) + region.regionZ();
++        return Math.floorMod(hash, this.ownerCount);
++    }
++
++    private void requireServerThread() {
++        if (Thread.currentThread() != this.serverThread) {
++            throw new IllegalStateException("Region scheduler plans must be created on the server thread");
++        }
++    }
++
++    private void requireOpen() {
++        if (this.closed) {
++            throw new IllegalStateException("Region scheduler is closed");
++        }
++    }
++
++    private record RegionMessage(long sequence, RegionKey target, RegionTask task) implements Comparable<RegionMessage> {
++        @Override
++        public int compareTo(final RegionMessage other) {
++            int targetOrder = this.target.compareTo(other.target);
++            return targetOrder != 0 ? targetOrder : Long.compare(this.sequence, other.sequence);
++        }
++    }
++
++    private record RegionWork(RegionSnapshot snapshot, List<RegionMessage> messages) {
++    }
++
++    private record TickPlan(long serverTick, int submittedMessages, Map<RegionKey, RegionSnapshot> regions) {
++    }
++
++    private record OwnerResult(int owner, int executedMessages, int failedRegions, int requeuedMessages) {
++    }
++
++    public record TickResult(
++        long serverTick,
++        int activeRegions,
++        int submittedMessages,
++        int ownersUsed,
++        int executedMessages,
++        int failedRegions,
++        int requeuedMessages
++    ) {
++        public boolean complete() {
++            return this.failedRegions == 0 && this.requeuedMessages == 0;
++        }
++    }
++
++    public record Status(
++        int owners,
++        int queuedMessages,
++        boolean tickInFlight,
++        boolean closed,
++        long submittedMessages,
++        long executedMessages,
++        long failedRegions,
++        long requeuedMessages,
++        long completedTicks
++    ) {
++    }
++
++    private static final class RegionWorkerThreadFactory implements ThreadFactory {
++        private final AtomicInteger sequence = new AtomicInteger();
++
++        @Override
++        public Thread newThread(final Runnable runnable) {
++            Thread thread = new Thread(runnable, "HyperCore-Region-" + this.sequence.incrementAndGet());
++            thread.setDaemon(true);
++            return thread;
++        }
++    }
++}

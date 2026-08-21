@@ -1,0 +1,42 @@
+--- /dev/null
++++ b/dev/hypercore/server/region/RegionLock.java
+@@ -1,0 +_,39 @@
++package dev.hypercore.server.region;
++
++import java.util.Objects;
++import java.util.concurrent.locks.ReentrantReadWriteLock;
++
++/**
++ * Advisory lock owned by one logical region.
++ *
++ * <p>The Phase 2 worker contract only permits immutable snapshot work. The
++ * lock is nevertheless installed now so later NMS-native region operations
++ * have one consistent ownership primitive rather than a second scheduler.
++ */
++public final class RegionLock {
++    private final ReentrantReadWriteLock delegate = new ReentrantReadWriteLock();
++
++    public void read(final Runnable action) {
++        Objects.requireNonNull(action, "action");
++        this.delegate.readLock().lock();
++        try {
++            action.run();
++        } finally {
++            this.delegate.readLock().unlock();
++        }
++    }
++
++    public void write(final Runnable action) {
++        Objects.requireNonNull(action, "action");
++        this.delegate.writeLock().lock();
++        try {
++            action.run();
++        } finally {
++            this.delegate.writeLock().unlock();
++        }
++    }
++
++    public boolean isWriteLockedByCurrentThread() {
++        return this.delegate.isWriteLockedByCurrentThread();
++    }
++}
