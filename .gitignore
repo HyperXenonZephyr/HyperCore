@@ -10,3 +10,7 @@ run-data/
 bin/
 *.launch
 paperweight-*/
+# Mache mappings cache and paperweight-generated patch worktrees (build material).
+mache-*.zip
+server-paperweight/paper-server/com/
+server-paperweight/paper-server/net/
