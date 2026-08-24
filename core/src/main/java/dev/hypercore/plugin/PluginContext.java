@@ -44,6 +44,14 @@ public final class PluginContext {
 
     public void registerCommand(CommandDefinition definition) {
         Objects.requireNonNull(definition, "definition");
+        // Preserve the tab completer so that Bukkit plugin commands and any
+        // HyperPlugin command that provides one continue to function. Both the
+        // executor and the tab completer run with the plugin's context class
+        // loader installed on the calling thread.
+        PluginCommandRegistry.TabCompleter wrappedTabCompleter = definition.tabCompleter() == null
+            ? null
+            : (sender, label, arguments) -> callWithContext(
+                () -> definition.tabCompleter().complete(sender, label, arguments));
         commands.register(descriptor.id(), new CommandDefinition(
             definition.name(),
             definition.aliases(),
@@ -51,7 +59,8 @@ public final class PluginContext {
             definition.description(),
             definition.usage(),
             (sender, label, arguments) -> callWithContext(() ->
-                definition.executor().execute(sender, label, arguments))
+                definition.executor().execute(sender, label, arguments)),
+            wrappedTabCompleter
         ));
     }
 

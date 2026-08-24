@@ -22,8 +22,10 @@ import org.bukkit.Material;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
@@ -41,6 +43,7 @@ public final class FabricWorldStateApplier implements WorldDeltaApplier {
 
     private final MinecraftServer server;
     private final EventProxy eventProxy;
+    private Map<UUID, Entity> entityCache;
 
     public FabricWorldStateApplier(MinecraftServer server) {
         this(server, null);
@@ -55,6 +58,7 @@ public final class FabricWorldStateApplier implements WorldDeltaApplier {
     public void apply(HyperCoreRole source, List<WorldDelta> deltas) {
         CompletableFuture<Void> done = new CompletableFuture<>();
         server.execute(() -> {
+            entityCache = new HashMap<>();
             try {
                 for (WorldDelta delta : deltas) {
                     applyDelta(delta);
@@ -63,6 +67,8 @@ public final class FabricWorldStateApplier implements WorldDeltaApplier {
             } catch (RuntimeException error) {
                 LOGGER.error("Failed to apply remote world delta batch from {}", source.displayName(), error);
                 done.completeExceptionally(error);
+            } finally {
+                entityCache = null;
             }
         });
         try {
@@ -207,7 +213,22 @@ public final class FabricWorldStateApplier implements WorldDeltaApplier {
         return null;
     }
 
-    private static Entity findEntity(ServerLevel level, UUID entityId) {
+    private Entity findEntity(ServerLevel level, UUID entityId) {
+        if (entityCache != null) {
+            Entity cached = entityCache.get(entityId);
+            if (cached != null && cached.getUUID().equals(entityId) && !cached.isRemoved()) {
+                return cached;
+            }
+            entityCache.clear();
+            for (Entity entity : level.getAllEntities()) {
+                entityCache.put(entity.getUUID(), entity);
+            }
+            cached = entityCache.get(entityId);
+            if (cached != null && !cached.isRemoved()) {
+                return cached;
+            }
+            return null;
+        }
         for (Entity entity : level.getAllEntities()) {
             if (entity.getUUID().equals(entityId)) {
                 return entity;

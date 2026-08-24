@@ -1,0 +1,17 @@
+--- /dev/null
++++ b/dev/hypercore/server/compute/ComputeBackendProvider.java
+@@ -1,0 +_,14 @@
++package dev.hypercore.server.compute;
++
++/** Optional native compute implementation loaded through ServiceLoader. */
++public interface ComputeBackendProvider extends AutoCloseable {
++    String id();
++
++    boolean available();
++
++    ComputeResult compute(ComputeRequest request) throws Exception;
++
++    @Override
++    default void close() {
++    }
++}

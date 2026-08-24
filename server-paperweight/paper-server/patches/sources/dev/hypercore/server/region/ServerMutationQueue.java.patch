@@ -1,0 +1,53 @@
+--- /dev/null
++++ b/dev/hypercore/server/region/ServerMutationQueue.java
+@@ -1,0 +_,50 @@
++package dev.hypercore.server.region;
++
++import java.util.ArrayList;
++import java.util.List;
++import java.util.Objects;
++import java.util.concurrent.ConcurrentLinkedQueue;
++import java.util.function.Consumer;
++
++/** Thread-safe ingress with a server-thread-only apply phase. */
++public final class ServerMutationQueue {
++    private final Thread serverThread;
++    private final ConcurrentLinkedQueue<RegionMutation> pending = new ConcurrentLinkedQueue<>();
++    private long applied;
++
++    public ServerMutationQueue(final Thread serverThread) {
++        this.serverThread = Objects.requireNonNull(serverThread, "serverThread");
++    }
++
++    public void submit(final RegionMutation mutation) {
++        this.pending.add(Objects.requireNonNull(mutation, "mutation"));
++    }
++
++    public int applyAtTickBoundary(final Consumer<RegionMutation> applier) {
++        this.requireServerThread();
++        Objects.requireNonNull(applier, "applier");
++        List<RegionMutation> batch = new ArrayList<>();
++        for (RegionMutation mutation; (mutation = this.pending.poll()) != null;) {
++            batch.add(mutation);
++        }
++        for (RegionMutation mutation : batch) {
++            applier.accept(mutation);
++        }
++        this.applied += batch.size();
++        return batch.size();
++    }
++
++    public int pending() {
++        return this.pending.size();
++    }
++
++    public long applied() {
++        return this.applied;
++    }
++
++    private void requireServerThread() {
++        if (Thread.currentThread() != this.serverThread) {
++            throw new IllegalStateException("Region mutations must be applied on the server thread");
++        }
++    }
++}

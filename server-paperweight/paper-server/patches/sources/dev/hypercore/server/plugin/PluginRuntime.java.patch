@@ -1,0 +1,236 @@
+--- /dev/null
++++ b/dev/hypercore/server/plugin/PluginRuntime.java
+@@ -1,0 +_,233 @@
++package dev.hypercore.server.plugin;
++
++import java.io.IOException;
++import java.net.URL;
++import java.net.URLClassLoader;
++import java.nio.charset.StandardCharsets;
++import java.nio.file.Files;
++import java.nio.file.Path;
++import java.util.ArrayDeque;
++import java.util.ArrayList;
++import java.util.Comparator;
++import java.util.Deque;
++import java.util.HashMap;
++import java.util.LinkedHashMap;
++import java.util.List;
++import java.util.Map;
++import java.util.Objects;
++import java.util.Set;
++import java.util.jar.JarFile;
++import java.util.concurrent.atomic.AtomicBoolean;
++
++/**
++ * Server-thread plugin runtime with plugin.yml discovery and child-first JAR
++ * isolation. The exposed API is a deliberately small Bukkit compatibility subset.
++ */
++public final class PluginRuntime implements AutoCloseable {
++    private final Thread serverThread;
++    private final Path directory;
++    private final Map<String, LoadedPlugin> plugins = new LinkedHashMap<>();
++    private final Map<String, RegisteredCommand> commands = new HashMap<>();
++    private final List<RegisteredListener<?>> listeners = new ArrayList<>();
++    private final List<ScheduledTask> scheduled = new ArrayList<>();
++    private boolean started;
++    private boolean closed;
++    private long tick;
++
++    public PluginRuntime(final Thread serverThread, final Path directory) {
++        this.serverThread = Objects.requireNonNull(serverThread, "serverThread");
++        this.directory = Objects.requireNonNull(directory, "directory");
++    }
++
++    public void start() {
++        this.requireServerThread();
++        if (this.started) return;
++        this.started = true;
++        try { Files.createDirectories(this.directory); } catch (IOException error) { throw new IllegalStateException("Cannot create plugins directory", error); }
++        try {
++            Map<String, Candidate> candidates = this.discover();
++            for (Candidate candidate : order(candidates)) this.load(candidate);
++        } catch (RuntimeException | Error error) {
++            this.close();
++            throw error;
++        }
++    }
++
++    public void register(final PluginDescriptor descriptor, final ServerPlugin plugin) {
++        this.requireServerThread();
++        this.activate(descriptor, plugin, null);
++    }
++
++    public void tick() {
++        this.requireServerThread();
++        if (this.closed) return;
++        this.tick++;
++        List<ScheduledTask> due = this.scheduled.stream().filter(task -> task.tick <= this.tick && !task.cancelled.get()).toList();
++        this.scheduled.removeIf(task -> task.tick <= this.tick || task.cancelled.get());
++        this.listeners.removeIf(RegisteredListener::closed);
++        for (ScheduledTask task : due) task.action.run();
++    }
++
++    public boolean dispatchCommand(final String label, final String[] args) {
++        this.requireServerThread();
++        RegisteredCommand command = this.commands.get(normalizeLabel(label));
++        return command != null && command.command.execute(java.util.Arrays.asList(args == null ? new String[0] : args));
++    }
++
++    public <E> int postEvent(final E event) {
++        this.requireServerThread();
++        int invoked = 0;
++        for (RegisteredListener<?> listener : List.copyOf(this.listeners)) {
++            if (!listener.closed() && listener.type.isInstance(event)) {
++                listener.invoke(event);
++                invoked++;
++            }
++        }
++        return invoked;
++    }
++
++    public List<String> pluginIds() { return List.copyOf(this.plugins.keySet()); }
++
++    void registerCommand(final String owner, final String label, final Command command) {
++        this.requireServerThread();
++        String normalized = normalizeLabel(label);
++        if (this.commands.putIfAbsent(normalized, new RegisteredCommand(owner, Objects.requireNonNull(command, "command"))) != null) throw new IllegalArgumentException("Command already registered: " + normalized);
++    }
++
++    TaskHandle schedule(final String owner, final Runnable action) {
++        this.requireServerThread();
++        ScheduledTask task = new ScheduledTask(owner, this.tick + 1L, Objects.requireNonNull(action, "action"));
++        this.scheduled.add(task);
++        return () -> task.cancelled.compareAndSet(false, true);
++    }
++
++    <E> Subscription registerListener(final String owner, final Class<E> type, final EventListener<E> listener) {
++        this.requireServerThread();
++        RegisteredListener<E> registered = new RegisteredListener<>(owner, type, listener);
++        this.listeners.add(registered);
++        return () -> registered.closed.compareAndSet(false, true);
++    }
++
++    @Override public void close() {
++        this.requireServerThread();
++        if (this.closed) return;
++        this.closed = true;
++        List<LoadedPlugin> reverse = new ArrayList<>(this.plugins.values());
++        java.util.Collections.reverse(reverse);
++        for (LoadedPlugin loaded : reverse) {
++            try {
++                loaded.plugin.onDisable(new PluginContext(this, loaded.descriptor));
++            } catch (RuntimeException | Error ignored) {
++                // Shutdown continues so every plugin class loader is released.
++            } finally {
++                this.removeOwner(loaded.descriptor.id());
++                close(loaded.loader);
++            }
++        }
++        this.plugins.clear(); this.commands.clear(); this.listeners.clear(); this.scheduled.clear();
++    }
++
++    void requireServerThread() {
++        if (Thread.currentThread() != this.serverThread) throw new IllegalStateException("Plugin callbacks must run on the server thread");
++    }
++
++    private Map<String, Candidate> discover() {
++        Map<String, Candidate> result = new LinkedHashMap<>();
++        try (var files = Files.list(this.directory)) {
++            for (Path path : files.filter(value -> value.getFileName().toString().endsWith(".jar")).sorted().toList()) {
++                try (JarFile jar = new JarFile(path.toFile())) {
++                    var entry = jar.getJarEntry("plugin.yml");
++                    if (entry == null) continue;
++                    PluginDescriptor descriptor = PluginDescriptor.fromPluginYml(new String(jar.getInputStream(entry).readAllBytes(), StandardCharsets.UTF_8));
++                    if (result.putIfAbsent(descriptor.id(), new Candidate(path, descriptor)) != null) throw new IllegalArgumentException("Duplicate plugin: " + descriptor.id());
++                }
++            }
++        } catch (IOException error) { throw new IllegalStateException("Cannot scan plugins", error); }
++        return result;
++    }
++
++    private static List<Candidate> order(final Map<String, Candidate> candidates) {
++        List<Candidate> ordered = new ArrayList<>();
++        Set<String> visited = new java.util.HashSet<>();
++        Set<String> visiting = new java.util.HashSet<>();
++        for (Candidate candidate : candidates.values().stream().sorted(Comparator.comparing(value -> value.descriptor.id())).toList()) visit(candidate, candidates, visited, visiting, ordered);
++        return ordered;
++    }
++
++    private static void visit(final Candidate candidate, final Map<String, Candidate> all, final Set<String> visited, final Set<String> visiting, final List<Candidate> ordered) {
++        if (visited.contains(candidate.descriptor.id())) return;
++        if (!visiting.add(candidate.descriptor.id())) throw new IllegalArgumentException("Plugin dependency cycle: " + candidate.descriptor.id());
++        for (String dependency : candidate.descriptor.depends()) {
++            Candidate required = all.get(dependency);
++            if (required == null) throw new IllegalArgumentException("Missing plugin dependency: " + dependency);
++            visit(required, all, visited, visiting, ordered);
++        }
++        visiting.remove(candidate.descriptor.id()); visited.add(candidate.descriptor.id()); ordered.add(candidate);
++    }
++
++    private void load(final Candidate candidate) {
++        PluginClassLoader loader = null;
++        try {
++            loader = new PluginClassLoader(candidate.path.toUri().toURL(), PluginRuntime.class.getClassLoader());
++            Class<?> type = Class.forName(candidate.descriptor.mainClass(), true, loader);
++            ServerPlugin plugin = type.asSubclass(ServerPlugin.class).getDeclaredConstructor().newInstance();
++            this.activate(candidate.descriptor, plugin, loader);
++            loader = null;
++        } catch (ReflectiveOperationException | IOException error) {
++            close(loader);
++            throw new IllegalStateException("Cannot load plugin " + candidate.descriptor.id(), error);
++        }
++    }
++
++    private void activate(final PluginDescriptor descriptor, final ServerPlugin plugin, final PluginClassLoader loader) {
++        if (this.plugins.containsKey(descriptor.id())) {
++            close(loader);
++            throw new IllegalArgumentException("Duplicate plugin: " + descriptor.id());
++        }
++        PluginContext context = new PluginContext(this, descriptor);
++        boolean loaded = false;
++        try {
++            plugin.onLoad(context);
++            loaded = true;
++            plugin.onEnable(context);
++            this.plugins.put(descriptor.id(), new LoadedPlugin(descriptor, plugin, loader));
++        } catch (RuntimeException | Error error) {
++            this.removeOwner(descriptor.id());
++            if (loaded) {
++                try {
++                    plugin.onDisable(context);
++                } catch (RuntimeException | Error disableError) {
++                    error.addSuppressed(disableError);
++                }
++            }
++            close(loader);
++            throw error;
++        }
++    }
++
++    private void removeOwner(final String owner) {
++        this.commands.entrySet().removeIf(entry -> entry.getValue().owner.equals(owner));
++        this.listeners.removeIf(listener -> listener.owner.equals(owner));
++        this.scheduled.removeIf(task -> task.owner.equals(owner));
++    }
++
++    private static void close(final URLClassLoader loader) { if (loader != null) try { loader.close(); } catch (IOException ignored) { } }
++    private static String normalizeLabel(final String value) { String label = Objects.requireNonNull(value, "label").trim().toLowerCase(java.util.Locale.ROOT); if (!label.matches("[a-z][a-z0-9_-]{0,63}")) throw new IllegalArgumentException("Invalid command label: " + value); return label; }
++    private record Candidate(Path path, PluginDescriptor descriptor) { }
++    private record LoadedPlugin(PluginDescriptor descriptor, ServerPlugin plugin, PluginClassLoader loader) { }
++    private record RegisteredCommand(String owner, Command command) { }
++    private static final class ScheduledTask { final String owner; final long tick; final Runnable action; final AtomicBoolean cancelled = new AtomicBoolean(); ScheduledTask(String owner, long tick, Runnable action) { this.owner = owner; this.tick = tick; this.action = action; } }
++    private static final class RegisteredListener<E> { final String owner; final Class<E> type; final EventListener<E> listener; final AtomicBoolean closed = new AtomicBoolean(); RegisteredListener(String owner, Class<E> type, EventListener<E> listener) { this.owner = owner; this.type = Objects.requireNonNull(type, "type"); this.listener = Objects.requireNonNull(listener, "listener"); } boolean closed() { return this.closed.get(); } void invoke(Object event) { this.listener.onEvent(this.type.cast(event)); } }
++    public interface Command { boolean execute(List<String> arguments); }
++    public interface EventListener<E> { void onEvent(E event); }
++    public interface Subscription extends AutoCloseable { @Override void close(); }
++    public interface TaskHandle { boolean cancel(); }
++
++    private static final class PluginClassLoader extends URLClassLoader {
++        PluginClassLoader(URL url, ClassLoader parent) { super(new URL[] {url}, parent); }
++        @Override protected Class<?> loadClass(String name, boolean resolve) throws ClassNotFoundException {
++            if (name.startsWith("java.") || name.startsWith("dev.hypercore.server.") || name.startsWith("net.minecraft.") || name.startsWith("com.mojang.") || name.startsWith("org.bukkit.")) return super.loadClass(name, resolve);
++            synchronized (getClassLoadingLock(name)) { Class<?> result = findLoadedClass(name); if (result == null) try { result = findClass(name); } catch (ClassNotFoundException ignored) { result = super.loadClass(name, false); } if (resolve) resolveClass(result); return result; }
++        }
++    }
++}

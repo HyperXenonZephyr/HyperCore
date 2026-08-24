@@ -1,0 +1,40 @@
+--- /dev/null
++++ b/dev/hypercore/server/region/RegionMutation.java
+@@ -1,0 +_,37 @@
++package dev.hypercore.server.region;
++
++import java.util.LinkedHashMap;
++import java.util.Map;
++import java.util.Objects;
++
++/**
++ * Immutable data produced by a region worker and consumed at a server-thread
++ * apply boundary. Values deliberately cannot retain NMS objects.
++ */
++public record RegionMutation(RegionKey target, String operation, Map<String, String> values) {
++    public RegionMutation {
++        target = Objects.requireNonNull(target, "target");
++        operation = requireText(operation, "operation");
++        LinkedHashMap<String, String> normalized = new LinkedHashMap<>();
++        for (Map.Entry<String, String> entry : Objects.requireNonNull(values, "values").entrySet()) {
++            normalized.put(requireText(entry.getKey(), "value key"), requireText(entry.getValue(), "value"));
++        }
++        values = Map.copyOf(normalized);
++    }
++
++    public static RegionMutation marker(final RegionKey target, final String name) {
++        return new RegionMutation(target, name, Map.of());
++    }
++
++    public static RegionMutation setBlock(final RegionKey target, final int x, final int y, final int z, final String blockId) {
++        return new RegionMutation(target, "set-block", Map.of("x", Integer.toString(x), "y", Integer.toString(y), "z", Integer.toString(z), "block", blockId));
++    }
++
++    private static String requireText(final String value, final String name) {
++        String normalized = Objects.requireNonNull(value, name).trim();
++        if (normalized.isEmpty()) {
++            throw new IllegalArgumentException(name + " cannot be blank");
++        }
++        return normalized;
++    }
++}

@@ -1,0 +1,22 @@
+--- /dev/null
++++ b/dev/hypercore/server/compute/ComputeRequest.java
+@@ -1,0 +_,19 @@
++package dev.hypercore.server.compute;
++
++import java.util.Objects;
++
++/** Primitive-only compute input that can be created from a server snapshot. */
++public record ComputeRequest(String operation, double[] values) {
++    public ComputeRequest {
++        operation = Objects.requireNonNull(operation, "operation").trim();
++        if (operation.isEmpty()) {
++            throw new IllegalArgumentException("operation cannot be blank");
++        }
++        values = Objects.requireNonNull(values, "values").clone();
++    }
++
++    @Override
++    public double[] values() {
++        return this.values.clone();
++    }
++}

@@ -35,6 +35,7 @@ import org.bukkit.inventory.Inventory;
 
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -57,6 +58,13 @@ public final class FabricWorldAccess implements WorldAccess {
     private final String worldName;
     private final ServerLevel level;
     private final ConcurrentLinkedQueue<Runnable> pendingMutations = new ConcurrentLinkedQueue<>();
+    /**
+     * Best-effort UUID-to-entity cache. Vanilla can add or remove entities at
+     * any time, so the cache is rebuilt on a miss or when HyperCore mutates the
+     * entity set. This turns the per-tick O(n^2) scan from
+     * {@link RegionExecutionService#activeRegions()} into an O(n) pass.
+     */
+    private final Map<UUID, Entity> entityCache = new HashMap<>();
 
     public FabricWorldAccess(String worldName, ServerLevel level) {
         this.worldName = worldName;
@@ -246,6 +254,7 @@ public final class FabricWorldAccess implements WorldAccess {
             if (!level.addFreshEntity(entity)) {
                 return null;
             }
+            entityCache.put(entity.getUUID(), entity);
             return entity.getUUID();
         }
         pendingMutations.add(() -> {
@@ -256,6 +265,7 @@ public final class FabricWorldAccess implements WorldAccess {
             }
             entity.setPos(position.x(), position.y(), position.z());
             level.addFreshEntity(entity);
+            invalidateEntityCache();
         });
         return null;
     }
@@ -300,11 +310,8 @@ public final class FabricWorldAccess implements WorldAccess {
 
     @Override
     public Collection<UUID> entityIds() {
-        List<UUID> ids = new ArrayList<>();
-        for (Entity entity : level.getAllEntities()) {
-            ids.add(entity.getUUID());
-        }
-        return ids;
+        rebuildEntityCache();
+        return List.copyOf(entityCache.keySet());
     }
 
     @Override
@@ -366,6 +373,7 @@ public final class FabricWorldAccess implements WorldAccess {
                 return false;
             }
             entity.remove(Entity.RemovalReason.DISCARDED);
+            entityCache.remove(entityId);
             return true;
         }
         pendingMutations.add(() -> {
@@ -374,6 +382,7 @@ public final class FabricWorldAccess implements WorldAccess {
                 return;
             }
             entity.remove(Entity.RemovalReason.DISCARDED);
+            invalidateEntityCache();
         });
         return false;
     }
@@ -918,12 +927,23 @@ public final class FabricWorldAccess implements WorldAccess {
     }
 
     private Entity findEntity(UUID entityId) {
-        for (Entity entity : level.getAllEntities()) {
-            if (entity.getUUID().equals(entityId)) {
-                return entity;
-            }
+        Entity cached = entityCache.get(entityId);
+        if (cached != null && cached.getUUID().equals(entityId) && !cached.isRemoved()) {
+            return cached;
         }
-        return null;
+        rebuildEntityCache();
+        return entityCache.get(entityId);
+    }
+
+    private void rebuildEntityCache() {
+        entityCache.clear();
+        for (Entity entity : level.getAllEntities()) {
+            entityCache.put(entity.getUUID(), entity);
+        }
+    }
+
+    private void invalidateEntityCache() {
+        entityCache.clear();
     }
 
     ItemStack toMinecraft(org.bukkit.inventory.ItemStack bukkitStack) {

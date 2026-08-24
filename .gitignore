@@ -9,3 +9,4 @@ run-data/
 *.log
 bin/
 *.launch
+paperweight-*/

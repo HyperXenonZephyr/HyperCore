@@ -1,0 +1,200 @@
+--- /dev/null
++++ b/dev/hypercore/server/compute/ComputeService.java
+@@ -1,0 +_,197 @@
++package dev.hypercore.server.compute;
++
++import java.io.IOException;
++import java.net.URL;
++import java.net.URLClassLoader;
++import java.nio.file.Files;
++import java.nio.file.Path;
++import java.util.ArrayList;
++import java.util.List;
++import java.util.Objects;
++import java.util.ServiceConfigurationError;
++import java.util.ServiceLoader;
++import java.util.concurrent.CompletableFuture;
++import java.util.concurrent.ExecutorService;
++import java.util.concurrent.Executors;
++import java.util.concurrent.ThreadFactory;
++import java.util.concurrent.atomic.AtomicInteger;
++
++/**
++ * Server-owned compute boundary. The bundled backend is deterministic CPU;
++ * native Vulkan providers remain optional and may be added outside this jar.
++ */
++public final class ComputeService implements AutoCloseable {
++    private final ExecutorService executor;
++    private final List<ComputeBackendProvider> providers;
++    private final List<URLClassLoader> providerLoaders;
++    private volatile boolean closed;
++    private volatile boolean gpuAvailable;
++
++    public ComputeService() {
++        this.executor = Executors.newSingleThreadExecutor(new ComputeThreadFactory());
++        this.providerLoaders = new ArrayList<>();
++        this.providers = this.loadProviders();
++    }
++
++    public CompletableFuture<ComputeResult> submit(final ComputeRequest request) {
++        Objects.requireNonNull(request, "request");
++        if (this.closed) {
++            return CompletableFuture.failedFuture(new IllegalStateException("Compute service is closed"));
++        }
++        return CompletableFuture.supplyAsync(() -> this.computeWithProvider(request), this.executor);
++    }
++
++    public boolean gpuAvailable() {
++        if (this.gpuAvailable) return true;
++        for (ComputeBackendProvider provider : this.providers) {
++            try {
++                if (provider.available()) return true;
++            } catch (RuntimeException | LinkageError ignored) {
++                // Optional native probing cannot change CPU service availability.
++            }
++        }
++        return false;
++    }
++
++    /** Optional providers can publish a verified availability state. */
++    public void gpuAvailability(final boolean available) {
++        if (this.closed) {
++            throw new IllegalStateException("Compute service is closed");
++        }
++        this.gpuAvailable = available;
++    }
++
++    @Override
++    public void close() {
++        this.closed = true;
++        this.gpuAvailable = false;
++        this.executor.shutdownNow();
++        for (ComputeBackendProvider provider : this.providers) {
++            try {
++                provider.close();
++            } catch (RuntimeException | LinkageError ignored) {
++                // Optional native teardown must not prevent server shutdown.
++            }
++        }
++        for (URLClassLoader loader : this.providerLoaders) {
++            try {
++                loader.close();
++            } catch (IOException ignored) {
++                // Provider native libraries may already be unloaded by the JVM.
++            }
++        }
++    }
++
++    private ComputeResult computeWithProvider(final ComputeRequest request) {
++        for (ComputeBackendProvider provider : this.providers) {
++            try {
++                if (provider.available()) {
++                    return provider.compute(request);
++                }
++            } catch (Exception | LinkageError ignored) {
++                // Native failure falls through to the deterministic CPU path.
++            }
++        }
++        return new ComputeResult("cpu-scalar", this.compute(request));
++    }
++
++    private double[] compute(final ComputeRequest request) {
++        double[] values = request.values();
++        return switch (request.operation()) {
++            case "identity" -> values;
++            case "squared-length-3d" -> squaredLengths(values);
++            case "squared-length-3d-f32" -> squaredLengthsF32(values);
++            default -> throw new IllegalArgumentException("Unsupported compute operation: " + request.operation());
++        };
++    }
++
++    private static double[] squaredLengths(final double[] values) {
++        if (values.length % 3 != 0) {
++            throw new IllegalArgumentException("squared-length-3d requires xyz triples");
++        }
++        double[] output = new double[values.length / 3];
++        for (int index = 0; index < output.length; index++) {
++            int source = index * 3;
++            output[index] = values[source] * values[source]
++                + values[source + 1] * values[source + 1]
++                + values[source + 2] * values[source + 2];
++        }
++        return output;
++    }
++
++    /**
++     * Matches the explicit f32 Vulkan operation when no native provider can
++     * be initialized. The regular squared-length operation remains f64.
++     */
++    private static double[] squaredLengthsF32(final double[] values) {
++        if (values.length % 3 != 0) {
++            throw new IllegalArgumentException("squared-length-3d-f32 requires xyz triples");
++        }
++        double[] output = new double[values.length / 3];
++        for (int index = 0; index < output.length; index++) {
++            int source = index * 3;
++            float x = narrowF32(values[source], index, "x");
++            float y = narrowF32(values[source + 1], index, "y");
++            float z = narrowF32(values[source + 2], index, "z");
++            output[index] = x * x + y * y + z * z;
++        }
++        return output;
++    }
++
++    private static float narrowF32(final double value, final int index, final String axis) {
++        if (!Double.isFinite(value)) {
++            throw new IllegalArgumentException("Non-finite " + axis + " coordinate at " + index);
++        }
++        float narrowed = (float) value;
++        if (!Float.isFinite(narrowed)) {
++            throw new IllegalArgumentException("Out-of-range " + axis + " coordinate at " + index);
++        }
++        return narrowed;
++    }
++
++    private List<ComputeBackendProvider> loadProviders() {
++        List<ComputeBackendProvider> discovered = new ArrayList<>();
++        try {
++            ServiceLoader.load(ComputeBackendProvider.class).forEach(discovered::add);
++        } catch (ServiceConfigurationError | LinkageError ignored) {
++            // A broken classpath provider cannot prevent CPU server startup.
++        }
++        Path providerDirectory = Path.of(System.getProperty("hypercore.compute.providers", "compute-providers"));
++        if (!Files.isDirectory(providerDirectory)) {
++            return List.copyOf(discovered);
++        }
++        try (var paths = Files.list(providerDirectory)) {
++            URL[] jars = paths.filter(path -> path.getFileName().toString().endsWith(".jar"))
++                .map(path -> {
++                    try {
++                        return path.toUri().toURL();
++                    } catch (IOException error) {
++                        throw new IllegalStateException("Cannot load compute provider jar: " + path, error);
++                    }
++                }).toArray(URL[]::new);
++            if (jars.length != 0) {
++                URLClassLoader loader = new URLClassLoader(jars, ComputeBackendProvider.class.getClassLoader());
++                this.providerLoaders.add(loader);
++                try {
++                    ServiceLoader.load(ComputeBackendProvider.class, loader).forEach(discovered::add);
++                } catch (ServiceConfigurationError | LinkageError ignored) {
++                    // A broken optional provider remains isolated from the CPU service.
++                }
++            }
++        } catch (IOException | RuntimeException | LinkageError ignored) {
++            // A malformed optional provider cannot prevent CPU server startup.
++        }
++        return List.copyOf(discovered);
++    }
++
++    private static final class ComputeThreadFactory implements ThreadFactory {
++        private final AtomicInteger sequence = new AtomicInteger();
++
++        @Override
++        public Thread newThread(final Runnable action) {
++            Thread thread = new Thread(action, "HyperCore-Compute-" + this.sequence.incrementAndGet());
++            thread.setDaemon(true);
++            return thread;
++        }
++    }
++}

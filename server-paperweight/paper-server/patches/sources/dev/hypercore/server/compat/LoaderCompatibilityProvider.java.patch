@@ -1,0 +1,22 @@
+--- /dev/null
++++ b/dev/hypercore/server/compat/LoaderCompatibilityProvider.java
+@@ -1,0 +_,19 @@
++package dev.hypercore.server.compat;
++
++/**
++ * Optional compatibility hook owned by the standalone server, not a loader
++ * entry point. Implementations must not expose Fabric or Forge types here.
++ */
++public interface LoaderCompatibilityProvider extends AutoCloseable {
++    String id();
++
++    default void onServerStarting() {
++    }
++
++    default void onServerStarted() {
++    }
++
++    @Override
++    default void close() {
++    }
++}

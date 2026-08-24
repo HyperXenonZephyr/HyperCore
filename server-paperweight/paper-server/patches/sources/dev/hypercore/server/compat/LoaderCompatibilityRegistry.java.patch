@@ -1,0 +1,83 @@
+--- /dev/null
++++ b/dev/hypercore/server/compat/LoaderCompatibilityRegistry.java
+@@ -1,0 +_,80 @@
++package dev.hypercore.server.compat;
++
++import java.util.ArrayList;
++import java.util.Comparator;
++import java.util.LinkedHashMap;
++import java.util.List;
++import java.util.Map;
++import java.util.Objects;
++
++/** Lifecycle registry that isolates optional compatibility provider failures. */
++public final class LoaderCompatibilityRegistry implements AutoCloseable {
++    private final Map<String, LoaderCompatibilityProvider> providers = new LinkedHashMap<>();
++    private final List<String> failures = new ArrayList<>();
++    private boolean started;
++
++    public synchronized void register(final LoaderCompatibilityProvider provider) {
++        Objects.requireNonNull(provider, "provider");
++        if (this.started) {
++            throw new IllegalStateException("Compatibility providers must be registered before startup");
++        }
++        String id = normalizeId(provider.id());
++        if (this.providers.putIfAbsent(id, provider) != null) {
++            throw new IllegalArgumentException("Duplicate compatibility provider: " + id);
++        }
++    }
++
++    public synchronized void start() {
++        if (this.started) {
++            return;
++        }
++        this.started = true;
++        for (LoaderCompatibilityProvider provider : this.ordered()) {
++            this.invoke(provider, provider::onServerStarting);
++        }
++        for (LoaderCompatibilityProvider provider : this.ordered()) {
++            this.invoke(provider, provider::onServerStarted);
++        }
++    }
++
++    public synchronized List<String> failures() {
++        return List.copyOf(this.failures);
++    }
++
++    public synchronized List<String> providerIds() {
++        return this.providers.keySet().stream().sorted().toList();
++    }
++
++    @Override
++    public synchronized void close() {
++        for (LoaderCompatibilityProvider provider : this.ordered().reversed()) {
++            this.invoke(provider, provider::close);
++        }
++        this.providers.clear();
++    }
++
++    private List<LoaderCompatibilityProvider> ordered() {
++        return this.providers.values().stream().sorted(Comparator.comparing(LoaderCompatibilityProvider::id)).toList();
++    }
++
++    private void invoke(final LoaderCompatibilityProvider provider, final ThrowingAction action) {
++        try {
++            action.run();
++        } catch (Exception error) {
++            this.failures.add(provider.id() + ": " + error.getClass().getSimpleName());
++        }
++    }
++
++    private static String normalizeId(final String raw) {
++        String id = Objects.requireNonNull(raw, "id").trim().toLowerCase(java.util.Locale.ROOT);
++        if (!id.matches("[a-z][a-z0-9_-]{1,63}")) {
++            throw new IllegalArgumentException("Invalid compatibility provider id: " + raw);
++        }
++        return id;
++    }
++
++    @FunctionalInterface
++    private interface ThrowingAction {
++        void run() throws Exception;
++    }
++}

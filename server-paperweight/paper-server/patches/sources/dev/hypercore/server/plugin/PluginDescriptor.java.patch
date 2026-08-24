@@ -1,0 +1,54 @@
+--- /dev/null
++++ b/dev/hypercore/server/plugin/PluginDescriptor.java
+@@ -1,0 +_,51 @@
++package dev.hypercore.server.plugin;
++
++import java.util.List;
++import java.util.Locale;
++import java.util.Objects;
++
++/** Parsed subset of Bukkit plugin.yml required by the standalone runtime. */
++public record PluginDescriptor(String id, String name, String version, String mainClass, List<String> depends) {
++    public PluginDescriptor {
++        id = normalize(id, "id");
++        name = text(name, "name");
++        version = text(version, "version");
++        mainClass = text(mainClass, "main");
++        List<String> declaredDepends = depends == null ? List.of() : depends;
++        depends = List.copyOf(declaredDepends.stream().map(value -> normalize(value, "depend")).toList());
++        if (depends.contains(id)) {
++            throw new IllegalArgumentException("Plugin cannot depend on itself: " + id);
++        }
++    }
++
++    static PluginDescriptor fromPluginYml(final String yaml) {
++        java.util.Map<String, String> fields = new java.util.LinkedHashMap<>();
++        for (String line : yaml.replace("\r", "").split("\n")) {
++            if (line.startsWith(" ") || !line.contains(":")) continue;
++            int split = line.indexOf(':');
++            fields.put(line.substring(0, split).trim().toLowerCase(Locale.ROOT), line.substring(split + 1).trim());
++        }
++        String name = required(fields, "name");
++        String dependencies = fields.getOrDefault("depend", "").replace("[", "").replace("]", "");
++        List<String> depends = dependencies.isBlank() ? List.of() : java.util.Arrays.stream(dependencies.split(",")).map(String::trim).filter(value -> !value.isEmpty()).toList();
++        return new PluginDescriptor(name, name, required(fields, "version"), required(fields, "main"), depends);
++    }
++
++    private static String required(final java.util.Map<String, String> fields, final String key) {
++        String value = fields.get(key);
++        if (value == null || value.isBlank()) throw new IllegalArgumentException("Missing plugin.yml field: " + key);
++        return value;
++    }
++
++    static String normalize(final String value, final String field) {
++        String normalized = text(value, field).toLowerCase(Locale.ROOT);
++        if (!normalized.matches("[a-z][a-z0-9_-]{1,63}")) throw new IllegalArgumentException("Invalid plugin " + field + ": " + value);
++        return normalized;
++    }
++
++    private static String text(final String value, final String field) {
++        String normalized = Objects.requireNonNull(value, field).trim();
++        if (normalized.isEmpty()) throw new IllegalArgumentException(field + " cannot be blank");
++        return normalized;
++    }
++}

@@ -1,51 +1,66 @@
 --- a/net/minecraft/server/MinecraftServer.java
 +++ b/net/minecraft/server/MinecraftServer.java
-@@ -10,6 +_,7 @@
+@@ -10,6 +_,10 @@
  import com.mojang.jtracy.DiscontinuousFrame;
  import com.mojang.jtracy.TracyClient;
  import com.mojang.logging.LogUtils;
++import dev.hypercore.server.compat.LoaderCompatibilityRegistry;
++import dev.hypercore.server.compute.ComputeService;
++import dev.hypercore.server.plugin.PluginRuntime;
 +import dev.hypercore.server.region.ServerRegionScheduler;
  import it.unimi.dsi.fastutil.objects.ObjectArrayList;
  import it.unimi.dsi.fastutil.objects.ObjectArraySet;
  import java.io.File;
-@@ -294,6 +_,7 @@
+@@ -294,6 +_,10 @@
      private final PacketProcessor packetProcessor;
      private final TimerQueue<MinecraftServer> scheduledEvents;
      private final ServerClockManager clockManager;
 +    private final ServerRegionScheduler regionScheduler;
++    private final LoaderCompatibilityRegistry compatibilityProviders;
++    private final ComputeService computeService;
++    private final PluginRuntime pluginRuntime;
  
      public static <S extends MinecraftServer> S spin(final Function<Thread, S> factory) {
          AtomicReference<S> serverReference = new AtomicReference<>();
-@@ -351,6 +_,7 @@
+@@ -351,6 +_,10 @@
                  .filterFeatures(this.worldData.enabledFeatures());
              this.structureTemplateManager = new StructureTemplateManager(worldStem.resourceManager(), storageSource, fixerUpper, blockLookup);
              this.serverThread = serverThread;
 +            this.regionScheduler = new ServerRegionScheduler(serverThread);
++            this.compatibilityProviders = new LoaderCompatibilityRegistry();
++            this.computeService = new ComputeService();
++            this.pluginRuntime = new PluginRuntime(serverThread, java.nio.file.Path.of("plugins"));
              this.executor = Util.backgroundExecutor();
              this.potionBrewing = PotionBrewing.bootstrap(this.worldData.enabledFeatures());
              this.resources.managers.getRecipeManager().finalizeRecipeLoading(this.worldData.enabledFeatures());
-@@ -650,6 +_,7 @@
+@@ -650,6 +_,10 @@
      }
  
      protected void stopServer() {
++        this.pluginRuntime.close();
++        this.compatibilityProviders.close();
++        this.computeService.close();
 +        this.regionScheduler.close();
          this.packetProcessor.close();
          if (this.metricsRecorder.isRecording()) {
              this.cancelRecordingMetrics();
-@@ -735,6 +_,8 @@
+@@ -735,6 +_,10 @@
                  throw new IllegalStateException("Failed to initialize server");
              }
  
 +            this.regionScheduler.start();
++            this.compatibilityProviders.start();
++            this.pluginRuntime.start();
 +
              this.nextTickTimeNanos = Util.getNanos();
              this.statusIcon = this.loadStatusIcon().orElse(null);
              this.status = this.buildServerStatus();
-@@ -1138,6 +_,8 @@
+@@ -1138,6 +_,9 @@
              profiler.pop();
          }
  
 +        profiler.popPush("hypercoreRegions");
++        this.pluginRuntime.tick();
 +        this.regionScheduler.afterLevelTicks(this.tickCount, this.getAllLevels());
          profiler.popPush("connection");
          this.tickConnection();

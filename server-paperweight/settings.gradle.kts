@@ -19,3 +19,4 @@ plugins {
 rootProject.name = "hypercore-paperweight"
 
 include("hypercore-server")
+include("hypercore-vulkan-provider")

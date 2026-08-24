@@ -5,295 +5,95 @@
 <h1 align="center">HyperCore</h1>
 
 <p align="center">
-  <a href="https://www.java.com/"><img src="https://img.shields.io/badge/Java-25-ED8B00?logo=java&logoColor=white" alt="Java 25 for the independent server core"></a>
+  <a href="https://www.java.com/"><img src="https://img.shields.io/badge/Java-25-ED8B00?logo=java&logoColor=white" alt="Java 25"></a>
   <a href="https://gradle.org/"><img src="https://img.shields.io/badge/Gradle-9.3-02303A?logo=gradle&logoColor=white" alt="Gradle 9.3"></a>
   <a href="https://www.minecraft.net/"><img src="https://img.shields.io/badge/Minecraft-26.1-62B47A" alt="Minecraft 26.1"></a>
-  <a href="https://docs.papermc.io/paper/dev/project-setup/"><img src="https://img.shields.io/badge/paperweight-toolchain-5C9BD1" alt="paperweight toolchain"></a>
-  <a href="https://minecraftforge.net/"><img src="https://img.shields.io/badge/Forge%20adapter-1.21.1-orange" alt="legacy Forge adapter 1.21.1"></a>
-  <a href="https://fabricmc.net/"><img src="https://img.shields.io/badge/Fabric%20adapter-1.21.1-DBD0A4" alt="legacy Fabric adapter 1.21.1"></a>
-  <a href="https://www.vulkan.org/"><img src="https://img.shields.io/badge/Vulkan-Compute-AC162C?logo=vulkan&logoColor=white" alt="Vulkan Compute"></a>
-  <a href="https://www.lwjgl.org/"><img src="https://img.shields.io/badge/LWJGL-3.x-9B6BFF?logo=lwjgl&logoColor=white" alt="LWJGL 3"></a>
-  <a href="https://junit.org/junit5/"><img src="https://img.shields.io/badge/JUnit-5-25A162?logo=junit5&logoColor=white" alt="JUnit 5"></a>
+  <a href="https://www.vulkan.org/"><img src="https://img.shields.io/badge/Vulkan-optional-AC162C?logo=vulkan&logoColor=white" alt="Optional Vulkan compute"></a>
   <a href="./LICENSE"><img src="https://img.shields.io/badge/License-Apache%202.0-blue" alt="Apache License 2.0"></a>
 </p>
 
-HyperCore is an experimental independent Minecraft server core. Its primary target is Mojang's official Minecraft `26.1` server bundle, transformed through a reproducible paperweight patch pipeline into `hypercore-server-bundler-0.1.0-SNAPSHOT.jar`; it is not a fork of Paper. The existing Forge/Fabric modules remain compatibility research adapters while their reusable scheduling, plugin, and compute ideas are migrated into the standalone core.
+HyperCore is an experimental independent Minecraft server core. It starts from
+Mojang's official Minecraft `26.1` server bundle and applies HyperCore patches
+through a reproducible paperweight pipeline. It is not a fork of Paper.
 
-> [!IMPORTANT]
-> HyperCore is in active development. The independent core can now be built from the official server bundle, but it has not yet passed an EULA/world-load/tick startup smoke test and is not a drop-in Bukkit/Paper production server. Minecraft world simulation remains on the CPU; GPU acceleration is limited to spatial query backends.
->
-> The independent core owns the production direction. `:core`, `:forge`, and `:fabric` are retained during migration as compatibility research modules; they do not define the standalone server runtime. The prior orchestrated Forge/Fabric dual-server deployment remains an experimental compatibility path, not the architecture of `hypercore-server`.
+## Architecture
 
-> [!NOTE]
-> Portions of the adapter and bridge code have been AI-assisted during development to handle the large volume of repetitive cross-loader implementations. Core architecture, correctness-critical paths, concurrency primitives, and design decisions remain hand-written and human-reviewed.
+- `server-paperweight`: the standalone server build. It creates
+  `hypercore-server-bundler-0.1.0-SNAPSHOT.jar` with
+  `net.minecraft.server.Main` as its entry point.
+- `paper-server`: paperweight's required patch-layout directory. It contains
+  HyperCore patches and a local Mojang-derived patch baseline; it has no Paper
+  remote and no Paper server source. Its generated `com/` and `net/` worktree
+  directories are build material and must never be committed.
+- Region execution: immutable region snapshots are planned on bounded worker
+  lanes. Workers return value-only mutations, which the server thread validates
+  and applies at a later tick boundary. Vanilla level, entity, block, and chunk
+  ticks remain server-thread work until a full region-ownership migration exists.
+- Plugins: a narrow `plugin.yml` discovery runtime provides child-first class
+  loading, dependency order, lifecycle callbacks, commands, next-tick tasks,
+  and server-thread events. It is not Bukkit or Paper binary compatibility.
+- Loader compatibility: the standalone core owns a neutral provider SPI.
+  Optional Fabric and Forge adapters must remain outside the server JAR because
+  their launchers cannot coexist inside one Minecraft server class loader.
+- Compute: CPU execution is always available. An optional Vulkan provider is
+  loaded from `compute-providers/` through `ServiceLoader` for explicitly f32
+  batch operations. It never accelerates arbitrary Minecraft simulation.
 
-## Current status
-
-The independent server-core toolchain is established:
-
-- `server-paperweight` targets Mojang's official Minecraft `26.1` server bundle with JDK 25 preview APIs and outputs `hypercore-server-bundler-0.1.0-SNAPSHOT.jar`.
-- Mache source setup, empty-patch application, patch rebuilding, compilation, reobfuscation, and bundler creation run offline after dependencies are cached.
-- The generated Java and resource Git worktrees are local paperweight patch baselines sourced from Mache caches. They contain no Paper server source and no Paper remote.
-- The patched paperweight build tool is published only to Maven Local for Windows local-path handling; it is neither a HyperCore component nor a Paper server fork.
-- The first Phase 2 target is a safe region-scheduler bridge: deterministic region mapping and lifecycle ownership are added before any concurrent vanilla world mutation is enabled.
-
-The retained compatibility research foundation includes:
-
-- Minecraft 1.21.1 and Java 21 are pinned; Forge 52.1.16 and Fabric Loader 0.16.9 (Fabric API 0.115.1+1.21.1) are the current adapter targets.
-- HyperCore loads as a server-side component under Forge or under Fabric, each as a separate build (see the note above on simultaneous execution).
-- A bounded worker pool reserves one logical CPU for the main server thread and rejects excess work instead of growing an unbounded queue, with task metrics that distinguish completed, failed, rejected, and cancelled work.
-- A 200-tick latency window reports average, p95, and maximum tick duration.
-- Operator diagnostics are available through `/hypercore status`, `/hypercore timings`, `/hypercore capabilities`, and `/hypercore regions`.
-- Forge and Fabric GameTests both verify that HyperCore loads in a real dedicated-server environment and that a test Bukkit plugin is discovered, enabled, and executes its registered command.
-- Configuration controls worker count, queue capacity, tick sampling, GPU probing, the default-on GPU compute path, and CPU backend selection; Forge reads `config/hypercore-common.toml` and Fabric reads `config/hypercore.properties` with the same keys.
-- OS, JVM, logical CPU, and graphics adapter capabilities are reported; Vulkan compute initializes by default on a dedicated daemon thread and falls back safely when unavailable.
-- A scalar CPU spatial batch backend and a Vulkan compute backend implement the same squared-distance operation for correctness comparisons.
-- A logical region-owner model provides deterministic ownership, per-target FIFO mailboxes, tick-boundary dispatch, and cross-region message accounting.
-- A controlled plugin bridge kernel provides lifecycle callbacks, plugin-owned commands, permissions, cancellable prioritized events, and plugin-owned sync/async tick scheduling. External HyperCore SPI plugin JARs are discovered from `plugins/` with isolated class loaders and deterministic dependency ordering. A Bukkit/Paper compatibility layer discovers JARs using `plugin.yml`, wraps `JavaPlugin` main classes, and bridges their lifecycle, commands, tab completion, permissions (with child-node inheritance), and sync scheduling through the same SPI. It also exposes a generated `org.bukkit.event.*` skeleton with bidirectional event bridging for selected types and supports cross-plugin lookup via `Bukkit.getPluginManager().getPlugin(name)`. The Forge and Fabric command bridges expose registered commands and `/hypercore plugins` reports bridge and scheduler health.
-- GPU support now includes Vulkan loader/API detection, device selection, five compiled SPIR-V compute pipelines (squared-distance, radius-mask, batched radius-mask, 3D density-noise, particle physics simulation), device-local position buffers with host-visible staging, direct, resident-snapshot, and 33-query chunking correctness self-tests, and a configurable batch-size offload policy. Runtime execution uses `cpu-scalar` while Vulkan initializes, switches atomically to `adaptive-vulkan` when ready, and falls back to CPU after a later dispatch failure.
-- An immutable structure-of-arrays position snapshot and radius-query service now uses a GPU-generated packed match mask instead of reading every distance back to CPU. Repeated queries over the same `PositionBatch` retain one Vulkan position upload, while `withinRadii` records up to 32 radius dispatches in one command buffer and one fence wait before transparently chunking larger groups. Query, candidate, match, snapshot, multi-query batch, mask, readback-byte, initialization, and CPU/GPU counters are exposed through `/hypercore capabilities`.
-- A deterministic `:core:benchmarkCompute` Gradle task measures complete scalar/vector/Vulkan calls, resident snapshot calls, and eight-query individual-versus-batched submission. The current RTX 4060 report is recorded in [BENCHMARKS.md](BENCHMARKS.md); batching improved p50 between `1.33x` and `7.56x` from 4K through 1M candidates in the latest run, while the 4M compute-dominated case measured `1.19x`.
-- An **orchestrated dual-server deployment** enables simultaneous Forge and Fabric mod execution. Single-process coexistence is not pursued because the two loaders' transform pipelines are mutually exclusive. The `:core`-based Orchestrator (`OrchestratorMain`) launches a Forge host and a Fabric host as child JVMs, injects each host's role/IPC port/vector module flag automatically, and monitors their health. A versioned length-prefixed IPC bridge (handshake, heartbeats, acknowledgements) connects the hosts to the orchestrator, which owns a single logical world timeline: host world mutations are captured by `RegionExecutionService`, shipped as binary deltas, conflict-resolved (Forge-priority for equal block targets, spawn ownership for entities, connected-host authority for players), and broadcast to both hosts for mirror application on the server thread. Commands are mirrored across hosts under a prefix (`xforge_*` / `xfabric_*`), block-event cancellations propagate both ways, and player ownership is tracked. `/hypercore bridge status` and `/hypercore bridge peers` report connectivity, latency, delta counts, and mirrored commands. `:core:assembleDistribution` produces `distributions/hypercore-<version>/` with the orchestrator JAR, both host templates, and launch scripts. Forge mod support is unrestricted; Fabric mod support is scoped to performance-measurement and logic-adjustment mods that add no content (items, blocks, entities) and have been verified non-conflicting — content-adding Fabric mods are out of scope.
+The legacy `core`, `fabric`, and `forge` projects are not runtime dependencies
+of the standalone server. They remain in this repository only while reusable
+contracts are being migrated and must not be treated as the production server
+deployment.
 
 ## Build
 
-### Independent server core
-
-The standalone core is built in its own Gradle project:
+Install JDK 25, then run the standalone project:
 
 ```powershell
-cd server-paperweight
+Set-Location server-paperweight
 ./gradlew.bat :hypercore-server:setupMacheSources `
   :hypercore-server:applyPatches `
   :hypercore-server:rebuildPatches `
   :hypercore-server:createBundlerJar `
-  --offline
+  --offline --no-daemon
 ```
 
-The resulting launcher bundle is
-`server-paperweight/hypercore-server/build/libs/hypercore-server-bundler-0.1.0-SNAPSHOT.jar`.
-See [server-paperweight/README.md](server-paperweight/README.md) for the exact
-toolchain boundaries and local paperweight publication details.
+The output is:
 
-### Compatibility research modules
+```text
+server-paperweight/hypercore-server/build/libs/hypercore-server-bundler-0.1.0-SNAPSHOT.jar
+```
 
-HyperCore is a multi-loader Gradle build with three subprojects:
+`--offline` works after the Mojang bundle, Mache, and Gradle dependencies are
+cached. The repository configures `127.0.0.1:7892` for required downloads; run
+the initial dependency resolution only while that proxy is available.
 
-- **`:core`** — the loader-agnostic runtime (compute backends, region model, plugin bridge, configuration). A plain Java 21 library with no Minecraft references.
-- **`:forge`** — the Forge 1.21.1 adapter. Produces the deployable mod JAR.
-- **`:fabric`** — the Fabric 1.21.1 adapter. Produces a self-contained mod JAR.
+## Optional Vulkan Provider
 
-Requirements:
-
-- A Java 21 JDK
-- Network access for the first Gradle dependency download
-
-Build every subproject:
+Build the native provider separately:
 
 ```powershell
-./gradlew.bat build
+Set-Location server-paperweight
+./gradlew.bat :hypercore-vulkan-provider:assembleProviderDirectory --offline --no-daemon
 ```
 
-Deployable artifacts:
+Copy the contents of
+`hypercore-vulkan-provider/build/compute-providers` into the server's
+`compute-providers` directory, or pass
+`-Dhypercore.compute.providers=<directory>`. Missing drivers, unsupported
+devices, and native failures fall back to the deterministic CPU implementation.
 
-| Loader | Artifact | Notes |
-| --- | --- | --- |
-| Forge | `forge/build/libs/hypercore-forge-0.1.0-SNAPSHOT-all.jar` | Carries the Vulkan binding through Forge Jar-in-Jar. |
-| Fabric | `fabric/build/libs/hypercore-fabric-0.1.0-SNAPSHOT.jar` | Bundles `:core` main + vector output and `lwjgl-vulkan` directly. |
+## Current Verification Boundary
 
-The Forge `-all.jar` is the production artifact; the plain `hypercore-forge-...jar` is for development and dependency-aware tooling. `:core` builds a library JAR (`hypercore-core-...jar`) that is not meant to be deployed on its own.
+The patch pipeline and bundler generation are tested from cached dependencies.
+The Vulkan provider has unit and local-dispatch tests. A full server startup,
+EULA acceptance, world load, and gameplay tick smoke test are still required
+before the standalone core can be called runnable. No claim is made that
+ordinary Bukkit/Paper plugins or Fabric/Forge mods run directly on this server.
 
-### Forge development server
-
-```powershell
-./gradlew.bat :forge:runServer
-```
-
-On first launch, set `eula=true` in `forge/run/eula.txt` only after reviewing the Minecraft EULA. Automated dedicated-server validation does not require accepting the normal server EULA:
-
-```powershell
-./gradlew.bat :forge:runGameTestServer
-```
-
-The Forge GameTest also loads `core/build/libs/hypercore-gametest-bukkit-plugin.jar` from `forge/run/plugins` to validate Bukkit plugin discovery and command execution.
-
-### Fabric development server
-
-```powershell
-./gradlew.bat :fabric:runServer
-```
-
-### Fabric dedicated-server GameTest
-
-```powershell
-./gradlew.bat :fabric:runGameTestServer
-```
-
-Fabric's GameTest uses the same test Bukkit plugin staged into `fabric/run/plugins`.
-
-### Compute benchmark
-
-```powershell
-./gradlew.bat :core:benchmarkCompute
-```
-
-The generated report is written to `core/build/reports/hypercore/compute-benchmark.md`. It is a microbenchmark of the spatial mask backend, not an MSPT or world-simulation benchmark.
-
-### Noise compute benchmark
-
-```powershell
-./gradlew.bat :core:benchmarkNoiseCompute
-```
-
-The generated report is written to `core/build/reports/hypercore/noise-compute-benchmark.md`. It compares CPU scalar and GPU Vulkan 3D value-noise generation over volumes from 16³ (4,096 voxels) through 128³ (2,097,152 voxels).
-
-### Particle simulation benchmark
-
-```powershell
-./gradlew.bat :core:benchmarkParticleSim
-```
-
-The generated report is written to `core/build/reports/hypercore/particle-sim-benchmark.md`. It compares CPU scalar and GPU Vulkan particle/projectile physics simulation (Euler integration with gravity and elastic ground collision) over batches from 256 through 65,536 particles.
-
-### Other compute and scheduling benchmarks
-
-```powershell
-./gradlew.bat :core:benchmarkNBodySim
-./gradlew.bat :core:benchmarkLightPropagation
-./gradlew.bat :core:benchmarkDescriptorPool
-./gradlew.bat :core:benchmarkRegionParallel
-./gradlew.bat :core:benchmarkEndToEndTick
-./gradlew.bat :core:benchmarkAdaptiveScheduling
-```
-
-Each writes a report under `core/build/reports/hypercore/`. `benchmarkNBodySim` measures O(n²) gravity on CPU vs GPU; `benchmarkLightPropagation` measures iterative light relaxation; `benchmarkDescriptorPool` isolates Vulkan descriptor-pool allocation; `benchmarkRegionParallel` is a JMH throughput run over 1/2/4/8/16 active regions; `benchmarkEndToEndTick` measures the HyperCore post-tick overhead (region dispatch, delta capture, bridge resolution) excluding the vanilla tick body; `benchmarkAdaptiveScheduling` compares the static vs adaptive region owner coordinator. All are calibration microbenchmarks, not MSPT or world-simulation claims.
-
-### Server-core comparison (Paper vs Folia)
-
-A headless, configuration-standardized comparison runs one auto-benchmark Bukkit plugin on vanilla-like cores under identical world settings and heap. It measures server-recorded MSPT (Paper) and wall-clock tick period/TPS (Paper and Folia), and the plugin auto-detects Folia via `Bukkit.isOwnedByCurrentRegion`. The Paper 1.21.1 results and the comparison methodology are recorded in [BENCHMARKS.md](BENCHMARKS.md); Folia is staged and pending.
-
-The Forge development run tasks automatically stage `:core` and `:forge` classes and resources — including the compiled `.spv` shaders and the vector source-set output — into a single mod directory under `forge/build/dev-mod` via the `prepareDevMod` task. This keeps normal Gradle build outputs reproducible while giving Forge one complete exploded mod root.
-
-## Configuration
-
-Configuration keys are shared across loaders. Forge reads `config/hypercore-common.toml`; the Fabric adapter reads the same keys from `config/hypercore.properties` (a plain Java properties file). Missing keys fall back to the defaults below.
-
-| Key | Default | Purpose |
-| --- | ---: | --- |
-| `execution.workerThreads` | `0` | Automatic mode reserves one logical processor for the server thread. |
-| `execution.queueCapacity` | `0` | Automatic mode allocates 64 queued tasks per worker, with a minimum of 256. |
-| `metrics.tickSampleWindow` | `200` | Controls the rolling tick latency sample count. |
-| `compute.probeGpu` | `true` | Enables best-effort graphics adapter enumeration during startup. |
-| `compute.enableGpu` | `true` | Enables Vulkan compute initialization and the CPU fallback router. |
-| `compute.gpuMinimumBatchSize` | `16384` | Minimum batch size eligible for Vulkan offload. |
-| `compute.cpuBackend` | `auto` | Selects the CPU backend: `auto` uses the Vector API backend when available and falls back to `scalar`. |
-
-Invalid values are rejected by Forge's config specification, or fall back to the default with a logged warning under Fabric. GPU loader, device, allocation, and dispatch failures are reported and fall back to CPU-only operation without stopping the server.
-
-## Compute backends
-
-The scalar backend is the deterministic correctness baseline for structure-of-arrays squared-distance batches. A Java Vector API (`jdk.incubator.vector`) CPU backend vectorizes the same operation with bit-identical results and is 1.24x–2.04x faster than scalar after JIT priming. `compute.cpuBackend` (default `auto`) selects the vector backend at runtime when the incubator module is available and falls back to scalar otherwise; scalar is also the permanent fallback if the vector backend ever fails to load. Vulkan device creation and the 1,024-element GPU-vs-CPU self-test run on a dedicated daemon thread, so server startup and compute callers continue on the CPU backend while initialization is in progress. The router switches atomically to `adaptive-vulkan` when ready, sends batches below `compute.gpuMinimumBatchSize` to CPU, and permanently falls back after a runtime GPU failure.
-
-`SpatialQueryEngine` accepts an immutable copy of structure-of-arrays positions and returns the ordered indices whose squared distance is within an inclusive radius. Its scalar path packs matches directly, while its Vulkan path processes 32 candidates per invocation and returns one 32-bit mask word. The engine weakly caches one prepared backend snapshot per `PositionBatch`; repeated queries reuse resident XYZ data, while snapshot switching or direct buffer use is detected by a Vulkan data generation and triggers a correct re-upload. `withinRadii` returns query-major results and batches up to 32 Vulkan dispatches into one submission and fence wait. Larger groups are chunked without changing result order. Runtime shutdown closes query snapshots before the compute backend.
-
-The packed mask, resident snapshot, and multi-query submission are exact transfer and synchronization reductions, not end-to-end server performance claims. In the latest RTX 4060 run, eight batched queries were `7.56x`, `4.94x`, `3.10x`, `1.70x`, and `1.33x` faster than eight individual GPU submissions from 4K through 1M candidates. At 4M, compute cost dominated and the batch measured `1.19x`, so batching is not treated as universally faster. With positions held in device-local memory, the resident-snapshot path no longer crosses PCIe on every dispatch and now reaches a repeatable CPU crossover (65,536–262,144 candidates across runs); the full-call path (which still includes the staging→device-local copy) does not cross over. Entity, chunk, and block simulation remain outside the GPU path, and the default offload threshold stays unchanged until repeatable end-to-end query or tick gains are established.
-
-### 3D density noise generation
-
-A second GPU compute workload generates 3D value-noise density fields over regular voxel grids. Each voxel is computed from a deterministic integer hash of its surrounding lattice points with trilinear interpolation and a smoothstep fade. The hash function uses the same constants and bitwise operations in both Java (`ScalarNoiseComputeBackend`) and GLSL (`density_noise.comp`), so CPU and GPU output match within a 1e-5 tolerance. The `AdaptiveNoiseComputeBackend` mirrors the spatial adaptive router: asynchronous Vulkan initialization, batch-size-gated GPU offload via `GpuOffloadPolicy`, a self-test against the scalar reference, and permanent CPU fallback on GPU failure. The noise pipeline uses a 3D dispatch (8×8×4 local size) with a single write-only output buffer and 28 bytes of push constants (origin, grid dimensions, frequency).
-
-### Particle physics simulation
-
-A third GPU compute workload simulates particle/projectile physics over a batch of entities. Each particle has position and velocity in structure-of-arrays layout; one simulation step applies Euler integration (position += velocity * dt, velocity.y -= gravity * dt) with elastic ground collision at y=0. The CPU (`ScalarParticleSimulationBackend`) and GPU (`particle_sim.comp`) use the identical float operation order, so results match bit-for-bit within a 1e-5 tolerance. The `AdaptiveParticleSimulationBackend` follows the same asynchronous-init, batch-gated offload, self-test, and fallback pattern as the noise and spatial routers. The particle pipeline uses a 1D dispatch (256 local size) with two read-write storage buffers (positions and velocities) and 16 bytes of push constants (count, gravity, dt, restitution). In the latest RTX 4060 benchmark the GPU did not cross over within the tested range (256–65,536 particles) because the per-particle compute is too light to amortize staging upload, dispatch, and readback; the adaptive router therefore keeps particle simulation on CPU by default.
-
-## Region execution model
-
-The region prototype divides each dimension into 8 by 8 chunk regions. Every region maps deterministically to one logical owner lane. Messages are addressed from a source region to a target region and are only dispatched at a tick boundary.
-
-Within a dispatched tick:
-
-- Messages for the same target region retain FIFO order.
-- Regions assigned to the same owner execute serially.
-- Different owners may execute concurrently on the bounded HyperCore worker pool.
-- Messages submitted while a tick is in flight are deferred to the next tick.
-- Executor backpressure requeues an owner batch instead of dropping its messages.
-
-This is an ownership and messaging foundation for parallel Minecraft world ticking. Worker-thread world mutations are enqueued per-world and flushed on the server thread after `tickRegions` completes, so `RegionTickTask` implementations can safely call `RegionExecutionService` mutation methods (setBlockType, spawnEntity, etc.) from HyperCore worker threads. The server thread blocks on `tickRegions().join()` during the tick, so workers cannot marshal back to the server thread (that would deadlock); instead, mutations are deferred to a per-world queue that the server thread drains immediately after the join returns.
-
-## Architecture direction
-
-1. **Forge foundation**: preserve native Forge lifecycle, registries, events, and mod compatibility.
-2. **Mod-loader interoperability**: target simultaneous Forge mod and Fabric mod execution on one server. Single-process coexistence is architecturally infeasible for arbitrary mods — Forge's `ModLauncher` and Fabric's `KnotClassLoader` both assume exclusive control over `net.minecraft.*` class definition, mappings (SRG/official vs intermediary/named), Mixin application, and JPMS modules, and no single JVM can satisfy both assumptions simultaneously. HyperCore therefore implements coexistence exclusively as an orchestrated dual-server deployment: one Forge host and one Fabric host run as child JVMs under a `:core`-based Orchestrator that keeps their worlds consistent through a cross-process world-state bridge. Forge mod support is unrestricted. Fabric mod support is intentionally scoped to performance-measurement and logic-adjustment mods that do not add content (items, blocks, entities, or other registry entries) and that have been verified non-conflicting; content-adding Fabric mods are out of scope.
-3. **Compatibility bridge**: implement a controlled Bukkit-compatible API and event bridge rather than merging unrelated patched server jars.
-4. **Parallel execution**: establish region ownership and tick-boundary message passing before parallel world mutation. Worker-thread mutations are enqueued per-world and flushed on the server thread after `tickRegions` completes, so `RegionTickTask` implementations can safely mutate world state from HyperCore worker threads without violating Minecraft's server-thread affinity requirement.
-5. **Compute backends**: benchmark CPU scalar, Java Vector API, and GPU implementations for batch-friendly workloads.
-6. **Validation**: require behavior tests and end-to-end MSPT results for every optimization.
-
-## GPU policy
-
-GPU support is enabled by default and always has a CPU fallback. HyperCore enumerates graphics adapters and VRAM through OSHI, probes the Vulkan loader and API version through JNA, selects a compute-capable physical device, and submits compiled squared-distance and packed-radius-mask SPIR-V kernels against device-local position buffers (fed by host-visible staging with a transfer→compute pipeline barrier) plus a host-visible packed-mask output buffer. Prepared position snapshots retain uploaded XYZ data across repeated queries and report upload/reuse counts. Vulkan creation and both correctness self-tests are asynchronous; shutdown interrupts and bounded-joins initialization, and a backend that finishes after shutdown closes its native resources instead of becoming active. GPU use is gated by batch size and correctness verification; device limits or dispatch failures disable only the GPU path. Candidate workloads include batch terrain density generation, spatial broad-phase queries, and other data-oriented jobs. A GPU path will only be retained for a workload when it improves complete server tick or generation latency after upload, synchronization, and readback costs.
-
-## Plugin bridge kernel
-
-The current plugin layer is a HyperCore SPI designed to establish compatibility boundaries without claiming Bukkit or Paper binary compatibility. A plugin can declare a descriptor, receive `onLoad`/`onEnable`/`onDisable` lifecycle callbacks, register commands and aliases, define permission defaults and wildcard overrides, subscribe to prioritized cancellable events, and schedule sync or async next-tick, delayed, and repeating tasks. Sync callbacks execute from the server tick caller. Async callbacks use the bounded worker pool and must not mutate server-owned world state. Failed or disabled plugins have their pending tasks and other owned registrations removed during cleanup.
-
-External HyperCore plugins are loaded from JARs in the server's `plugins/` directory. Each participating JAR must contain a root-level `hypercore-plugin.json`:
-
-```json
-{
-  "id": "example_plugin",
-  "name": "Example Plugin",
-  "version": "1.0.0",
-  "apiVersion": 1,
-  "main": "com.example.ExamplePlugin",
-  "depends": ["required_plugin"],
-  "softDepends": ["optional_plugin"]
-}
-```
-
-The main class must implement `dev.hypercore.plugin.HyperPlugin` and have an accessible no-argument constructor. Hard dependencies determine lifecycle order and block dependents when unavailable. Soft dependencies affect order only when present and when doing so does not create a cycle. Every plugin receives a child-first class loader with server, Minecraft, logging, Gson, and HyperCore API namespaces delegated to the parent. Callback context class loaders are installed for lifecycle, command, event, and scheduled execution. Class sharing between plugin class loaders is not implemented, so dependencies currently express lifecycle order rather than a Java linkage contract.
-
-Forge and Fabric command registration is bridged into this SPI. A Bukkit/Paper compatibility layer discovers JARs using `plugin.yml`, translates the descriptor into the HyperCore SPI, wraps `JavaPlugin` main classes with a lifecycle/command/scheduler adapter, and bridges `plugin.yml`-defined commands, aliases, tab completion, permissions (with child-node inheritance), and sync scheduling through the HyperCore registry. It exposes a generated `org.bukkit.event.*` skeleton that covers the full package tree, with hand-written core infrastructure (`Event`, `Cancellable`, `HandlerList`) and generated event shells for the remaining types. Selected HyperCore internal events are forwarded as Bukkit events, and Bukkit events fired through the adapter are bridged back to the HyperCore event bus where a counterpart exists. Plugins can discover each other through `Bukkit.getPluginManager().getPlugin(name)`.
-
-The adapter now implements a targeted subset of `org.bukkit.*` for world, block, block-entity, inventory, item meta, entity mutation, and Player-exclusive APIs; these pass dedicated-server GameTests under both Forge and Fabric. World time-of-day and world-age (`getFullTime`/`setFullTime`) accesses are mapped to the corresponding vanilla level data, and player display names resolve through the game profile. It does not yet claim full binary compatibility with the entire Bukkit/Paper API surface. See [COMPATIBILITY.md](COMPATIBILITY.md) for the current behavior matrix and explicit unsupported areas.
-
-## Roadmap
-
-- [x] Forge 1.21.1 project foundation
-- [x] Fabric loader adapter subproject (buildable; not simultaneous with Forge)
-- [x] Simultaneous Forge and Fabric mod execution through an orchestrated dual-server deployment (orchestrator, IPC bridge, world-state bridge with conflict arbitration, command/event/player proxies, distribution packaging, and coexistence GameTests)
-- [x] Safe background executor and basic tick diagnostics
-- [x] Unit tests for metrics, isolated worker execution, and queue backpressure
-- [x] Automated Forge dedicated-server GameTest
-- [x] Configuration and capability detection
-- [x] Scalar CPU spatial compute baseline
-- [x] Region ownership and cross-region task model prototype
-- [x] Controlled plugin bridge kernel for commands, permissions, lifecycle, and events
-- [x] CPU vector compute baseline (runtime CPU backend via `compute.cpuBackend`; 1.24x–2.04x faster than scalar)
-- [x] Vulkan compute prototype with SPIR-V shader, self-test, and CPU fallback
-- [x] Asynchronous Vulkan lifecycle and immutable spatial-radius query service
-- [x] Packed GPU radius-mask pipeline with compressed result readback
-- [x] Reproducible scalar-vs-Vulkan packed-mask benchmark harness
-- [x] Persistent mapped host-coherent Vulkan buffers
-- [x] Resident snapshot reuse across multiple spatial queries
-- [x] Multi-query Vulkan command batching with bounded chunking
-- [x] Device-local snapshot storage with a repeatable resident GPU crossover (65,536–262,144 candidates)
-- [x] Batched radius-mask dispatch (single 2D Vulkan dispatch for multiple origins against one candidate set; `SpatialQueryEngine.batchWithinRadius`)
-- [x] GPU 3D density-noise compute (bit-exact CPU/GPU hash, adaptive routing, self-test, dedicated benchmark task)
-- [x] Plugin-owned tick scheduler and initial compatibility matrix
-- [x] External HyperCore SPI plugin discovery, isolation, and dependency ordering
-- [x] Bukkit/Paper `plugin.yml` descriptor translation and `JavaPlugin` lifecycle/command/scheduler bridge prototype (minimal `org.bukkit.*` stubs; not binary-compatible)
-- [x] Full `org.bukkit.event.*` skeleton with bidirectional event bridge, tab completion, `plugin.yml` permissions with children, and cross-plugin lookup (validated in Forge/Fabric GameTests)
-- [x] Bukkit/Paper world, block, block-entity, inventory, entity mutation, and Player-exclusive API conformance (validated in Forge/Fabric GameTests; see [COMPATIBILITY.md](COMPATIBILITY.md))
-- [x] Orchestrator runtime and host-launch contract (`HyperCoreRole`, `OrchestratorRuntime`, `ServerProcess`, `ProcessLauncher`)
-- [x] Versioned IPC bridge protocol (`PacketCodec`, `IpcChannel`, handshake/heartbeat/ack packets, `BridgeEndpoint`, `OrchestratorBridgeServer`)
-- [x] Dual-write world-state bridge with conflict arbitration (`WorldDelta` types, `ConflictResolver`, `WorldStateBridge`, `WorldDeltaSender`/`WorldDeltaApplier`)
-- [x] Cross-host command, event, and player proxies (`CommandProxy`, `RemoteCommandSender`, `EventProxy`, `PlayerProxy`)
-- [x] Distribution packaging (`:core:assembleDistribution`) and coexistence GameTests (`crossProcessBlockSync`, `crossProcessEntityMove`, `crossProcessCommandExecution`, `crossProcessEventPropagation`)
-- [x] Fabric mod support scope: single-process coexistence ruled out as architecturally infeasible; Fabric support limited to non-content performance/logic mods verified non-conflicting; Forge support unrestricted
-
-See [CHANGELOG.md](CHANGELOG.md) for completed changes.
+See [server-paperweight/README.md](server-paperweight/README.md) for the
+paperweight worktree model, patch lifecycle, and provider installation details.
 
 ## License
 
-Apache License 2.0. Minecraft and Minecraft Forge are trademarks of their respective owners. HyperCore is not affiliated with Mojang Studios or Microsoft.
+Apache License 2.0. Minecraft is a trademark of Microsoft. HyperCore is not
+affiliated with Mojang Studios or Microsoft.

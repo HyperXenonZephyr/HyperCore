@@ -1,0 +1,16 @@
+--- /dev/null
++++ b/dev/hypercore/server/plugin/ServerPlugin.java
+@@ -1,0 +_,13 @@
++package dev.hypercore.server.plugin;
++
++/** Minimal standalone plugin lifecycle; Bukkit descriptor discovery is supported. */
++public interface ServerPlugin {
++    default void onLoad(final PluginContext context) {
++    }
++
++    default void onEnable(final PluginContext context) {
++    }
++
++    default void onDisable(final PluginContext context) {
++    }
++}

@@ -1,0 +1,15 @@
+--- /dev/null
++++ b/dev/hypercore/server/region/RegionComputeTask.java
+@@ -1,0 +_,12 @@
++package dev.hypercore.server.region;
++
++import java.util.List;
++
++/**
++ * Pure worker computation. Returned values are applied only by the server
++ * thread during a later tick boundary.
++ */
++@FunctionalInterface
++public interface RegionComputeTask {
++    List<RegionMutation> compute(RegionSnapshot snapshot);
++}

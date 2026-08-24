@@ -1,0 +1,36 @@
+--- /dev/null
++++ b/dev/hypercore/server/plugin/PluginContext.java
+@@ -1,0 +_,33 @@
++package dev.hypercore.server.plugin;
++
++import java.util.List;
++import java.util.Objects;
++
++/** Context scoped to one plugin registration. */
++public final class PluginContext {
++    private final PluginRuntime runtime;
++    private final PluginDescriptor descriptor;
++
++    PluginContext(final PluginRuntime runtime, final PluginDescriptor descriptor) {
++        this.runtime = runtime;
++        this.descriptor = descriptor;
++    }
++
++    public PluginDescriptor descriptor() { return this.descriptor; }
++
++    public void registerCommand(final String label, final PluginRuntime.Command command) {
++        this.runtime.registerCommand(this.descriptor.id(), label, command);
++    }
++
++    public PluginRuntime.TaskHandle runTask(final Runnable action) {
++        return this.runtime.schedule(this.descriptor.id(), action);
++    }
++
++    public <E> PluginRuntime.Subscription registerListener(final Class<E> eventType, final PluginRuntime.EventListener<E> listener) {
++        return this.runtime.registerListener(this.descriptor.id(), eventType, listener);
++    }
++
++    public List<String> plugins() { return this.runtime.pluginIds(); }
++
++    public void requireServerThread() { this.runtime.requireServerThread(); }
++}

@@ -40,6 +40,23 @@ The bundler bootstraps through Paperclip and stores
 `net.minecraft.server.Main` in `META-INF/main-class`. A real server start, EULA
 acceptance, world load, and tick smoke test have not yet been performed.
 
+## Optional Vulkan Compute Provider
+
+The base server has no LWJGL or Vulkan runtime dependency. Build the optional
+provider separately when a host needs GPU spatial compute:
+
+```powershell
+./gradlew :hypercore-vulkan-provider:assembleProviderDirectory --offline
+```
+
+Copy the contents of `hypercore-vulkan-provider/build/compute-providers` to the
+server's `compute-providers` directory, or set
+`-Dhypercore.compute.providers=<directory>`. The provider is discovered through
+`ServiceLoader`; failed native initialization leaves the deterministic CPU
+backend active. `squared-length-3d` remains f64 CPU work. The Vulkan provider
+implements the explicitly f32 operation `squared-length-3d-f32` and loads its
+own LWJGL, shaderc, and platform-native jars only from that directory.
+
 ## Local Paperweight Publication
 
 The local paperweight checkout is `../paperweight-2.0.0-beta.21`. Publish the

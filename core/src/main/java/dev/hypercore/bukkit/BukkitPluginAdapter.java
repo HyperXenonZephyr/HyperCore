@@ -134,9 +134,10 @@ public final class BukkitPluginAdapter implements HyperPlugin {
             return PluginPermissionService.PermissionDefault.OP;
         }
         return switch (text) {
-            case "TRUE", "NOT_OP" -> PluginPermissionService.PermissionDefault.TRUE;
+            case "TRUE" -> PluginPermissionService.PermissionDefault.TRUE;
             case "FALSE" -> PluginPermissionService.PermissionDefault.FALSE;
             case "OP" -> PluginPermissionService.PermissionDefault.OP;
+            case "NOT_OP" -> PluginPermissionService.PermissionDefault.NOT_OP;
             default -> PluginPermissionService.PermissionDefault.OP;
         };
     }

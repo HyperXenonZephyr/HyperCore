@@ -1,0 +1,28 @@
+--- /dev/null
++++ b/dev/hypercore/server/bukkit/BukkitCompatibilityBridge.java
+@@ -1,0 +_,25 @@
++package dev.hypercore.server.bukkit;
++
++import dev.hypercore.server.plugin.PluginRuntime;
++import java.util.Objects;
++
++/**
++ * Narrow bridge for plugin.yml-discovered plugins. It intentionally exposes no
++ * claim of Paper binary compatibility; NMS events are added one mutation hook
++ * at a time through this server-thread facade.
++ */
++public final class BukkitCompatibilityBridge {
++    private final PluginRuntime runtime;
++
++    public BukkitCompatibilityBridge(final PluginRuntime runtime) {
++        this.runtime = Objects.requireNonNull(runtime, "runtime");
++    }
++
++    public boolean dispatchCommand(final String label, final String[] arguments) {
++        return this.runtime.dispatchCommand(label, arguments);
++    }
++
++    public <E> int postEvent(final E event) {
++        return this.runtime.postEvent(event);
++    }
++}

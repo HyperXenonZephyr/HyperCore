@@ -18,7 +18,7 @@ import java.util.Map;
  */
 public final class FabricWorldAccessFactory implements WorldAccessFactory {
     private final MinecraftServer server;
-    private final Map<String, FabricWorldAccess> accessByName = new HashMap<>();
+    private final Map<String, WorldAccess> accessByName = new HashMap<>();
 
     public FabricWorldAccessFactory(MinecraftServer server) {
         this.server = server;
@@ -26,7 +26,15 @@ public final class FabricWorldAccessFactory implements WorldAccessFactory {
 
     @Override
     public WorldAccess access(String worldName) {
-        return accessByName.computeIfAbsent(worldName, this::createAccess);
+        WorldAccess existing = accessByName.get(worldName);
+        if (existing != null) {
+            return existing;
+        }
+        WorldAccess created = createAccess(worldName);
+        if (created != null) {
+            accessByName.put(worldName, created);
+        }
+        return created;
     }
 
     @Override
@@ -38,9 +46,9 @@ public final class FabricWorldAccessFactory implements WorldAccessFactory {
         for (ServerLevel level : server.getAllLevels()) {
             String dimensionName = level.dimension().location().toString();
             if (dimensionName.equals(requested)
-                || (level.dimension() == Level.OVERWORLD && ("overworld".equals(requested) || "world".equals(requested)))
-                || (level.dimension() == Level.NETHER && "the_nether".equals(requested))
-                || (level.dimension() == Level.END && "the_end".equals(requested))) {
+                || (Level.OVERWORLD.equals(level.dimension()) && ("overworld".equals(requested) || "world".equals(requested)))
+                || (Level.NETHER.equals(level.dimension()) && "the_nether".equals(requested))
+                || (Level.END.equals(level.dimension()) && "the_end".equals(requested))) {
                 return dimensionName;
             }
         }
@@ -69,7 +77,7 @@ public final class FabricWorldAccessFactory implements WorldAccessFactory {
             ResourceKey<Level> key = level.dimension();
             String dimensionName = key.location().toString();
             if (dimensionName.equals(worldName)
-                || key == Level.OVERWORLD && ("overworld".equals(worldName) || "world".equals(worldName))) {
+                || Level.OVERWORLD.equals(key) && ("overworld".equals(worldName) || "world".equals(worldName))) {
                 return level;
             }
         }

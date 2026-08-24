@@ -1,6 +1,6 @@
 --- /dev/null
 +++ b/dev/hypercore/server/region/ServerRegionScheduler.java
-@@ -1,0 +_,109 @@
+@@ -1,0 +_,169 @@
 +package dev.hypercore.server.region;
 +
 +import java.util.ArrayList;
@@ -11,6 +11,9 @@
 +import java.util.TreeMap;
 +import java.util.concurrent.CompletableFuture;
 +import java.util.concurrent.atomic.AtomicLong;
++import net.minecraft.core.BlockPos;
++import net.minecraft.core.registries.BuiltInRegistries;
++import net.minecraft.resources.Identifier;
 +import net.minecraft.server.level.ServerLevel;
 +import net.minecraft.world.level.ChunkPos;
 +
@@ -23,6 +26,8 @@
 + */
 +public final class ServerRegionScheduler implements AutoCloseable {
 +    private final Thread serverThread;
++    private final ServerMutationQueue mutations;
++    private final Map<String, ServerLevel> levelsByDimension = new TreeMap<>();
 +    private final AtomicLong observedRegionPasses = new AtomicLong();
 +    private volatile List<RegionSnapshot> latestSnapshots = List.of();
 +    private volatile RegionMailboxScheduler scheduler;
@@ -30,6 +35,7 @@
 +
 +    public ServerRegionScheduler(final Thread serverThread) {
 +        this.serverThread = Objects.requireNonNull(serverThread, "serverThread");
++        this.mutations = new ServerMutationQueue(serverThread);
 +    }
 +
 +    public void start() {
@@ -51,14 +57,17 @@
 +            return;
 +        }
 +
++        this.levelsByDimension.clear();
 +        Map<RegionKey, Integer> chunkCounts = new TreeMap<>();
 +        for (ServerLevel level : levels) {
 +            String dimensionId = level.dimension().identifier().toString();
++            this.levelsByDimension.put(dimensionId, level);
 +            for (ChunkPos chunk : level.getChunkSource().snapshotFullChunkPositions()) {
 +                RegionKey key = RegionKey.fromChunk(dimensionId, chunk.x(), chunk.z());
 +                chunkCounts.merge(key, 1, Integer::sum);
 +            }
 +        }
++        this.mutations.applyAtTickBoundary(this::applyMutation);
 +
 +        List<RegionSnapshot> snapshots = new ArrayList<>(chunkCounts.size());
 +        for (Map.Entry<RegionKey, Integer> entry : chunkCounts.entrySet()) {
@@ -92,6 +101,28 @@
 +        return this.latestResult;
 +    }
 +
++    /**
++     * Schedules pure worker computation whose value-only output is deferred to
++     * the next server tick. No worker receives a level, entity, or chunk.
++     */
++    public void enqueueComputation(final RegionKey target, final RegionComputeTask task) {
++        this.requireServerThread();
++        RegionMailboxScheduler current = Objects.requireNonNull(this.scheduler, "Region scheduler is not started");
++        current.enqueue(target, snapshot -> {
++            List<RegionMutation> output = List.copyOf(Objects.requireNonNull(task.compute(snapshot), "compute result"));
++            for (RegionMutation mutation : output) {
++                if (!mutation.target().equals(snapshot.key())) {
++                    throw new IllegalArgumentException("A region task may only emit mutations for its own region");
++                }
++                this.mutations.submit(mutation);
++            }
++        });
++    }
++
++    public ServerMutationQueue mutations() {
++        return this.mutations;
++    }
++
 +    @Override
 +    public void close() {
 +        RegionMailboxScheduler current = this.scheduler;
@@ -102,6 +133,35 @@
 +
 +    private void recordObservation(final RegionSnapshot snapshot) {
 +        this.observedRegionPasses.incrementAndGet();
++    }
++
++    private void applyMutation(final RegionMutation mutation) {
++        ServerLevel level = this.levelsByDimension.get(mutation.target().dimensionId());
++        if (level == null) return;
++        if (!mutation.operation().equals("set-block")) return;
++        try {
++            int x = Integer.parseInt(requiredValue(mutation, "x"));
++            int y = Integer.parseInt(requiredValue(mutation, "y"));
++            int z = Integer.parseInt(requiredValue(mutation, "z"));
++            if (!RegionKey.fromChunk(mutation.target().dimensionId(), x >> 4, z >> 4).equals(mutation.target())) return;
++            BlockPos position = new BlockPos(x, y, z);
++            if (!level.isInWorldBounds(position) || !level.getChunkSource().hasChunk(x >> 4, z >> 4)) return;
++            Identifier blockId = Identifier.tryParse(requiredValue(mutation, "block"));
++            if (blockId == null) return;
++            var block = BuiltInRegistries.BLOCK.getOptional(blockId).orElse(null);
++            if (block == null) return;
++            level.setBlock(position, block.defaultBlockState(), 3);
++        } catch (IllegalArgumentException ignored) {
++            // Worker output is untrusted data and must not abort a server tick.
++            return;
++        }
++        this.observedRegionPasses.incrementAndGet();
++    }
++
++    private static String requiredValue(final RegionMutation mutation, final String key) {
++        String value = mutation.values().get(key);
++        if (value == null || value.isBlank()) throw new IllegalArgumentException("Missing mutation value: " + key);
++        return value;
 +    }
 +
 +    private void requireServerThread() {
