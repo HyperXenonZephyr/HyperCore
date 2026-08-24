@@ -27,9 +27,35 @@ The source setup and patch lifecycle are operational:
 - The compile classpath includes all libraries extracted from Mojang's server
   bundler plus Mache's annotation-only compile dependencies.
 
-The Phase 2 source patches add a bounded region mailbox scheduler with
-immutable snapshots, deterministic owner lanes, and lifecycle-safe shutdown.
-They do not move vanilla level ticks or world mutation off the server thread.
+The source patches currently add:
+
+- **Region scheduler** (`dev.hypercore.server.region`): a bounded region
+  mailbox scheduler with immutable snapshots, deterministic owner lanes, and
+  lifecycle-safe shutdown. Workers return value-only `RegionMutation` records;
+  `ServerMutationQueue` applies them on the server thread at a tick boundary
+  with ownership, world-bounds, chunk-loaded, and registry validation. Worker
+  tasks may only mutate their own region. Vanilla level ticks and world
+  mutation stay on the server thread.
+- **Plugin runtime** (`dev.hypercore.server.plugin`): server-thread-only
+  runtime with `plugin.yml` discovery, child-first JAR isolation, dependency
+  ordering, commands, next-tick tasks, and typed events. Failed activations
+  roll back their registrations; external cancellation defers to a tick
+  boundary.
+- **Compute service** (`dev.hypercore.server.compute`): deterministic CPU
+  backend (`identity`, f64 `squared-length-3d`, explicit-f32
+  `squared-length-3d-f32`) with optional ServiceLoader providers loaded from
+  `compute-providers/` through an isolated class loader. Native failures fall
+  back to CPU without stopping the server.
+- **Loader compatibility registry** (`dev.hypercore.server.compat`):
+  lifecycle hooks for future Fabric/Forge adapters with per-provider failure
+  isolation.
+- **Bukkit compatibility bridge** (`dev.hypercore.server.bukkit`): a narrow
+  server-thread facade over the plugin runtime; no Paper binary-compatibility
+  claim.
+- **Server integration** (`net.minecraft.server.*`): `MinecraftServer` wires
+  the runtimes into startup, tick (`hypercoreRegions` profiler section), and
+  shutdown; `ServerChunkCache.snapshotFullChunkPositions()` provides a
+  thread-guarded full-chunk snapshot for region planning.
 
 Run `createBundlerJar` to generate these artifacts:
 
@@ -86,6 +112,14 @@ been cached:
   --offline
 ```
 
+Run the unit tests (runtime boundaries, region mailbox scheduler, Vulkan
+provider):
+
+```powershell
+./gradlew :hypercore-server:test `
+  :hypercore-vulkan-provider:test --offline --no-daemon
+```
+
 The task graph explicitly orders source, resource, and feature patch application
 before patch rebuilding and Java compilation. This is required by Gradle 9's
 strict implicit-dependency validation.
@@ -98,6 +132,10 @@ strict implicit-dependency validation.
   source worktree with local patch-baseline commits.
 - `hypercore-server/src/minecraft/resources`: generated and patched Mojang
   resource worktree with local patch-baseline commits.
+- `hypercore-server/src/test/java`: unit tests that run against the patched
+  worktree classes (`RuntimeBoundaryTest`, `RegionMailboxSchedulerTest`).
+- `hypercore-vulkan-provider/`: optional compute provider subproject; builds a
+  self-contained provider directory through `assembleProviderDirectory`.
 - `paper-server/patches`: HyperCore source, resource, and feature patches.
 
 `paper-server` is retained only because paperweight's default patch layout uses
