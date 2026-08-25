@@ -1,34 +1,38 @@
 --- a/net/minecraft/server/MinecraftServer.java
 +++ b/net/minecraft/server/MinecraftServer.java
-@@ -10,6 +_,11 @@
+@@ -10,6 +_,13 @@
  import com.mojang.jtracy.DiscontinuousFrame;
  import com.mojang.jtracy.TracyClient;
  import com.mojang.logging.LogUtils;
++import dev.hypercore.server.command.HyperCoreCommands;
 +import dev.hypercore.server.compat.LoaderCompatibilityRegistry;
 +import dev.hypercore.server.compute.ComputeService;
 +import dev.hypercore.server.config.HyperCoreConfig;
++import dev.hypercore.server.metrics.TickMetrics;
 +import dev.hypercore.server.plugin.PluginRuntime;
 +import dev.hypercore.server.region.ServerRegionScheduler;
  import it.unimi.dsi.fastutil.objects.ObjectArrayList;
  import it.unimi.dsi.fastutil.objects.ObjectArraySet;
  import java.io.File;
-@@ -294,6 +_,11 @@
+@@ -294,6 +_,12 @@
      private final PacketProcessor packetProcessor;
      private final TimerQueue<MinecraftServer> scheduledEvents;
      private final ServerClockManager clockManager;
 +    private final ServerRegionScheduler regionScheduler;
 +    private final HyperCoreConfig hypercoreConfig;
++    private final TickMetrics tickMetrics;
 +    private final LoaderCompatibilityRegistry compatibilityProviders;
 +    private final ComputeService computeService;
 +    private final PluginRuntime pluginRuntime;
  
      public static <S extends MinecraftServer> S spin(final Function<Thread, S> factory) {
          AtomicReference<S> serverReference = new AtomicReference<>();
-@@ -351,6 +_,11 @@
+@@ -351,6 +_,12 @@
                  .filterFeatures(this.worldData.enabledFeatures());
              this.structureTemplateManager = new StructureTemplateManager(worldStem.resourceManager(), storageSource, fixerUpper, blockLookup);
              this.serverThread = serverThread;
 +            this.hypercoreConfig = HyperCoreConfig.load(java.nio.file.Path.of(HyperCoreConfig.DEFAULT_FILE_NAME));
++            this.tickMetrics = new TickMetrics(this.hypercoreConfig.metricsWindowSize());
 +            this.regionScheduler = new ServerRegionScheduler(serverThread);
 +            this.compatibilityProviders = new LoaderCompatibilityRegistry();
 +            this.computeService = new ComputeService(this.hypercoreConfig.computeProviderDirectory());
@@ -47,17 +51,26 @@
          this.packetProcessor.close();
          if (this.metricsRecorder.isRecording()) {
              this.cancelRecordingMetrics();
-@@ -735,6 +_,10 @@
+@@ -735,6 +_,11 @@
                  throw new IllegalStateException("Failed to initialize server");
              }
  
 +            this.regionScheduler.start();
 +            this.compatibilityProviders.start();
 +            this.pluginRuntime.start();
++            HyperCoreCommands.register(this.getCommands().getDispatcher(), this);
 +
              this.nextTickTimeNanos = Util.getNanos();
              this.statusIcon = this.loadStatusIcon().orElse(null);
              this.status = this.buildServerStatus();
+@@ -1013,6 +_,7 @@
+         this.aggregatedTickTimesNanos = this.aggregatedTickTimesNanos - this.tickTimesNanos[tickIndex];
+         this.aggregatedTickTimesNanos += tickTime;
+         this.tickTimesNanos[tickIndex] = tickTime;
++        this.tickMetrics.record(tickTime);
+         this.smoothedTickTimeMillis = this.smoothedTickTimeMillis * 0.8F + (float)tickTime / (float)TimeUtil.NANOSECONDS_PER_MILLISECOND * 0.19999999F;
+         this.logTickMethodTime(nano);
+         profiler.pop();
 @@ -1138,6 +_,9 @@
              profiler.pop();
          }
@@ -68,3 +81,26 @@
          profiler.popPush("connection");
          this.tickConnection();
          profiler.popPush("players");
+@@ -1697,6 +_,22 @@
+ 
+     public Commands getCommands() {
+         return this.resources.managers.getCommands();
++    }
++
++    public TickMetrics hypercoreTickMetrics() {
++        return this.tickMetrics;
++    }
++
++    public ServerRegionScheduler hypercoreRegionScheduler() {
++        return this.regionScheduler;
++    }
++
++    public ComputeService hypercoreComputeService() {
++        return this.computeService;
++    }
++
++    public PluginRuntime hypercorePluginRuntime() {
++        return this.pluginRuntime;
+     }
+ 
+     public CommandSourceStack createCommandSourceStack() {

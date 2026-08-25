@@ -1,0 +1,134 @@
+--- /dev/null
++++ b/dev/hypercore/server/command/HyperCoreCommands.java
+@@ -1,0 +_,131 @@
++package dev.hypercore.server.command;
++
++import com.mojang.brigadier.CommandDispatcher;
++import com.mojang.brigadier.context.CommandContext;
++import dev.hypercore.server.metrics.TickMetrics;
++import java.util.Locale;
++import net.minecraft.commands.CommandSourceStack;
++import net.minecraft.commands.Commands;
++import net.minecraft.network.chat.Component;
++import net.minecraft.server.MinecraftServer;
++
++/**
++ * Server-owned read-only diagnostics under /hypercore. Registered once during
++ * server startup; a vanilla /reload rebuilds the dispatcher and drops this
++ * tree until restart.
++ */
++public final class HyperCoreCommands {
++    private HyperCoreCommands() {
++    }
++
++    public static void register(final CommandDispatcher<CommandSourceStack> dispatcher, final MinecraftServer server) {
++        dispatcher.register(
++            Commands.literal("hypercore")
++                .requires(Commands.hasPermission(Commands.LEVEL_GAMEMASTERS))
++                .then(Commands.literal("status").executes(context -> status(context, server)))
++                .then(Commands.literal("timings").executes(context -> timings(context, server)))
++                .then(Commands.literal("regions").executes(context -> regions(context, server)))
++                .then(Commands.literal("plugins").executes(context -> plugins(context, server)))
++                .then(Commands.literal("compute").executes(context -> compute(context, server)))
++        );
++    }
++
++    private static int status(final CommandContext<CommandSourceStack> context, final MinecraftServer server) {
++        final TickMetrics metrics = server.hypercoreTickMetrics();
++        final Runtime runtime = Runtime.getRuntime();
++        final long usedMemory = (runtime.totalMemory() - runtime.freeMemory()) >> 20;
++        final long maxMemory = runtime.maxMemory() >> 20;
++        return send(context,
++            "HyperCore status",
++            "tick window: " + metrics.count() + "/" + metrics.capacity() + " samples",
++            msptLine(metrics),
++            "heap: " + usedMemory + "/" + maxMemory + " MiB",
++            "plugins loaded: " + server.hypercorePluginRuntime().pluginIds().size(),
++            "compute gpu: " + (server.hypercoreComputeService().gpuAvailable() ? "available" : "unavailable")
++        );
++    }
++
++    private static int timings(final CommandContext<CommandSourceStack> context, final MinecraftServer server) {
++        final TickMetrics metrics = server.hypercoreTickMetrics();
++        if (metrics.count() == 0) {
++            return send(context, "No tick samples recorded yet.");
++        }
++        return send(context,
++            "HyperCore tick timings (" + metrics.count() + " samples)",
++            "average: " + millis(metrics.average()),
++            "p50: " + millis(metrics.median()),
++            "p95: " + millis(metrics.percentile95()),
++            "max: " + millis(metrics.maximum())
++        );
++    }
++
++    private static int regions(final CommandContext<CommandSourceStack> context, final MinecraftServer server) {
++        final var scheduler = server.hypercoreRegionScheduler();
++        final var status = scheduler.status();
++        final var result = scheduler.latestResult();
++        final var builder = new StringBuilder("HyperCore regions\n");
++        builder.append("owner lanes: ").append(status.owners()).append('\n');
++        builder.append("queued messages: ").append(status.queuedMessages()).append('\n');
++        builder.append("submitted/executed/requeued/failed: ")
++            .append(status.submittedMessages()).append('/')
++            .append(status.executedMessages()).append('/')
++            .append(status.requeuedMessages()).append('/')
++            .append(status.failedRegions()).append('\n');
++        builder.append("completed region ticks: ").append(status.completedTicks()).append('\n');
++        builder.append("snapshots planned: ").append(scheduler.latestSnapshots().size()).append('\n');
++        builder.append("mutations pending/applied: ")
++            .append(scheduler.mutations().pending()).append('/')
++            .append(scheduler.mutations().applied()).append('\n');
++        if (result == null) {
++            builder.append("no region pass executed yet");
++        } else {
++            builder.append("last pass: tick ").append(result.serverTick())
++                .append(", regions ").append(result.activeRegions())
++                .append(", lanes used ").append(result.ownersUsed())
++                .append(", messages ").append(result.executedMessages());
++        }
++        return rawSend(context, builder.toString());
++    }
++
++    private static int plugins(final CommandContext<CommandSourceStack> context, final MinecraftServer server) {
++        final var ids = server.hypercorePluginRuntime().pluginIds();
++        if (ids.isEmpty()) {
++            return send(context, "No plugins loaded.");
++        }
++        return send(context, "Plugins (" + ids.size() + "): " + String.join(", ", ids));
++    }
++
++    private static int compute(final CommandContext<CommandSourceStack> context, final MinecraftServer server) {
++        final var compute = server.hypercoreComputeService();
++        return send(context,
++            "HyperCore compute",
++            "gpu available: " + compute.gpuAvailable(),
++            "registered providers: " + compute.providerCount(),
++            "fallback backend: cpu-scalar"
++        );
++    }
++
++    private static String msptLine(final TickMetrics metrics) {
++        if (metrics.count() == 0) {
++            return "mspt avg/p50/p95/max: no samples";
++        }
++        return "mspt avg/p50/p95/max: "
++            + millis(metrics.average()) + '/'
++            + millis(metrics.median()) + '/'
++            + millis(metrics.percentile95()) + '/'
++            + millis(metrics.maximum());
++    }
++
++    private static String millis(final double nanos) {
++        return String.format(Locale.ROOT, "%.3f", nanos / 1_000_000.0);
++    }
++
++    private static int send(final CommandContext<CommandSourceStack> context, final String... lines) {
++        return rawSend(context, String.join("\n", lines));
++    }
++
++    private static int rawSend(final CommandContext<CommandSourceStack> context, final String text) {
++        context.getSource().sendSuccess(() -> Component.literal(text), false);
++        return 1;
++    }
++}

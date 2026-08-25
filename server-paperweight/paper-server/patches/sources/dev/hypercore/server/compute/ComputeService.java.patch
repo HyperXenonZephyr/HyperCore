@@ -1,6 +1,6 @@
 --- /dev/null
 +++ b/dev/hypercore/server/compute/ComputeService.java
-@@ -1,0 +_,203 @@
+@@ -1,0 +_,208 @@
 +package dev.hypercore.server.compute;
 +
 +import java.io.IOException;
@@ -68,6 +68,11 @@
 +            throw new IllegalStateException("Compute service is closed");
 +        }
 +        this.gpuAvailable = available;
++    }
++
++    /** Number of discovered optional backends, excluding the CPU fallback. */
++    public int providerCount() {
++        return this.providers.size();
 +    }
 +
 +    @Override
