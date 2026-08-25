@@ -72,7 +72,30 @@ The standalone core owns a neutral provider SPI
 (`LoaderCompatibilityRegistry`) whose per-provider failures are isolated from
 the server lifecycle. Optional Fabric and Forge adapters must remain outside
 the server JAR because their launchers cannot coexist inside one Minecraft
-server class loader.
+server class loader. The existing adapter implementations live in the legacy
+`fabric/` and `forge/` projects and are being migrated onto this SPI.
+
+## Deployment Model: Orchestrated Dual-Server
+
+HyperCore's mod story is asymmetric by design and deployed as two cooperating
+server processes that share one world timeline through the cross-process
+world-state bridge:
+
+- **Forge host — full mod support.** Any Forge mod may load. The Forge host is
+  the content-authoritative side of the timeline.
+- **Fabric host — whitelist-gated mods.** Single-process Forge+Fabric
+  coexistence is architecturally infeasible, so Fabric runs in its own JVM.
+  Only performance-measurement and logic-adjustment mods that add no registry
+  content and have been manually verified non-conflicting are permitted;
+  unverified mods can corrupt the shared timeline through unmatched content
+  registrations or hostile mixins. The host validates loaded mods against
+  [FABRIC_MOD_WHITELIST.md](FABRIC_MOD_WHITELIST.md) at startup and can be
+  configured to refuse startup on a violation. Because the Fabric loader runs
+  before HyperCore's entrypoint, build-time gating is done by the distribution
+  assembler, which only stages whitelisted JARs into the Fabric host template.
+
+Migrating these adapter roles onto the standalone core's
+`LoaderCompatibilityRegistry` SPI is an active work item.
 
 ### Compute
 
