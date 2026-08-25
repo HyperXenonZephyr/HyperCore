@@ -1,0 +1,118 @@
+--- /dev/null
++++ b/dev/hypercore/server/plugin/PermissionRegistry.java
+@@ -1,0 +_,114 @@
++package dev.hypercore.server.plugin;
++
++import java.util.Locale;
++import java.util.Map;
++import java.util.Objects;
++import java.util.Set;
++import java.util.TreeMap;
++import java.util.TreeSet;
++
++/** Thread-safe registry mapping permission nodes to their resolved defaults. */
++public final class PermissionRegistry {
++
++    /** Defaults assignable to a registered node. */
++    public enum Default { TRUE, FALSE, OP, NOT_OP }
++
++    private final Map<String, Default> nodes = new TreeMap<>();
++
++    /** Creates an empty registry; nothing is pre-registered. */
++    public PermissionRegistry() {
++    }
++
++    /**
++     * Registers a node with its default outcome. Re-registering the same node with
++     * the same default is a no-op; a different default fails fast.
++     */
++    public synchronized void register(final String node, final Default def) {
++        Objects.requireNonNull(node, "node");
++        Objects.requireNonNull(def, "def");
++        final String normalized = normalize(node);
++        final Default existing = this.nodes.get(normalized);
++        if (existing != null && existing != def) {
++            throw new IllegalArgumentException("Node already registered with a different default: " + normalized);
++        }
++        this.nodes.put(normalized, def);
++    }
++
++    /** Resolves the node for the given operator status; unmatched nodes are denied. */
++    public synchronized boolean check(final String node, final boolean op) {
++        Objects.requireNonNull(node, "node");
++        final Default resolved = resolve(normalize(node));
++        return switch (resolved) {
++            case TRUE -> true;
++            case FALSE -> false;
++            case OP -> op;
++            case NOT_OP -> !op;
++        };
++    }
++
++    /** Returns the resolved default; unregistered nodes resolve to {@link Default#FALSE}. */
++    public synchronized Default defaultOf(final String node) {
++        Objects.requireNonNull(node, "node");
++        return resolve(normalize(node));
++    }
++
++    /** Returns a sorted read-only snapshot; later registrations do not alter it. */
++    public synchronized Set<String> nodes() {
++        return java.util.Collections.unmodifiableSortedSet(new TreeSet<>(this.nodes.keySet()));
++    }
++
++    private static String normalize(final String node) {
++        final String trimmed = node.trim();
++        if (trimmed.isEmpty()) {
++            throw new IllegalArgumentException("Permission node must not be blank");
++        }
++        return trimmed.toLowerCase(Locale.ROOT);
++    }
++
++    // Priority: exact node > explicit wildcard (longest prefix) > implicit parent segment > FALSE.
++    private Default resolve(final String node) {
++        final Default exact = this.nodes.get(node);
++        if (exact != null) {
++            return exact;
++        }
++        final Default wildcard = this.matchWildcard(node);
++        if (wildcard != null) {
++            return wildcard;
++        }
++        return this.inheritParent(node);
++    }
++
++    private Default matchWildcard(final String node) {
++        Default matched = null;
++        int matchedPrefix = -1;
++        for (final Map.Entry<String, Default> entry : this.nodes.entrySet()) {
++            final String key = entry.getKey();
++            if (!key.endsWith("*")) {
++                continue;
++            }
++            final String prefix = key.substring(0, key.length() - 1);
++            if (node.startsWith(prefix) && prefix.length() > matchedPrefix) {
++                matchedPrefix = prefix.length();
++                matched = entry.getValue();
++            }
++        }
++        return matched;
++    }
++
++    private Default inheritParent(String node) {
++        int dot = node.lastIndexOf('.');
++        while (dot > 0) {
++            node = node.substring(0, dot);
++            final Default inherited = this.nodes.get(node);
++            if (inherited != null) {
++                return inherited;
++            }
++            dot = node.lastIndexOf('.');
++        }
++        return Default.FALSE;
++    }
++
++    /** Removes a previously registered node. Returns {@code false} when absent. */
++    public synchronized boolean unregister(final String node) {
++        return this.nodes.remove(normalize(node)) != null;
++    }
++}

@@ -1,6 +1,6 @@
 --- /dev/null
 +++ b/dev/hypercore/server/plugin/PluginRuntime.java
-@@ -1,0 +_,233 @@
+@@ -1,0 +_,271 @@
 +package dev.hypercore.server.plugin;
 +
 +import java.io.IOException;
@@ -21,6 +21,7 @@
 +import java.util.Set;
 +import java.util.jar.JarFile;
 +import java.util.concurrent.atomic.AtomicBoolean;
++import java.util.function.LongSupplier;
 +
 +/**
 + * Server-thread plugin runtime with plugin.yml discovery and child-first JAR
@@ -33,6 +34,12 @@
 +    private final Map<String, RegisteredCommand> commands = new HashMap<>();
 +    private final List<RegisteredListener<?>> listeners = new ArrayList<>();
 +    private final List<ScheduledTask> scheduled = new ArrayList<>();
++    private final PermissionRegistry permissions = new PermissionRegistry();
++    private final PluginTaskScheduler tasks = new PluginTaskScheduler(new LongSupplier() {
++        @Override public long getAsLong() { return PluginRuntime.this.tick; }
++    });
++    private final Map<String, List<PluginTaskScheduler.Handle>> ownedHandles = new HashMap<>();
++    private final Map<String, List<String>> ownedPermissions = new HashMap<>();
 +    private boolean started;
 +    private boolean closed;
 +    private long tick;
@@ -65,6 +72,7 @@
 +        this.requireServerThread();
 +        if (this.closed) return;
 +        this.tick++;
++        this.tasks.tick();
 +        List<ScheduledTask> due = this.scheduled.stream().filter(task -> task.tick <= this.tick && !task.cancelled.get()).toList();
 +        this.scheduled.removeIf(task -> task.tick <= this.tick || task.cancelled.get());
 +        this.listeners.removeIf(RegisteredListener::closed);
@@ -91,6 +99,10 @@
 +
 +    public List<String> pluginIds() { return List.copyOf(this.plugins.keySet()); }
 +
++    public PermissionRegistry permissions() { return this.permissions; }
++
++    public PluginTaskScheduler taskScheduler() { return this.tasks; }
++
 +    void registerCommand(final String owner, final String label, final Command command) {
 +        this.requireServerThread();
 +        String normalized = normalizeLabel(label);
@@ -111,6 +123,27 @@
 +        return () -> registered.closed.compareAndSet(false, true);
 +    }
 +
++    void registerPermission(final String owner, final String node, final PermissionRegistry.Default def) {
++        this.requireServerThread();
++        this.permissions.register(node, def);
++        this.ownedPermissions.computeIfAbsent(owner, key -> new ArrayList<>()).add(node.trim().toLowerCase(java.util.Locale.ROOT));
++    }
++
++    TaskHandle scheduleLater(final String owner, final Runnable action, final long delayTicks) {
++        return this.scheduleTracked(owner, () -> this.tasks.runTaskLater(action, delayTicks));
++    }
++
++    TaskHandle scheduleTimer(final String owner, final Runnable action, final long delayTicks, final long periodTicks) {
++        return this.scheduleTracked(owner, () -> this.tasks.runTaskTimer(action, delayTicks, periodTicks));
++    }
++
++    private TaskHandle scheduleTracked(final String owner, final java.util.function.Supplier<PluginTaskScheduler.Handle> factory) {
++        this.requireServerThread();
++        PluginTaskScheduler.Handle handle = factory.get();
++        this.ownedHandles.computeIfAbsent(owner, key -> new ArrayList<>()).add(handle);
++        return handle::cancel;
++    }
++
 +    @Override public void close() {
 +        this.requireServerThread();
 +        if (this.closed) return;
@@ -128,6 +161,7 @@
 +            }
 +        }
 +        this.plugins.clear(); this.commands.clear(); this.listeners.clear(); this.scheduled.clear();
++        this.ownedHandles.clear(); this.ownedPermissions.clear();
 +    }
 +
 +    void requireServerThread() {
@@ -212,6 +246,10 @@
 +        this.commands.entrySet().removeIf(entry -> entry.getValue().owner.equals(owner));
 +        this.listeners.removeIf(listener -> listener.owner.equals(owner));
 +        this.scheduled.removeIf(task -> task.owner.equals(owner));
++        List<PluginTaskScheduler.Handle> handles = this.ownedHandles.remove(owner);
++        if (handles != null) for (PluginTaskScheduler.Handle handle : handles) handle.cancel();
++        List<String> nodes = this.ownedPermissions.remove(owner);
++        if (nodes != null) for (String node : nodes) this.permissions.unregister(node);
 +    }
 +
 +    private static void close(final URLClassLoader loader) { if (loader != null) try { loader.close(); } catch (IOException ignored) { } }

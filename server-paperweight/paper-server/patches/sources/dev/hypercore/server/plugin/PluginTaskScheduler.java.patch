@@ -1,0 +1,112 @@
+--- /dev/null
++++ b/dev/hypercore/server/plugin/PluginTaskScheduler.java
+@@ -1,0 +_,109 @@
++package dev.hypercore.server.plugin;
++
++import java.util.ArrayList;
++import java.util.Comparator;
++import java.util.List;
++import java.util.Objects;
++import java.util.PriorityQueue;
++import java.util.concurrent.atomic.AtomicBoolean;
++import java.util.function.LongSupplier;
++
++/**
++ * Deterministic delay/repeat task scheduler driven by an injected tick source.
++ * Everything except {@link Handle#cancel()} and {@link Handle#isCancelled()}
++ * must run on the host server thread; a cancel issued from any other thread
++ * takes effect at the next {@link #tick()}, never mid-run.
++ */
++public final class PluginTaskScheduler {
++    private static final Comparator<Entry> ORDER = Comparator.comparingLong((Entry entry) -> entry.dueTick).thenComparingLong(entry -> entry.sequence);
++    private final LongSupplier tickSource;
++    private final PriorityQueue<Entry> queue = new PriorityQueue<>(ORDER);
++    private long sequence;
++
++    public PluginTaskScheduler(final LongSupplier tickSource) {
++        this.tickSource = Objects.requireNonNull(tickSource, "tickSource");
++    }
++
++    /** Schedules a one-shot task; {@code delayTicks == 0} is equivalent to the next tick. */
++    public Handle runTaskLater(final Runnable task, final long delayTicks) {
++        if (delayTicks < 0L) throw new IllegalArgumentException("delayTicks must be non-negative: " + delayTicks);
++        return this.enqueue(Objects.requireNonNull(task, "task"), delayTicks, 0L);
++    }
++
++    /** Schedules a repeating task; every run re-arms at lastDueTick + periodTicks so the phase never drifts. */
++    public Handle runTaskTimer(final Runnable task, final long delayTicks, final long periodTicks) {
++        if (delayTicks < 0L) throw new IllegalArgumentException("delayTicks must be non-negative: " + delayTicks);
++        if (periodTicks <= 0L) throw new IllegalArgumentException("periodTicks must be positive: " + periodTicks);
++        return this.enqueue(Objects.requireNonNull(task, "task"), delayTicks, periodTicks);
++    }
++
++    public void tick() {
++        final long now = this.tickSource.getAsLong();
++        final List<Entry> due = new ArrayList<>();
++        while (!this.queue.isEmpty() && this.queue.peek().dueTick <= now) {
++            Entry entry = this.queue.poll();
++            if (!entry.cancelled.get()) due.add(entry);
++        }
++        this.queue.removeIf(entry -> entry.cancelled.get());
++        for (Entry entry : due) {
++            if (entry.cancelled.get()) continue;
++            try {
++                entry.task.run();
++            } catch (RuntimeException | Error ignored) {
++                // Failure isolation: drop only the failing task and keep the tick going.
++                continue;
++            }
++            if (entry.periodTicks > 0L && !entry.cancelled.get()) {
++                entry.dueTick += entry.periodTicks;
++                this.queue.add(entry);
++            }
++        }
++    }
++
++    /** Scheduled occurrences that have not run yet, including the next repeat of timers. */
++    public int pending() {
++        int count = 0;
++        for (Entry entry : this.queue) {
++            if (!entry.cancelled.get()) count++;
++        }
++        return count;
++    }
++
++    private Handle enqueue(final Runnable task, final long delayTicks, final long periodTicks) {
++        Entry entry = new Entry(this.tickSource.getAsLong() + delayTicks, ++this.sequence, periodTicks, task);
++        this.queue.add(entry);
++        return new Handle(entry);
++    }
++
++    private static final class Entry {
++        long dueTick;
++        final long sequence;
++        final long periodTicks;
++        final Runnable task;
++        final AtomicBoolean cancelled = new AtomicBoolean();
++
++        Entry(long dueTick, long sequence, long periodTicks, Runnable task) {
++            this.dueTick = dueTick;
++            this.sequence = sequence;
++            this.periodTicks = periodTicks;
++            this.task = Objects.requireNonNull(task, "task");
++        }
++    }
++
++    public final class Handle {
++        private final Entry entry;
++
++        private Handle(final Entry entry) {
++            this.entry = entry;
++        }
++
++        /** Thread-safe; the first call wins and later calls return false. */
++        public boolean cancel() {
++            return this.entry.cancelled.compareAndSet(false, true);
++        }
++
++        public boolean isCancelled() {
++            return this.entry.cancelled.get();
++        }
++    }
++}

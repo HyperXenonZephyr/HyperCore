@@ -1,6 +1,6 @@
 --- /dev/null
 +++ b/dev/hypercore/server/plugin/PluginContext.java
-@@ -1,0 +_,33 @@
+@@ -1,0 +_,51 @@
 +package dev.hypercore.server.plugin;
 +
 +import java.util.List;
@@ -28,6 +28,24 @@
 +
 +    public <E> PluginRuntime.Subscription registerListener(final Class<E> eventType, final PluginRuntime.EventListener<E> listener) {
 +        return this.runtime.registerListener(this.descriptor.id(), eventType, listener);
++    }
++
++    /** Registers a permission default owned by this plugin; rolled back on failure or disable. */
++    public void registerPermission(final String node, final PermissionRegistry.Default def) {
++        this.runtime.registerPermission(this.descriptor.id(), node, def);
++    }
++
++    public boolean hasPermission(final String node, final boolean op) {
++        this.requireServerThread();
++        return this.runtime.permissions().check(node, op);
++    }
++
++    public PluginRuntime.TaskHandle runTaskLater(final Runnable action, final long delayTicks) {
++        return this.runtime.scheduleLater(this.descriptor.id(), action, delayTicks);
++    }
++
++    public PluginRuntime.TaskHandle runTaskTimer(final Runnable action, final long delayTicks, final long periodTicks) {
++        return this.runtime.scheduleTimer(this.descriptor.id(), action, delayTicks, periodTicks);
 +    }
 +
 +    public List<String> plugins() { return this.runtime.pluginIds(); }
