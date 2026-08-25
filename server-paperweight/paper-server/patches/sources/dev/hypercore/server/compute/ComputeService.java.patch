@@ -1,6 +1,6 @@
 --- /dev/null
 +++ b/dev/hypercore/server/compute/ComputeService.java
-@@ -1,0 +_,197 @@
+@@ -1,0 +_,203 @@
 +package dev.hypercore.server.compute;
 +
 +import java.io.IOException;
@@ -24,6 +24,7 @@
 + * native Vulkan providers remain optional and may be added outside this jar.
 + */
 +public final class ComputeService implements AutoCloseable {
++    private final Path providerDirectory;
 +    private final ExecutorService executor;
 +    private final List<ComputeBackendProvider> providers;
 +    private final List<URLClassLoader> providerLoaders;
@@ -31,6 +32,11 @@
 +    private volatile boolean gpuAvailable;
 +
 +    public ComputeService() {
++        this(Path.of(System.getProperty("hypercore.compute.providers", "compute-providers")));
++    }
++
++    public ComputeService(final Path providerDirectory) {
++        this.providerDirectory = Objects.requireNonNull(providerDirectory, "providerDirectory");
 +        this.executor = Executors.newSingleThreadExecutor(new ComputeThreadFactory());
 +        this.providerLoaders = new ArrayList<>();
 +        this.providers = this.loadProviders();
@@ -159,7 +165,7 @@
 +        } catch (ServiceConfigurationError | LinkageError ignored) {
 +            // A broken classpath provider cannot prevent CPU server startup.
 +        }
-+        Path providerDirectory = Path.of(System.getProperty("hypercore.compute.providers", "compute-providers"));
++        Path providerDirectory = this.providerDirectory;
 +        if (!Files.isDirectory(providerDirectory)) {
 +            return List.copyOf(discovered);
 +        }

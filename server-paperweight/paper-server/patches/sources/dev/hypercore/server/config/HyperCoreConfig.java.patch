@@ -1,0 +1,229 @@
+--- /dev/null
++++ b/dev/hypercore/server/config/HyperCoreConfig.java
+@@ -1,0 +_,226 @@
++package dev.hypercore.server.config;
++
++import com.google.gson.Gson;
++import com.google.gson.GsonBuilder;
++import com.google.gson.JsonElement;
++import com.google.gson.JsonObject;
++import com.google.gson.JsonParser;
++import com.google.gson.JsonPrimitive;
++import java.io.IOException;
++import java.io.UncheckedIOException;
++import java.nio.file.Files;
++import java.nio.file.Path;
++import java.util.ArrayList;
++import java.util.LinkedHashMap;
++import java.util.List;
++import java.util.Map;
++import java.util.Objects;
++
++/**
++ * Immutable startup configuration loaded from {@code hypercore.json}. Missing
++ * files are replaced by a documented default file. Unknown keys and out-of-range
++ * values fail startup so a typo can never silently disable a feature.
++ */
++public final class HyperCoreConfig {
++    public static final String DEFAULT_FILE_NAME = "hypercore.json";
++
++    private static final Gson WRITER = new GsonBuilder().setPrettyPrinting().create();
++
++    private final int regionWorkerThreads;
++    private final int regionMaxMutationsPerTick;
++    private final int metricsWindowSize;
++    private final int computeGpuMinimumBatchSize;
++    private final String computeProviderDirectory;
++    private final String pluginsDirectory;
++
++    private HyperCoreConfig(
++        final int regionWorkerThreads,
++        final int regionMaxMutationsPerTick,
++        final int metricsWindowSize,
++        final int computeGpuMinimumBatchSize,
++        final String computeProviderDirectory,
++        final String pluginsDirectory
++    ) {
++        this.regionWorkerThreads = regionWorkerThreads;
++        this.regionMaxMutationsPerTick = regionMaxMutationsPerTick;
++        this.metricsWindowSize = metricsWindowSize;
++        this.computeGpuMinimumBatchSize = computeGpuMinimumBatchSize;
++        this.computeProviderDirectory = computeProviderDirectory;
++        this.pluginsDirectory = pluginsDirectory;
++    }
++
++    public static HyperCoreConfig load(final Path file) {
++        Objects.requireNonNull(file, "file");
++        if (!Files.exists(file)) {
++            final HyperCoreConfig defaults = defaults();
++            try {
++                Files.createDirectories(file.toAbsolutePath().getParent());
++                Files.writeString(file, WRITER.toJson(defaults.toJson()) + "\n");
++            } catch (final IOException error) {
++                throw new UncheckedIOException("Cannot write default HyperCore config " + file, error);
++            }
++            return defaults;
++        }
++        final String text;
++        try {
++            text = Files.readString(file);
++        } catch (final IOException error) {
++            throw new UncheckedIOException("Cannot read HyperCore config " + file, error);
++        }
++        return parse(text);
++    }
++
++    public static HyperCoreConfig parse(final String text) {
++        Objects.requireNonNull(text, "text");
++        final JsonElement rootElement;
++        try {
++            rootElement = JsonParser.parseString(text);
++        } catch (final RuntimeException error) {
++            throw new IllegalArgumentException("hypercore.json is not valid JSON", error);
++        }
++        if (!(rootElement instanceof final JsonObject root)) {
++            throw new IllegalArgumentException("hypercore.json must contain a top-level object");
++        }
++        final List<String> problems = new ArrayList<>();
++        final Map<String, JsonElement> seen = new LinkedHashMap<>();
++        for (final Map.Entry<String, JsonElement> entry : root.entrySet()) {
++            seen.put(entry.getKey(), entry.getValue());
++        }
++        final JsonObject region = section(root, "region", seen);
++        final JsonObject compute = section(root, "compute", seen);
++        final JsonObject plugins = section(root, "plugins", seen);
++        final JsonObject metrics = section(root, "metrics", seen);
++
++        final int workerThreads = integer(region, "workerThreads",
++            Math.clamp(Runtime.getRuntime().availableProcessors(), 1, 64), 1, 64, problems);
++        final int maxMutations = integer(region, "maxMutationsPerTick", 65536, 1, 100_000_000, problems);
++        final int windowSize = integer(metrics, "windowSize", 200, 10, 100_000, problems);
++        final int gpuBatch = integer(compute, "gpuMinimumBatchSize", 4096, 0, 100_000_000, problems);
++        final String providerDir = string(compute, "providerDirectory", "compute-providers", problems);
++        final String pluginDir = string(plugins, "directory", "plugins", problems);
++
++        seen.remove("region");
++        seen.remove("compute");
++        seen.remove("plugins");
++        seen.remove("metrics");
++        for (final String unknown : seen.keySet()) {
++            problems.add("unknown key: " + unknown);
++        }
++        if (!problems.isEmpty()) {
++            throw new IllegalArgumentException("Invalid hypercore.json: " + String.join("; ", problems));
++        }
++        return new HyperCoreConfig(workerThreads, maxMutations, windowSize, gpuBatch, providerDir, pluginDir);
++    }
++
++    public static HyperCoreConfig defaults() {
++        return new HyperCoreConfig(
++            Math.clamp(Runtime.getRuntime().availableProcessors(), 1, 64),
++            65536,
++            200,
++            4096,
++            "compute-providers",
++            "plugins"
++        );
++    }
++
++    public int regionWorkerThreads() {
++        return this.regionWorkerThreads;
++    }
++
++    public int regionMaxMutationsPerTick() {
++        return this.regionMaxMutationsPerTick;
++    }
++
++    public int metricsWindowSize() {
++        return this.metricsWindowSize;
++    }
++
++    public int computeGpuMinimumBatchSize() {
++        return this.computeGpuMinimumBatchSize;
++    }
++
++    public Path computeProviderDirectory() {
++        return Path.of(this.computeProviderDirectory);
++    }
++
++    public Path pluginsDirectory() {
++        return Path.of(this.pluginsDirectory);
++    }
++
++    private JsonObject toJson() {
++        final JsonObject root = new JsonObject();
++        final JsonObject region = new JsonObject();
++        region.addProperty("workerThreads", this.regionWorkerThreads);
++        region.addProperty("maxMutationsPerTick", this.regionMaxMutationsPerTick);
++        root.add("region", region);
++        final JsonObject compute = new JsonObject();
++        compute.addProperty("gpuMinimumBatchSize", this.computeGpuMinimumBatchSize);
++        compute.addProperty("providerDirectory", this.computeProviderDirectory);
++        root.add("compute", compute);
++        final JsonObject plugins = new JsonObject();
++        plugins.addProperty("directory", this.pluginsDirectory);
++        root.add("plugins", plugins);
++        final JsonObject metrics = new JsonObject();
++        metrics.addProperty("windowSize", this.metricsWindowSize);
++        root.add("metrics", metrics);
++        return root;
++    }
++
++    private static JsonObject section(final JsonObject root, final String name, final Map<String, JsonElement> seen) {
++        seen.remove(name);
++        final JsonElement element = root.get(name);
++        if (element == null || element.isJsonNull()) {
++            return new JsonObject();
++        }
++        if (!(element instanceof final JsonObject object)) {
++            throw new IllegalArgumentException("Invalid hypercore.json: " + name + " must be an object");
++        }
++        return object;
++    }
++
++    private static int integer(
++        final JsonObject section,
++        final String name,
++        final int fallback,
++        final int minimum,
++        final int maximum,
++        final List<String> problems
++    ) {
++        final JsonElement element = section.get(name);
++        if (element == null || element.isJsonNull()) {
++            return fallback;
++        }
++        if (!(element instanceof final JsonPrimitive primitive) || !primitive.isNumber()) {
++            problems.add(name + " must be an integer");
++            return fallback;
++        }
++        final long value = primitive.getAsLong();
++        if (value < minimum || value > maximum) {
++            problems.add(name + " must be between " + minimum + " and " + maximum);
++            return fallback;
++        }
++        return (int) value;
++    }
++
++    private static String string(
++        final JsonObject section,
++        final String name,
++        final String fallback,
++        final List<String> problems
++    ) {
++        final JsonElement element = section.get(name);
++        if (element == null || element.isJsonNull()) {
++            return fallback;
++        }
++        if (!(element instanceof final JsonPrimitive primitive) || !primitive.isString()) {
++            problems.add(name + " must be a string");
++            return fallback;
++        }
++        final String value = primitive.getAsString().trim();
++        if (value.isEmpty()) {
++            problems.add(name + " cannot be blank");
++            return fallback;
++        }
++        return value;
++    }
++}

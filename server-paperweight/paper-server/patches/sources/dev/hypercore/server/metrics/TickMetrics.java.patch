@@ -1,0 +1,110 @@
+--- /dev/null
++++ b/dev/hypercore/server/metrics/TickMetrics.java
+@@ -1,0 +_,107 @@
++package dev.hypercore.server.metrics;
++
++import java.util.Arrays;
++
++/**
++ * Rolling server-tick latency statistics over a fixed-size circular window.
++ * Each tick appends one duration sample; the oldest sample is evicted once the
++ * window is full. All accessors observe an internally consistent snapshot
++ * guarded by the instance monitor, and never leak the internal buffer.
++ */
++public final class TickMetrics {
++    private static final int MIN_WINDOW_SIZE = 10;
++    private static final int MAX_WINDOW_SIZE = 100000;
++
++    private final long[] samples;
++    private int head;
++    private int size;
++    private long total;
++
++    public TickMetrics(final int windowSize) {
++        if (windowSize < MIN_WINDOW_SIZE || windowSize > MAX_WINDOW_SIZE) {
++            throw new IllegalArgumentException("windowSize out of range [" + MIN_WINDOW_SIZE + ".." + MAX_WINDOW_SIZE + "]: " + windowSize);
++        }
++        this.samples = new long[windowSize];
++    }
++
++    /** Records one tick duration in nanoseconds. */
++    public final synchronized void record(final long nanos) {
++        if (nanos < 0) {
++            throw new IllegalArgumentException("nanos must be non-negative: " + nanos);
++        }
++        if (this.size == this.samples.length) {
++            this.total -= this.samples[this.head];
++            this.head = (this.head + 1) % this.samples.length;
++            this.size--;
++        }
++        this.samples[this.physical(this.size)] = nanos;
++        this.size++;
++        this.total += nanos;
++    }
++
++    /** Returns the number of samples currently held inside the window. */
++    public final synchronized int count() {
++        return this.size;
++    }
++
++    /** Returns the maximum number of samples the rolling window retains. */
++    public final synchronized int capacity() {
++        return this.samples.length;
++    }
++
++    /** Returns the sum of all retained samples in nanoseconds. */
++    public final synchronized long total() {
++        return this.total;
++    }
++
++    /** Returns {@code total / count}, or {@code 0} when nothing was recorded yet. */
++    public final synchronized double average() {
++        return this.size == 0 ? 0.0d : (double) this.total / this.size;
++    }
++
++    /** Returns p50, taking the lower of the two middle samples for even counts. */
++    public final synchronized long median() {
++        final long[] sorted = this.sortedSnapshot();
++        return sorted.length == 0 ? 0L : sorted[(sorted.length - 1) / 2];
++    }
++
++    /** Returns p95 at index {@code ceil(0.95 * n) - 1} of the sorted samples. */
++    public final synchronized long percentile95() {
++        final long[] sorted = this.sortedSnapshot();
++        return sorted.length == 0 ? 0L : sorted[percentileIndex(sorted.length)];
++    }
++
++    /** Returns the largest retained sample, or {@code 0} when empty. */
++    public final synchronized long maximum() {
++        long maximum = 0L;
++        for (int offset = 0; offset < this.size; offset++) {
++            maximum = Math.max(maximum, this.samples[this.physical(offset)]);
++        }
++        return maximum;
++    }
++
++    /** Discards every retained sample while keeping the configured capacity. */
++    public final synchronized void clear() {
++        Arrays.fill(this.samples, 0L);
++        this.head = 0;
++        this.size = 0;
++        this.total = 0L;
++    }
++
++    private long[] sortedSnapshot() {
++        final long[] snapshot = new long[this.size];
++        for (int offset = 0; offset < this.size; offset++) {
++            snapshot[offset] = this.samples[this.physical(offset)];
++        }
++        Arrays.sort(snapshot);
++        return snapshot;
++    }
++
++    private int physical(final int logicalOffset) {
++        return (this.head + logicalOffset) % this.samples.length;
++    }
++
++    private static int percentileIndex(final int count) {
++        return (int) Math.ceil(0.95d * count) - 1;
++    }
++}

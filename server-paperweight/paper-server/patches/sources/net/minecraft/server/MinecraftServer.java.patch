@@ -1,35 +1,38 @@
 --- a/net/minecraft/server/MinecraftServer.java
 +++ b/net/minecraft/server/MinecraftServer.java
-@@ -10,6 +_,10 @@
+@@ -10,6 +_,11 @@
  import com.mojang.jtracy.DiscontinuousFrame;
  import com.mojang.jtracy.TracyClient;
  import com.mojang.logging.LogUtils;
 +import dev.hypercore.server.compat.LoaderCompatibilityRegistry;
 +import dev.hypercore.server.compute.ComputeService;
++import dev.hypercore.server.config.HyperCoreConfig;
 +import dev.hypercore.server.plugin.PluginRuntime;
 +import dev.hypercore.server.region.ServerRegionScheduler;
  import it.unimi.dsi.fastutil.objects.ObjectArrayList;
  import it.unimi.dsi.fastutil.objects.ObjectArraySet;
  import java.io.File;
-@@ -294,6 +_,10 @@
+@@ -294,6 +_,11 @@
      private final PacketProcessor packetProcessor;
      private final TimerQueue<MinecraftServer> scheduledEvents;
      private final ServerClockManager clockManager;
 +    private final ServerRegionScheduler regionScheduler;
++    private final HyperCoreConfig hypercoreConfig;
 +    private final LoaderCompatibilityRegistry compatibilityProviders;
 +    private final ComputeService computeService;
 +    private final PluginRuntime pluginRuntime;
  
      public static <S extends MinecraftServer> S spin(final Function<Thread, S> factory) {
          AtomicReference<S> serverReference = new AtomicReference<>();
-@@ -351,6 +_,10 @@
+@@ -351,6 +_,11 @@
                  .filterFeatures(this.worldData.enabledFeatures());
              this.structureTemplateManager = new StructureTemplateManager(worldStem.resourceManager(), storageSource, fixerUpper, blockLookup);
              this.serverThread = serverThread;
++            this.hypercoreConfig = HyperCoreConfig.load(java.nio.file.Path.of(HyperCoreConfig.DEFAULT_FILE_NAME));
 +            this.regionScheduler = new ServerRegionScheduler(serverThread);
 +            this.compatibilityProviders = new LoaderCompatibilityRegistry();
-+            this.computeService = new ComputeService();
-+            this.pluginRuntime = new PluginRuntime(serverThread, java.nio.file.Path.of("plugins"));
++            this.computeService = new ComputeService(this.hypercoreConfig.computeProviderDirectory());
++            this.pluginRuntime = new PluginRuntime(serverThread, this.hypercoreConfig.pluginsDirectory());
              this.executor = Util.backgroundExecutor();
              this.potionBrewing = PotionBrewing.bootstrap(this.worldData.enabledFeatures());
              this.resources.managers.getRecipeManager().finalizeRecipeLoading(this.worldData.enabledFeatures());
