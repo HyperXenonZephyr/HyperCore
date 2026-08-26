@@ -1,0 +1,12 @@
+--- /dev/null
++++ b/dev/hypercore/server/plugin/EventPriority.java
+@@ -1,0 +_,9 @@
++package dev.hypercore.server.plugin;
++
++/**
++ * Listener invocation order from first to last. {@code MONITOR} listeners run
++ * even when the event has been cancelled and must not modify it.
++ */
++public enum EventPriority {
++    LOWEST, LOW, NORMAL, HIGH, HIGHEST, MONITOR
++}

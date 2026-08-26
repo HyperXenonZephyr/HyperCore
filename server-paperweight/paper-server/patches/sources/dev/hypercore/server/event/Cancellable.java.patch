@@ -1,0 +1,13 @@
+--- /dev/null
++++ b/dev/hypercore/server/event/Cancellable.java
+@@ -1,0 +_,10 @@
++package dev.hypercore.server.event;
++
++/**
++ * Implemented by events a listener may veto before the server applies the
++ * underlying change.
++ */
++public interface Cancellable {
++    boolean isCancelled();
++    void setCancelled(boolean cancelled);
++}

@@ -1,0 +1,13 @@
+--- /dev/null
++++ b/dev/hypercore/server/event/PlayerJoinEvent.java
+@@ -1,0 +_,10 @@
++package dev.hypercore.server.event;
++
++/**
++ * Fired once a player has finished joining and is visible to the world.
++ */
++public class PlayerJoinEvent extends HyperCoreEvent {
++    public PlayerJoinEvent(final String playerName) {
++        super(playerName);
++    }
++}

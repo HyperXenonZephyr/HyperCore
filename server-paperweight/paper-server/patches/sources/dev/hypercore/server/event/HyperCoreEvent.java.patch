@@ -1,0 +1,22 @@
+--- /dev/null
++++ b/dev/hypercore/server/event/HyperCoreEvent.java
+@@ -1,0 +_,19 @@
++package dev.hypercore.server.event;
++
++import java.util.Objects;
++
++/**
++ * Marker base class shared by every HyperCore event; carries only plain data
++ * safe to hand across thread boundaries.
++ */
++public abstract class HyperCoreEvent {
++    private final String playerName;
++
++    protected HyperCoreEvent(final String playerName) {
++        this.playerName = Objects.requireNonNull(playerName, "playerName");
++    }
++
++    public String playerName() {
++        return playerName;
++    }
++}

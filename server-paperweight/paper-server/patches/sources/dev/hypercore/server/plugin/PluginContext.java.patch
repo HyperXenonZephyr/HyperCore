@@ -1,6 +1,6 @@
 --- /dev/null
 +++ b/dev/hypercore/server/plugin/PluginContext.java
-@@ -1,0 +_,51 @@
+@@ -1,0 +_,55 @@
 +package dev.hypercore.server.plugin;
 +
 +import java.util.List;
@@ -28,6 +28,10 @@
 +
 +    public <E> PluginRuntime.Subscription registerListener(final Class<E> eventType, final PluginRuntime.EventListener<E> listener) {
 +        return this.runtime.registerListener(this.descriptor.id(), eventType, listener);
++    }
++
++    public <E> PluginRuntime.Subscription registerListener(final Class<E> eventType, final EventPriority priority, final PluginRuntime.EventListener<E> listener) {
++        return this.runtime.registerListener(this.descriptor.id(), eventType, priority, listener);
 +    }
 +
 +    /** Registers a permission default owned by this plugin; rolled back on failure or disable. */

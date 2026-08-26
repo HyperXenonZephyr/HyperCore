@@ -1,6 +1,6 @@
 --- /dev/null
 +++ b/dev/hypercore/server/plugin/PermissionRegistry.java
-@@ -1,0 +_,114 @@
+@@ -1,0 +_,115 @@
 +package dev.hypercore.server.plugin;
 +
 +import java.util.Locale;

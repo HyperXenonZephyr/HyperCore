@@ -112,4 +112,26 @@ class PluginRuntimeFeaturesTest {
             assertEquals(0, fired.get());
         }
     }
+
+    @Test
+    void listenersRunInPriorityOrderAndCancellationSkipsNonMonitors() throws Exception {
+        try (PluginRuntime runtime = new PluginRuntime(Thread.currentThread(), Files.createTempDirectory("plugins"))) {
+            List<String> order = new java.util.ArrayList<>();
+            dev.hypercore.server.event.BlockBreakEvent[] event = new dev.hypercore.server.event.BlockBreakEvent[1];
+            runtime.register(new PluginDescriptor("prio_plugin", "Prio", "1", "test.Main", List.of()), new ServerPlugin() {
+                @Override public void onEnable(PluginContext context) {
+                    context.registerListener(dev.hypercore.server.event.BlockBreakEvent.class, EventPriority.HIGHEST, e -> {
+                        order.add("highest");
+                        e.setCancelled(true);
+                    });
+                    context.registerListener(dev.hypercore.server.event.BlockBreakEvent.class, EventPriority.LOWEST, e -> order.add("lowest"));
+                    context.registerListener(dev.hypercore.server.event.BlockBreakEvent.class, EventPriority.MONITOR, e -> order.add("monitor"));
+                }
+            });
+            event[0] = new dev.hypercore.server.event.BlockBreakEvent("steve", 1, 2, 3, "minecraft:stone");
+            assertEquals(3, runtime.postEvent(event[0]));
+            assertEquals(List.of("lowest", "highest", "monitor"), order);
+            assertTrue(event[0].isCancelled());
+        }
+    }
 }

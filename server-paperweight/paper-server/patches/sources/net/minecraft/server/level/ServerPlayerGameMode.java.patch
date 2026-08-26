@@ -1,0 +1,34 @@
+--- a/net/minecraft/server/level/ServerPlayerGameMode.java
++++ b/net/minecraft/server/level/ServerPlayerGameMode.java
+@@ -1,12 +_,14 @@
+ package net.minecraft.server.level;
+ 
+ import com.mojang.logging.LogUtils;
++import dev.hypercore.server.event.BlockBreakEvent;
+ import java.util.List;
+ import java.util.Objects;
+ import net.minecraft.SharedConstants;
+ import net.minecraft.advancements.CriteriaTriggers;
+ import net.minecraft.core.BlockPos;
+ import net.minecraft.core.Direction;
++import net.minecraft.core.registries.BuiltInRegistries;
+ import net.minecraft.network.protocol.game.ClientboundBlockUpdatePacket;
+ import net.minecraft.network.protocol.game.ClientboundPlayerInfoUpdatePacket;
+ import net.minecraft.network.protocol.game.ServerboundPlayerActionPacket;
+@@ -272,6 +_,16 @@
+             } else if (this.player.blockActionRestricted(this.level, pos, this.gameModeForPlayer)) {
+                 return false;
+             } else {
++                BlockBreakEvent hypercore$event = new BlockBreakEvent(
++                    this.player.getGameProfile().name(),
++                    pos.getX(),
++                    pos.getY(),
++                    pos.getZ(),
++                    BuiltInRegistries.BLOCK.getKey(block).toString());
++                this.level.getServer().hypercorePluginRuntime().postEvent(hypercore$event);
++                if (hypercore$event.isCancelled()) {
++                    return false;
++                }
+                 BlockState adjustedState = block.playerWillDestroy(this.level, pos, state, this.player);
+                 boolean changed = this.level.removeBlock(pos, false);
+                 if (SharedConstants.DEBUG_BLOCK_BREAK) {

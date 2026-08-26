@@ -1,8 +1,9 @@
 --- /dev/null
 +++ b/dev/hypercore/server/plugin/PluginRuntime.java
-@@ -1,0 +_,271 @@
+@@ -1,0 +_,281 @@
 +package dev.hypercore.server.plugin;
 +
++import dev.hypercore.server.event.Cancellable;
 +import java.io.IOException;
 +import java.net.URL;
 +import java.net.URLClassLoader;
@@ -88,11 +89,16 @@
 +    public <E> int postEvent(final E event) {
 +        this.requireServerThread();
 +        int invoked = 0;
-+        for (RegisteredListener<?> listener : List.copyOf(this.listeners)) {
-+            if (!listener.closed() && listener.type.isInstance(event)) {
-+                listener.invoke(event);
-+                invoked++;
++        List<RegisteredListener<?>> ordered = this.listeners.stream()
++            .filter(listener -> !listener.closed() && listener.type.isInstance(event))
++            .sorted(Comparator.comparingInt(listener -> listener.priority.ordinal()))
++            .toList();
++        for (RegisteredListener<?> listener : ordered) {
++            if (event instanceof Cancellable cancellable && cancellable.isCancelled() && listener.priority != EventPriority.MONITOR) {
++                continue;
 +            }
++            listener.invoke(event);
++            invoked++;
 +        }
 +        return invoked;
 +    }
@@ -117,8 +123,12 @@
 +    }
 +
 +    <E> Subscription registerListener(final String owner, final Class<E> type, final EventListener<E> listener) {
++        return this.registerListener(owner, type, EventPriority.NORMAL, listener);
++    }
++
++    <E> Subscription registerListener(final String owner, final Class<E> type, final EventPriority priority, final EventListener<E> listener) {
 +        this.requireServerThread();
-+        RegisteredListener<E> registered = new RegisteredListener<>(owner, type, listener);
++        RegisteredListener<E> registered = new RegisteredListener<>(owner, type, priority, listener);
 +        this.listeners.add(registered);
 +        return () -> registered.closed.compareAndSet(false, true);
 +    }
@@ -258,7 +268,7 @@
 +    private record LoadedPlugin(PluginDescriptor descriptor, ServerPlugin plugin, PluginClassLoader loader) { }
 +    private record RegisteredCommand(String owner, Command command) { }
 +    private static final class ScheduledTask { final String owner; final long tick; final Runnable action; final AtomicBoolean cancelled = new AtomicBoolean(); ScheduledTask(String owner, long tick, Runnable action) { this.owner = owner; this.tick = tick; this.action = action; } }
-+    private static final class RegisteredListener<E> { final String owner; final Class<E> type; final EventListener<E> listener; final AtomicBoolean closed = new AtomicBoolean(); RegisteredListener(String owner, Class<E> type, EventListener<E> listener) { this.owner = owner; this.type = Objects.requireNonNull(type, "type"); this.listener = Objects.requireNonNull(listener, "listener"); } boolean closed() { return this.closed.get(); } void invoke(Object event) { this.listener.onEvent(this.type.cast(event)); } }
++    private static final class RegisteredListener<E> { final String owner; final Class<E> type; final EventPriority priority; final EventListener<E> listener; final AtomicBoolean closed = new AtomicBoolean(); RegisteredListener(String owner, Class<E> type, EventPriority priority, EventListener<E> listener) { this.owner = owner; this.type = Objects.requireNonNull(type, "type"); this.priority = Objects.requireNonNull(priority, "priority"); this.listener = Objects.requireNonNull(listener, "listener"); } boolean closed() { return this.closed.get(); } void invoke(Object event) { this.listener.onEvent(this.type.cast(event)); } }
 +    public interface Command { boolean execute(List<String> arguments); }
 +    public interface EventListener<E> { void onEvent(E event); }
 +    public interface Subscription extends AutoCloseable { @Override void close(); }

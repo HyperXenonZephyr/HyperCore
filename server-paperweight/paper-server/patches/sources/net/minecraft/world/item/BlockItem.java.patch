@@ -1,0 +1,34 @@
+--- a/net/minecraft/world/item/BlockItem.java
++++ b/net/minecraft/world/item/BlockItem.java
+@@ -1,9 +_,12 @@
+ package net.minecraft.world.item;
+ 
+ import java.util.Map;
++import dev.hypercore.server.event.BlockPlaceEvent;
+ import net.minecraft.advancements.CriteriaTriggers;
+ import net.minecraft.core.BlockPos;
++import net.minecraft.core.registries.BuiltInRegistries;
+ import net.minecraft.core.component.DataComponents;
++import net.minecraft.server.level.ServerLevel;
+ import net.minecraft.server.level.ServerPlayer;
+ import net.minecraft.server.permissions.Permissions;
+ import net.minecraft.sounds.SoundEvent;
+@@ -140,6 +_,18 @@
+     }
+ 
+     protected boolean placeBlock(final BlockPlaceContext context, final BlockState placementState) {
++        if (context.getLevel() instanceof final ServerLevel serverLevel && context.getPlayer() instanceof final ServerPlayer placer) {
++            final BlockPlaceEvent hypercore$event = new BlockPlaceEvent(
++                placer.getGameProfile().name(),
++                context.getClickedPos().getX(),
++                context.getClickedPos().getY(),
++                context.getClickedPos().getZ(),
++                BuiltInRegistries.BLOCK.getKey(placementState.getBlock()).toString());
++            serverLevel.getServer().hypercorePluginRuntime().postEvent(hypercore$event);
++            if (hypercore$event.isCancelled()) {
++                return false;
++            }
++        }
+         return context.getLevel().setBlock(context.getClickedPos(), placementState, Block.UPDATE_ALL_IMMEDIATE);
+     }
+ 

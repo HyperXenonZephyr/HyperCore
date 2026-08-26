@@ -1,0 +1,14 @@
+--- /dev/null
++++ b/dev/hypercore/server/event/PlayerQuitEvent.java
+@@ -1,0 +_,11 @@
++package dev.hypercore.server.event;
++
++/**
++ * Fired when a player leaves; after listeners run the player state is torn
++ * down.
++ */
++public class PlayerQuitEvent extends HyperCoreEvent {
++    public PlayerQuitEvent(final String playerName) {
++        super(playerName);
++    }
++}

@@ -1,0 +1,52 @@
+--- /dev/null
++++ b/dev/hypercore/server/event/BlockBreakEvent.java
+@@ -1,0 +_,49 @@
++package dev.hypercore.server.event;
++
++import java.util.Objects;
++
++/**
++ * Fired before a block is removed from the world; cancelling keeps the
++ * position unchanged.
++ */
++public class BlockBreakEvent extends HyperCoreEvent implements Cancellable {
++    private final int x;
++    private final int y;
++    private final int z;
++    private final String blockId;
++    private boolean cancelled;
++
++    public BlockBreakEvent(final String playerName, final int x, final int y, final int z, final String blockId) {
++        super(playerName);
++        this.x = x;
++        this.y = y;
++        this.z = z;
++        this.blockId = Objects.requireNonNull(blockId, "blockId");
++    }
++
++    public int x() {
++        return x;
++    }
++
++    public int y() {
++        return y;
++    }
++
++    public int z() {
++        return z;
++    }
++
++    public String blockId() {
++        return blockId;
++    }
++
++    @Override
++    public boolean isCancelled() {
++        return cancelled;
++    }
++
++    @Override
++    public void setCancelled(final boolean cancelled) {
++        this.cancelled = cancelled;
++    }
++}
